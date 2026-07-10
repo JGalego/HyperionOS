@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/hyperion-capability",
+    "crates/hyperion-context",
     "crates/hyperion-ipc",
     "crates/hyperion-knowledge-graph",
     "crates/hyperion-scheduler",
@@ -16,6 +17,7 @@ repository = "https://github.com/JGalego/HyperionOS"
 
 [workspace.dependencies]
 hyperion-capability = { path = "crates/hyperion-capability" }
+hyperion-context = { path = "crates/hyperion-context" }
 hyperion-ipc = { path = "crates/hyperion-ipc" }
 hyperion-knowledge-graph = { path = "crates/hyperion-knowledge-graph" }
 hyperion-scheduler = { path = "crates/hyperion-scheduler" }

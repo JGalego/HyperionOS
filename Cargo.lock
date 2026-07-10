@@ -90,6 +90,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-context"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-knowledge-graph",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-ipc"
 version = "0.1.0"
 dependencies = [

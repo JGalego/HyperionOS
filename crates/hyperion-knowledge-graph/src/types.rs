@@ -113,10 +113,14 @@ pub struct QueryHit {
 }
 
 /// The result of [`crate::graph::KnowledgeGraph::traverse`] — docs/09 §6's
-/// `Subgraph`.
+/// `Subgraph`. Each node carries its hop distance from the traversal's
+/// start node (`0` for the start itself) — [06 — Context
+/// Engine](../06-context-engine.md) §Data Structures' `RelevanceVector.
+/// graph_distance` needs exactly this, so it is computed once here rather
+/// than re-derived by every caller via repeated shallow traversals.
 #[derive(Debug, Clone, Default)]
 pub struct Subgraph {
-    pub nodes: Vec<(NodeId, NodeRecord)>,
+    pub nodes: Vec<(NodeId, NodeRecord, usize)>,
     pub edges: Vec<(EdgeId, EdgeRecord)>,
 }
 

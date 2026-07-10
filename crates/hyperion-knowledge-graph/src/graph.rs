@@ -337,12 +337,12 @@ impl KnowledgeGraph {
             return Err(GraphError::NotFound);
         }
 
-        let mut visited_nodes = HashSet::new();
+        let mut depths = std::collections::HashMap::new();
         let mut visited_edges = HashSet::new();
-        visited_nodes.insert(start);
+        depths.insert(start, 0usize);
         let mut frontier = vec![start];
 
-        for _ in 0..max_hops {
+        for hop in 0..max_hops {
             if frontier.is_empty() {
                 break;
             }
@@ -356,7 +356,10 @@ impl KnowledgeGraph {
                         continue;
                     }
                     visited_edges.insert(eid);
-                    if visited_nodes.insert(edge.target) {
+                    if let std::collections::hash_map::Entry::Vacant(slot) =
+                        depths.entry(edge.target)
+                    {
+                        slot.insert(hop + 1);
                         next_frontier.push(edge.target);
                     }
                 }
@@ -368,7 +371,10 @@ impl KnowledgeGraph {
                         continue;
                     }
                     visited_edges.insert(eid);
-                    if visited_nodes.insert(edge.subject) {
+                    if let std::collections::hash_map::Entry::Vacant(slot) =
+                        depths.entry(edge.subject)
+                    {
+                        slot.insert(hop + 1);
                         next_frontier.push(edge.subject);
                     }
                 }
@@ -376,15 +382,31 @@ impl KnowledgeGraph {
             frontier = next_frontier;
         }
 
-        let nodes = visited_nodes
+        let nodes = depths
             .into_iter()
-            .map(|id| (id, index.nodes[&id].clone()))
+            .map(|(id, depth)| (id, index.nodes[&id].clone(), depth))
             .collect();
         let edges = visited_edges
             .into_iter()
             .map(|id| (id, index.edges[&id].clone()))
             .collect();
         Ok(Subgraph { nodes, edges })
+    }
+
+    /// The node's current logical generation — its `updated_at` timestamp,
+    /// which advances on every write. A stand-in for a real per-object
+    /// version counter distinct from wall-clock time; see this crate's doc
+    /// comment. Exists specifically so [07 — Context
+    /// Propagation](../07-context-propagation.md)'s staleness check
+    /// (`per_entry_generation`) has something to compare against without
+    /// this crate exposing its internal `hyperion_storage::VersionId`.
+    pub fn generation(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        node_id: NodeId,
+    ) -> Result<u64, GraphError> {
+        self.get(monitor, token, node_id).map(|n| n.updated_at)
     }
 
     /// `graph.explain` — docs/09 §6, feeding

@@ -111,7 +111,8 @@ fn vacation_scenario_two_hop_traversal_from_trip() {
     // Neither photo nor hotel reference each other; both point AT trip, so
     // reaching them from trip requires the backward arm of the traversal.
     let subgraph = graph.traverse(&monitor, &token, trip, None, 1).unwrap();
-    let reached: std::collections::HashSet<_> = subgraph.nodes.iter().map(|(id, _)| *id).collect();
+    let reached: std::collections::HashSet<_> =
+        subgraph.nodes.iter().map(|(id, _, _)| *id).collect();
     assert!(reached.contains(&trip));
     assert!(reached.contains(&photo));
     assert!(reached.contains(&hotel));
@@ -122,8 +123,21 @@ fn vacation_scenario_two_hop_traversal_from_trip() {
 
     let subgraph_2hop = graph.traverse(&monitor, &token, trip, None, 2).unwrap();
     let reached_2: std::collections::HashSet<_> =
-        subgraph_2hop.nodes.iter().map(|(id, _)| *id).collect();
+        subgraph_2hop.nodes.iter().map(|(id, _, _)| *id).collect();
     assert!(reached_2.contains(&loc), "location IS 2 hops from trip");
+
+    let depth_of = |id| {
+        subgraph_2hop
+            .nodes
+            .iter()
+            .find(|(node_id, _, _)| *node_id == id)
+            .map(|(_, _, depth)| *depth)
+            .unwrap()
+    };
+    assert_eq!(depth_of(trip), 0);
+    assert_eq!(depth_of(photo), 1);
+    assert_eq!(depth_of(hotel), 1);
+    assert_eq!(depth_of(loc), 2);
 }
 
 #[test]
@@ -171,6 +185,7 @@ fn index_survives_reopen_by_replaying_the_wal() {
 
     let reopened = KnowledgeGraph::open(&path).unwrap();
     let subgraph = reopened.traverse(&monitor, &token, trip, None, 1).unwrap();
-    let reached: std::collections::HashSet<_> = subgraph.nodes.iter().map(|(id, _)| *id).collect();
+    let reached: std::collections::HashSet<_> =
+        subgraph.nodes.iter().map(|(id, _, _)| *id).collect();
     assert!(reached.contains(&photo));
 }
