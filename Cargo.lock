@@ -166,6 +166,7 @@ dependencies = [
  "hyperion-context",
  "hyperion-explainability",
  "hyperion-intent",
+ "hyperion-ipc",
  "hyperion-knowledge-graph",
  "serde",
  "serde_json",

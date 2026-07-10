@@ -48,12 +48,21 @@
 //!   caller (standing in for whatever *would* detect the divergence) raise
 //!   one directly, and the same Coordinator-arbitration/escalation ladder
 //!   (§5.2) runs from there.
-//! - **IPC-carried coordination messages** ([30 — IPC Framework](../30-ipc-framework.md)) —
-//!   all coordination calls here are direct method calls on one in-process
-//!   [`CoordinationSession`], not `CoordMessage`s over a real transport;
-//!   the message *shape* (`propose_write`, `report_status`) is real, the
-//!   wire format is not, consistent with how `hyperion-context`'s
-//!   `ContextPropagation` treats transport as out of scope.
+//! - **A production IPC transport call site.** All coordination calls
+//!   here are still direct method calls on one in-process
+//!   [`CoordinationSession`], not `CoordMessage`s over a real production
+//!   transport — consistent with how `hyperion-context`'s
+//!   `ContextPropagation` treats transport as out of scope, and for the
+//!   same reason: no real production caller drives coordination across a
+//!   real process boundary yet. What *is* now proven, dev-dependency-only
+//!   in `tests/ipc_transport.rs`: `propose_write`'s message shape
+//!   (`session_id`/`agent_instance`/`key`/`base_version`/`value`, and the
+//!   real `WriteOutcome` it returns) genuinely survives a real
+//!   `hyperion-ipc` `CALL` frame between two separate Trust Boundaries,
+//!   applied for real against a live session on the receiving side —
+//!   [`WriteOutcome`]/[`ConflictRecord`]/[`ConflictKind`]/[`ConflictResolution`]
+//!   all gained real `Serialize`/`Deserialize` impls to make that
+//!   possible.
 //! - **Progress/escalation broadcast over a real Event System**
 //!   ([31 — Event System](../31-event-system.md), not built) —
 //!   [`CoordinationSession::progress`] and `.escalations()` are pull-based

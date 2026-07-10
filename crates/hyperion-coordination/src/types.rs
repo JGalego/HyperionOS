@@ -33,13 +33,13 @@ pub struct TaskNode {
 }
 
 /// docs/12 §4.3's `ConflictRecord`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConflictKind {
     ConcurrentWrite,
     ContradictorySubplan,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConflictResolution {
     Pending,
     AutoMerged,
@@ -47,7 +47,7 @@ pub enum ConflictResolution {
     UserResolved,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConflictRecord {
     pub conflict_id: u64,
     pub key: String,
@@ -82,7 +82,7 @@ pub struct SharedPlan {
 }
 
 /// The outcome of one [`crate::CoordinationSession::propose_write`] call.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WriteOutcome {
     Accepted { new_version: u64 },
     Conflict(ConflictRecord),
