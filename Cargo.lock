@@ -204,6 +204,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-semantic-fs"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-context",
+ "hyperion-knowledge-graph",
+ "hyperion-storage",
+ "hyperion-workspace",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-sim"
 version = "0.1.0"
 dependencies = [

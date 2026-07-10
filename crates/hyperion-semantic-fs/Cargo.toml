@@ -1,0 +1,18 @@
+[package]
+name = "hyperion-semantic-fs"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hyperion-capability = { workspace = true }
+hyperion-context = { workspace = true }
+hyperion-knowledge-graph = { workspace = true }
+hyperion-workspace = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+hyperion-storage = { workspace = true }
+tempfile = { workspace = true }

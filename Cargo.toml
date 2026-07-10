@@ -12,6 +12,7 @@ members = [
     "crates/hyperion-memory",
     "crates/hyperion-model-router",
     "crates/hyperion-scheduler",
+    "crates/hyperion-semantic-fs",
     "crates/hyperion-sim",
     "crates/hyperion-storage",
     "crates/hyperion-workspace",
@@ -34,6 +35,7 @@ hyperion-knowledge-graph = { path = "crates/hyperion-knowledge-graph" }
 hyperion-memory = { path = "crates/hyperion-memory" }
 hyperion-model-router = { path = "crates/hyperion-model-router" }
 hyperion-scheduler = { path = "crates/hyperion-scheduler" }
+hyperion-semantic-fs = { path = "crates/hyperion-semantic-fs" }
 hyperion-storage = { path = "crates/hyperion-storage" }
 hyperion-workspace = { path = "crates/hyperion-workspace" }
 bitflags = "2"
