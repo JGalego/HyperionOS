@@ -14,7 +14,7 @@ use hyperion_recovery::RecoveryService;
 use hyperion_security::{InterventionLevel, PendingAction};
 
 use crate::router_bridge::{
-    default_invocation, to_confidence_and_alternatives, to_router_descriptor,
+    build_invocation, consequence_tier_for, to_confidence_and_alternatives, to_router_descriptor,
 };
 use crate::types::{
     ApiError, ApiScope, InvokeRequest, InvokeResponse, SubmitIntentRequest, SubmitIntentResponse,
@@ -291,9 +291,11 @@ impl ApiGateway {
                 .set_rollout_stage(impl_id, hyperion_model_router::RolloutStage::Ga);
         }
 
-        let decision = self
-            .model_router
-            .route(&default_invocation(&request.contract_id));
+        let invocation = build_invocation(
+            &request.contract_id,
+            consequence_tier_for(risk_assessment.intervention_level),
+        );
+        let decision = self.model_router.route(&invocation);
         if decision.chosen.is_none() {
             return Err(ApiError::NoEligibleImplementation);
         }

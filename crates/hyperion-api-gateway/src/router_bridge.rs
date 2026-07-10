@@ -8,6 +8,7 @@ use hyperion_plugin_framework::{
     ImplementationDescriptor as PluginImplementationDescriptor,
     ImplementationKind as PluginImplKind,
 };
+use hyperion_security::InterventionLevel;
 
 /// Bridges `hyperion-plugin-framework`'s registry shape to
 /// `hyperion-model-router`'s own — the adapter both crates' doc comments
@@ -56,17 +57,47 @@ pub(crate) fn to_router_descriptor(
     }
 }
 
-/// A default `CapabilityInvocation` for a gateway-driven invocation —
-/// `urgency_class`/`consequence_tier`/`cloud_consent` are reasonable,
-/// permissive defaults standing in for signals a real integration would
-/// derive from the request's own context (urgency from the Intent, risk
-/// tier from `hyperion-security`, consent from `hyperion-privacy`'s
-/// `ConsentLedger`) — none of which this bridge threads through yet.
-pub(crate) fn default_invocation(capability_id: &str) -> CapabilityInvocation {
+/// Maps the real `hyperion-security` risk assessment already computed
+/// for this same invocation onto the Model Router's `ConsequenceTier` —
+/// a risky action gets real weight toward quality/privacy over latency/
+/// cost in `WeightVector::for_invocation`, rather than every invocation
+/// being scored as uniformly `Routine`. `SilentProceed`/`NotifyAndProceed`
+/// both read as ordinary, unremarkable consequence; `RequireExplicitConfirm`
+/// is `Sensitive`; `RequireBackupFirst` — the tier that already forced a
+/// real recovery point — is `HighStakes`.
+pub(crate) fn consequence_tier_for(level: InterventionLevel) -> ConsequenceTier {
+    match level {
+        InterventionLevel::SilentProceed | InterventionLevel::NotifyAndProceed => {
+            ConsequenceTier::Routine
+        }
+        InterventionLevel::RequireExplicitConfirm => ConsequenceTier::Sensitive,
+        InterventionLevel::RequireBackupFirst => ConsequenceTier::HighStakes,
+    }
+}
+
+/// A `CapabilityInvocation` for a gateway-driven invocation.
+/// `consequence_tier` is real (see [`consequence_tier_for`]);
+/// `urgency_class`/`cloud_consent` remain permissive, deliberate
+/// defaults — not oversights. `urgency_class` models *synchronous vs.
+/// backgroundable execution*, not emotional urgency in phrasing:
+/// `invoke_capability` is itself always a blocking call the caller waits
+/// on, so `UrgencyClass::Interactive` is already the objectively correct
+/// value here, not a placeholder standing in for a real derivation.
+/// `cloud_consent` staying `true` is also deliberate, not deferred:
+/// `hyperion-privacy::ConsentLedger` is this workspace's canonical
+/// consent mechanism, but that crate's own doc comment explicitly asks
+/// that `hyperion-model-router`'s already-shipped, already-tested
+/// two-value privacy gate *not* be rewired onto it as a rushed
+/// side-effect of unrelated work — "a real, separate migration," in its
+/// own words.
+pub(crate) fn build_invocation(
+    capability_id: &str,
+    consequence_tier: ConsequenceTier,
+) -> CapabilityInvocation {
     CapabilityInvocation {
         capability_id: capability_id.to_string(),
         urgency_class: UrgencyClass::Interactive,
-        consequence_tier: ConsequenceTier::Routine,
+        consequence_tier,
         quality_floor: None,
         latency_budget_ms: 5_000,
         cloud_consent: true,

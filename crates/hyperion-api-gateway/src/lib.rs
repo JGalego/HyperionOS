@@ -92,13 +92,18 @@
 //!   docs/26 §2's Context API actually needs (`assemble`); the rest of
 //!   `hyperion-context`'s surface isn't part of that API shape and stays
 //!   unexposed through the gateway.
-//! - **Real privacy/urgency/consequence signals feeding the Model
-//!   Router.** [`router_bridge::default_invocation`] uses permissive,
-//!   fixed defaults (`Interactive`/`Routine`/`cloud_consent: true`) —
-//!   deriving these from the request's real Intent urgency, a
-//!   `hyperion-security::RiskAssessment`, and a
-//!   `hyperion-privacy::ConsentLedger` lookup respectively is real
-//!   follow-up integration work this bridge doesn't attempt yet.
+//! - **`urgency_class`/`cloud_consent` feeding the Model Router.**
+//!   [`router_bridge::build_invocation`] now derives `consequence_tier`
+//!   from the real `hyperion-security::RiskAssessment` this same call
+//!   already computes, but `urgency_class` stays a fixed `Interactive`
+//!   and `cloud_consent` stays a fixed `true` — deliberately, not by
+//!   omission. See [`router_bridge::build_invocation`]'s own doc comment
+//!   for why: `invoke_capability` is always a synchronous, blocking call,
+//!   so `Interactive` is already objectively correct rather than a
+//!   placeholder; and `hyperion-privacy`'s own crate doc explicitly asks
+//!   that `hyperion-model-router`'s already-shipped privacy gate not be
+//!   rewired onto its `ConsentLedger` as an incidental side effect of
+//!   unrelated work.
 //! - **Per-implementation privacy tier from the Plugin Framework
 //!   manifest.** [`router_bridge::to_router_descriptor`] hardcodes every
 //!   bridged candidate as `PrivacyTier::Local` — `hyperion-plugin-framework`'s
