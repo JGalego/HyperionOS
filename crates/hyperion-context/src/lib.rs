@@ -18,17 +18,26 @@
 //! real Intent (docs/41-implementation-phases.md: "still no Intent Engine,
 //! Agents, or UI" in Phase 2). What *is* real: every signal this crate scores
 //! against is read live from a real [`hyperion_knowledge_graph::KnowledgeGraph`],
-//! never a mock.
+//! never a mock — including, now, [`types::Scope::intent_id`] itself:
+//! `hyperion-intent` persists every Intent as a real node in this same
+//! graph, so [`engine::ContextEngine::assemble`] treats a `scope.intent_id`
+//! that names one exactly like an explicit anchor (traversed for
+//! neighbors too), docs/06 §Architecture's "Intent history" signal
+//! collector made real rather than an inert label nothing ever read. An
+//! `intent_id` that doesn't parse as a real node (any caller not yet
+//! passing one) is silently ignored — no behavior change for them.
 //!
 //! Deliberately deferred, matching this workspace's scoping convention (see
 //! `hyperion-knowledge-graph`'s crate doc for the same pattern):
 //!
-//! - **Intent history, device/session state, calendar/comms signals**
-//!   (docs/06 §Architecture's other four signal collectors) — these need
-//!   [05 — Intent Engine](../05-intent-engine.md) (Phase 3) and consent-
-//!   gated connectors ([16 — Privacy Architecture](../16-privacy-architecture.md),
-//!   Phase 8) that don't exist yet. Only the Knowledge-Graph-backed working
-//!   set and explicit-mention resolution are implemented.
+//! - **Device/session state, calendar/comms signals** (docs/06
+//!   §Architecture's other three signal collectors). Device/session state
+//!   needs `hyperion-device` to persist its `DeviceObject`s as real
+//!   Knowledge Graph nodes first (that crate's own doc names this as its
+//!   own deferred item) — once it does, the same `intent_id`-as-anchor
+//!   pattern above extends naturally. Calendar/comms need consent-gated
+//!   connectors ([16 — Privacy Architecture](../16-privacy-architecture.md))
+//!   that don't exist yet.
 //! - **Adaptive Complexity / `ExpertiseEstimate`** (docs/06 §5.4) is a read
 //!   over vocabulary complexity and error-recovery behavior this crate has
 //!   no source for yet (needs Phase 3's Intent Engine and Phase 4's Agent

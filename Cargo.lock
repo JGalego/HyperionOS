@@ -150,6 +150,7 @@ dependencies = [
  "hyperion-capability",
  "hyperion-ipc",
  "hyperion-knowledge-graph",
+ "hyperion-storage",
  "serde",
  "serde_json",
  "tempfile",

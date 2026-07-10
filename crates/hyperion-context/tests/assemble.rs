@@ -99,6 +99,73 @@ fn assemble_ranks_anchor_and_traversal_neighbors_above_unrelated_objects() {
 }
 
 #[test]
+fn scope_intent_id_naming_a_real_intent_node_pulls_it_in_without_being_an_explicit_anchor() {
+    let (dir, monitor, token) = setup();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let engine = ContextEngine::new(graph.clone());
+
+    // Mirrors how `hyperion-intent` actually persists an Intent: a real
+    // node, type "intent", in this same graph.
+    let intent_node = graph
+        .put_node(
+            &monitor,
+            &token,
+            None,
+            "intent",
+            None,
+            json!({"predicate": "launch_my_startup"}),
+        )
+        .unwrap();
+    let unrelated = graph
+        .put_node(
+            &monitor,
+            &token,
+            None,
+            "document",
+            None,
+            json!({"title": "unrelated notes"}),
+        )
+        .unwrap();
+
+    let scope = Scope {
+        intent_id: intent_node.0.to_string(),
+        session_id: "session-1".to_string(),
+        mentions: Vec::new(),
+        // Deliberately no explicit anchors -- the Intent node must be
+        // pulled in purely because `scope.intent_id` names it.
+        anchors: Vec::new(),
+    };
+    let bundle = engine
+        .assemble(&monitor, &token, &scope, Budget::default())
+        .unwrap();
+
+    let ids: Vec<_> = bundle.entries.iter().map(|e| e.node_id).collect();
+    assert!(
+        ids.contains(&intent_node),
+        "the real Intent node scope.intent_id names must enter the candidate pool"
+    );
+    assert!(!ids.contains(&unrelated));
+}
+
+#[test]
+fn an_intent_id_that_is_not_a_real_node_is_silently_ignored() {
+    let (dir, monitor, token) = setup();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let engine = ContextEngine::new(graph.clone());
+
+    let scope = Scope {
+        intent_id: "not-a-number".to_string(),
+        session_id: "session-1".to_string(),
+        mentions: Vec::new(),
+        anchors: Vec::new(),
+    };
+    let bundle = engine
+        .assemble(&monitor, &token, &scope, Budget::default())
+        .unwrap();
+    assert!(bundle.entries.is_empty());
+}
+
+#[test]
 fn assemble_never_exceeds_the_token_budget() {
     let (dir, monitor, token) = setup();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());

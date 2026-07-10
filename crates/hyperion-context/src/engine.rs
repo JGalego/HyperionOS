@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
 use hyperion_knowledge_graph::{GraphError, GraphQuery, KnowledgeGraph, NodeId, ProvenanceChain};
+use hyperion_storage::ObjectId;
 
 use crate::types::{
     Budget, ContextBundle, ContextEntry, ExpertiseEstimate, ExpertiseLevel, InclusionMode, Scope,
@@ -126,7 +127,23 @@ impl ContextEngine {
         let working_set = working_sets.entry(scope.session_id.clone()).or_default();
 
         let mut distances: HashMap<NodeId, usize> = HashMap::new();
-        for &anchor in &scope.anchors {
+        // docs/06 §Architecture's "Intent history" signal collector:
+        // `hyperion-intent` stores every Intent as a real node in this
+        // same graph, so the Intent actually driving this assembly is
+        // itself a real anchor, not just an inert label on `scope` — its
+        // own recent history (parent/sibling/dependency neighbors)
+        // becomes part of the candidate pool exactly like an explicit
+        // anchor would. `intent_id` is only ever traversed from if it
+        // both parses as a real `NodeId` and genuinely names a node in
+        // this graph — callers (including every existing test) that pass
+        // an opaque placeholder string see no behavior change.
+        let intent_anchor: Option<NodeId> = scope
+            .intent_id
+            .parse::<u64>()
+            .ok()
+            .map(ObjectId)
+            .filter(|&id| self.graph.get(monitor, token, id).is_ok());
+        for &anchor in scope.anchors.iter().chain(intent_anchor.iter()) {
             distances.entry(anchor).or_insert(0);
             let subgraph = self
                 .graph
