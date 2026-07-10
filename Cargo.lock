@@ -148,6 +148,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-model-router"
+version = "0.1.0"
+dependencies = [
+ "hyperion-ai-runtime",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-scheduler"
 version = "0.1.0"
 dependencies = [
