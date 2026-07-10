@@ -137,6 +137,13 @@ pub struct PublishSubmission {
     pub package_hash: u64,
     pub contract: Contract,
     pub implementation: Implementation,
+    /// Not a docs/25 field — carried here so [`crate::publish::publish`]
+    /// has a real quality signal to hand
+    /// `hyperion_plugin_framework::CapabilityManifest::quality_score`,
+    /// which the Model Router ultimately scores implementations by. A
+    /// caller derives this from [`crate::HarnessReport`]'s golden-case
+    /// pass rate in a real workflow.
+    pub quality_score: f32,
     pub declared_permissions: Vec<Operation>,
     pub statically_observed_permissions: Vec<Operation>,
     pub review_status: ReviewStatus,

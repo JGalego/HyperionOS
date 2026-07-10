@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use hyperion_ai_runtime::{LocalAiRuntime, MockBackend};
 use hyperion_api_gateway::{ApiError, ApiGateway, ApiScope};
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_context::ContextEngine;
@@ -11,7 +12,15 @@ use hyperion_explainability::ExplanationStore;
 use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::KnowledgeGraph;
 use hyperion_memory::MemoryEngine;
+use hyperion_model_router::ModelRouter;
 use hyperion_plugin_framework::PluginRegistry;
+
+fn model_router() -> Arc<ModelRouter> {
+    Arc::new(ModelRouter::new(Arc::new(LocalAiRuntime::new(
+        Box::new(MockBackend),
+        4_096,
+    ))))
+}
 
 fn setup() -> (
     CapabilityMonitor,
@@ -27,7 +36,14 @@ fn setup() -> (
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
-    let gateway = ApiGateway::new(intent, memory, graph, registry, explainability);
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry,
+        explainability,
+        model_router(),
+    );
     (monitor, root, gateway)
 }
 
@@ -73,7 +89,14 @@ fn revoking_the_token_blocks_further_access_re_checked_live() {
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
-    let gateway = ApiGateway::new(intent, memory, graph, registry, explainability);
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry,
+        explainability,
+        model_router(),
+    );
 
     gateway
         .grant_scopes(

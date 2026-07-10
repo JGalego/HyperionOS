@@ -116,7 +116,7 @@ impl PluginRegistry {
         let descriptor = ImplementationDescriptor {
             plugin_id,
             implementation_kind: cm.implementation_kind,
-            quality_score: 0.5,
+            quality_score: cm.quality_score,
             version: cm.version,
         };
 

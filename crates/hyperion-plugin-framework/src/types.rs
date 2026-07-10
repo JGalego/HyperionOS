@@ -61,12 +61,21 @@ pub struct SemanticContract {
     pub side_effects: Vec<SideEffect>,
 }
 
-/// docs/24 §4's `CapabilityManifest`.
+/// docs/24 §4's `CapabilityManifest`. `quality_score` stands in for the
+/// doc's `quality_hooks: BenchmarkHarnessRef` — a real benchmark harness
+/// doesn't exist in this workspace, so a publisher declares this value
+/// directly, the same "caller supplies what a real harness would
+/// measure" pattern this workspace uses throughout. This is the one
+/// field [23 — Multi-Model Orchestration](../23-multi-model-orchestration.md)'s
+/// Model Router actually needs to score competing implementations
+/// against each other — without it, every registered implementation
+/// would be indistinguishable to real quality-based selection.
 #[derive(Debug, Clone)]
 pub struct CapabilityManifest {
     pub capability_id: CapabilityId,
     pub contract: SemanticContract,
     pub implementation_kind: ImplementationKind,
+    pub quality_score: f32,
     pub version: u32,
 }
 

@@ -22,6 +22,7 @@ fn manifest_with_web_search() -> PluginManifest {
                 side_effects: vec![SideEffect::NetworkEgress],
             },
             implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.5,
             version: 1,
         })],
         requested_permissions: vec![CapabilityGrantRequest {

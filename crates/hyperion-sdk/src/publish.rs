@@ -24,6 +24,7 @@ fn implementation_kind(runtime: Runtime) -> ImplementationKind {
 fn to_capability_manifest(
     contract: &Contract,
     implementation: &Implementation,
+    quality_score: f32,
 ) -> CapabilityManifest {
     CapabilityManifest {
         capability_id: contract.id.clone(),
@@ -33,6 +34,7 @@ fn to_capability_manifest(
             side_effects: contract.side_effects.clone(),
         },
         implementation_kind: implementation_kind(implementation.runtime),
+        quality_score,
         version: contract.version,
     }
 }
@@ -43,6 +45,7 @@ fn to_capability_manifest(
 pub fn to_plugin_manifest(
     contract: &Contract,
     implementation: &Implementation,
+    quality_score: f32,
     plugin_id: u64,
     publisher: &str,
     sdk_version: u32,
@@ -65,6 +68,7 @@ pub fn to_plugin_manifest(
         contributions: vec![Contribution::Capability(to_capability_manifest(
             contract,
             implementation,
+            quality_score,
         ))],
         requested_permissions,
         min_trust_depth: contract.trust_level.min_depth(),
@@ -82,6 +86,7 @@ pub fn to_plugin_manifest(
 pub fn prepare_submission(
     contract: Contract,
     implementation: Implementation,
+    quality_score: f32,
     statically_observed_permissions: Vec<hyperion_plugin_framework::Operation>,
 ) -> Result<PublishSubmission, SdkError> {
     let declared: HashSet<hyperion_plugin_framework::Operation> = contract
@@ -106,6 +111,7 @@ pub fn prepare_submission(
         package_hash: 0,
         contract,
         implementation,
+        quality_score,
         declared_permissions: declared.into_iter().collect(),
         statically_observed_permissions,
         review_status,
@@ -145,6 +151,7 @@ pub fn publish(
     let manifest = to_plugin_manifest(
         &submission.contract,
         &submission.implementation,
+        submission.quality_score,
         plugin_id,
         publisher,
         sdk_version,

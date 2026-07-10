@@ -22,6 +22,7 @@ fn manifest() -> PluginManifest {
                 side_effects: vec![SideEffect::None],
             },
             implementation_kind: ImplementationKind::LocalSmallModel,
+            quality_score: 0.5,
             version: 1,
         })],
         requested_permissions: vec![],

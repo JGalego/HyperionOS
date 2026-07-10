@@ -7,8 +7,10 @@ use hyperion_explainability::{ControlState, ExplanationStore};
 use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::{GraphQuery, KnowledgeGraph, NodeId, QueryHit};
 use hyperion_memory::{ErasureReceipt, MemoryEngine, MemoryFilter};
+use hyperion_model_router::ModelRouter;
 use hyperion_plugin_framework::PluginRegistry;
 
+use crate::router_bridge::{default_invocation, to_router_descriptor};
 use crate::types::{
     ApiError, ApiScope, InvokeRequest, InvokeResponse, SubmitIntentRequest, SubmitIntentResponse,
 };
@@ -24,17 +26,20 @@ pub struct ApiGateway {
     graph: Arc<KnowledgeGraph>,
     registry: Arc<PluginRegistry>,
     explainability: Arc<ExplanationStore>,
+    model_router: Arc<ModelRouter>,
     scope_grants: Mutex<HashMap<TokenId, HashSet<ApiScope>>>,
     next_action_id: AtomicU64,
 }
 
 impl ApiGateway {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         intent: Arc<IntentEngine>,
         memory: Arc<MemoryEngine>,
         graph: Arc<KnowledgeGraph>,
         registry: Arc<PluginRegistry>,
         explainability: Arc<ExplanationStore>,
+        model_router: Arc<ModelRouter>,
     ) -> Self {
         ApiGateway {
             intent,
@@ -42,6 +47,7 @@ impl ApiGateway {
             graph,
             registry,
             explainability,
+            model_router,
             scope_grants: Mutex::new(HashMap::new()),
             next_action_id: AtomicU64::new(1),
         }
@@ -172,13 +178,16 @@ impl ApiGateway {
     }
 
     /// docs/26 §4's `invokeCapability`: look up the Contract's competing
-    /// implementations, pick the best (see this crate's doc comment on
-    /// the deferred real Model Router selection), dispatch, and record an
-    /// Explanation — explain-then-commit, per
-    /// [18 — Explainability & Trust](../18-explainability-and-trust.md).
-    /// On dispatch failure, retries against the next-best candidate
-    /// before giving up with [`ApiError::NoEligibleImplementation`],
-    /// matching the doc's own (partially-specified) fallback loop.
+    /// implementations, ask the real `hyperion-model-router` which one
+    /// wins (via [`crate::router_bridge`]'s adapter — see this crate's
+    /// doc comment for exactly what that bridge does and doesn't carry
+    /// yet), dispatch, and record an Explanation — explain-then-commit,
+    /// per [18 — Explainability & Trust](../18-explainability-and-trust.md).
+    /// On dispatch failure, reports the failure to the Model Router's
+    /// real circuit breaker and retries against the next entry in its
+    /// `fallback_chain` before giving up with
+    /// [`ApiError::NoEligibleImplementation`], matching docs/26's own
+    /// (partially-specified) fallback loop.
     pub fn invoke_capability(
         &self,
         monitor: &CapabilityMonitor,
@@ -192,13 +201,27 @@ impl ApiGateway {
             .registry
             .query(&request.contract_id)
             .ok_or(ApiError::NoEligibleImplementation)?;
-        let mut candidates = entry.implementations.clone();
-        candidates.sort_by(|a, b| {
-            b.quality_score
-                .partial_cmp(&a.quality_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        if candidates.is_empty() {
+        if entry.implementations.is_empty() {
+            return Err(ApiError::NoEligibleImplementation);
+        }
+
+        // Sync the Model Router's view of this capability_id's candidates
+        // with the Plugin Framework's current registry state. Re-done on
+        // every call rather than incrementally maintained — correctness
+        // over efficiency, appropriate at this scale (see this crate's
+        // doc comment).
+        for plugin_descriptor in &entry.implementations {
+            let router_descriptor = to_router_descriptor(plugin_descriptor, &request.contract_id);
+            let impl_id = router_descriptor.impl_id;
+            self.model_router.register_implementation(router_descriptor);
+            self.model_router
+                .set_rollout_stage(impl_id, hyperion_model_router::RolloutStage::Ga);
+        }
+
+        let decision = self
+            .model_router
+            .route(&default_invocation(&request.contract_id));
+        if decision.chosen.is_none() {
             return Err(ApiError::NoEligibleImplementation);
         }
 
@@ -216,22 +239,28 @@ impl ApiGateway {
         self.explainability
             .transition(monitor, token, explanation_id, ControlState::Executing)?;
 
-        for candidate in &candidates {
-            if let Ok(outputs) = hyperion_agent_runtime::dispatch_stub_capability(
+        for impl_id in &decision.fallback_chain {
+            match hyperion_agent_runtime::dispatch_stub_capability(
                 &request.contract_id,
                 &request.inputs,
             ) {
-                self.explainability.transition(
-                    monitor,
-                    token,
-                    explanation_id,
-                    ControlState::Completed,
-                )?;
-                return Ok(InvokeResponse {
-                    outputs,
-                    implementation_used: candidate.plugin_id,
-                    explanation_id,
-                });
+                Ok(outputs) => {
+                    self.model_router.report_outcome(*impl_id, true);
+                    self.explainability.transition(
+                        monitor,
+                        token,
+                        explanation_id,
+                        ControlState::Completed,
+                    )?;
+                    return Ok(InvokeResponse {
+                        outputs,
+                        implementation_used: impl_id.0,
+                        explanation_id,
+                    });
+                }
+                Err(_) => {
+                    self.model_router.report_outcome(*impl_id, false);
+                }
             }
         }
 

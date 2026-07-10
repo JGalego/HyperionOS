@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use hyperion_ai_runtime::{LocalAiRuntime, MockBackend};
 use hyperion_api_gateway::{
     ApiError, ApiGateway, ApiScope, InvokeRequest, SubmitIntentRequest, SubmitIntentResponse,
 };
@@ -15,10 +16,18 @@ use hyperion_explainability::ExplanationStore;
 use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::{GraphQuery, KnowledgeGraph};
 use hyperion_memory::MemoryEngine;
+use hyperion_model_router::ModelRouter;
 use hyperion_plugin_framework::{
     signature, CapabilityManifest, Contribution, ImplementationKind, PluginManifest,
     PluginRegistry, SemanticContract, SideEffect, TrustDepth,
 };
+
+fn model_router() -> Arc<ModelRouter> {
+    Arc::new(ModelRouter::new(Arc::new(LocalAiRuntime::new(
+        Box::new(MockBackend),
+        4_096,
+    ))))
+}
 
 fn setup() -> (
     CapabilityMonitor,
@@ -34,7 +43,14 @@ fn setup() -> (
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
-    let gateway = ApiGateway::new(intent, memory, graph, registry, explainability);
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry,
+        explainability,
+        model_router(),
+    );
     (monitor, root, gateway)
 }
 
@@ -152,6 +168,7 @@ fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation
         graph,
         registry.clone(),
         explainability.clone(),
+        model_router(),
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 
@@ -168,6 +185,7 @@ fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation
                 side_effects: vec![SideEffect::NetworkEgress],
             },
             implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.9,
             version: 1,
         })],
         requested_permissions: vec![],
@@ -197,6 +215,205 @@ fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation
     assert_eq!(
         record.control_state,
         hyperion_explainability::ControlState::Completed
+    );
+}
+
+#[test]
+fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_whose_circuit_is_open(
+) {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let context = Arc::new(ContextEngine::new(graph.clone()));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let memory = Arc::new(MemoryEngine::new(graph.clone()));
+    let registry = Arc::new(PluginRegistry::new());
+    let explainability = Arc::new(ExplanationStore::new());
+    let router = model_router();
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry.clone(),
+        explainability,
+        router.clone(),
+    );
+    gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
+
+    let contract = SemanticContract {
+        inputs: vec!["query".to_string()],
+        outputs: vec!["results".to_string()],
+        side_effects: vec![SideEffect::NetworkEgress],
+    };
+
+    // Plugin 1: a modest quality edge (0.7 vs 0.6) that alone would win,
+    // but its underlying implementation has been failing repeatedly
+    // (circuit open).
+    let mut circuit_open_plugin = PluginManifest {
+        plugin_id: 1,
+        publisher: "acme-plugins".to_string(),
+        signature: 0,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract: contract.clone(),
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.7,
+            version: 1,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    circuit_open_plugin.signature = signature(&circuit_open_plugin);
+    registry
+        .install(
+            &mut monitor,
+            &root,
+            circuit_open_plugin,
+            TrustDepth::D2,
+            true,
+            1_000,
+        )
+        .unwrap();
+
+    // Plugin 2: slightly lower quality, but healthy.
+    let mut healthy_plugin = PluginManifest {
+        plugin_id: 2,
+        publisher: "globex-plugins".to_string(),
+        signature: 0,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract,
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.6,
+            version: 1,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    healthy_plugin.signature = signature(&healthy_plugin);
+    registry
+        .install(
+            &mut monitor,
+            &root,
+            healthy_plugin,
+            TrustDepth::D2,
+            true,
+            1_001,
+        )
+        .unwrap();
+
+    // Trip plugin 1's circuit breaker directly against the real
+    // ModelRouter this gateway shares — three consecutive failures
+    // demotes its availability_fit to near-zero, per
+    // hyperion-model-router's own recovery mechanism.
+    for _ in 0..3 {
+        router.report_outcome(hyperion_model_router::ImplId(1), false);
+    }
+
+    let response = gateway
+        .invoke_capability(
+            &monitor,
+            &root,
+            InvokeRequest {
+                contract_id: "web.search".to_string(),
+                inputs: serde_json::json!({"query": "hyperion os"}),
+                agent_id: 1,
+                intent_id: 1,
+            },
+            1_002,
+        )
+        .unwrap();
+
+    assert_eq!(response.implementation_used, 2, "a real circuit-open candidate must lose to a healthy lower-quality one, proving this is the real Model Router's weighted scoring, not a bare quality sort");
+}
+
+#[test]
+fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let context = Arc::new(ContextEngine::new(graph.clone()));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let memory = Arc::new(MemoryEngine::new(graph.clone()));
+    let registry = Arc::new(PluginRegistry::new());
+    let explainability = Arc::new(ExplanationStore::new());
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry.clone(),
+        explainability,
+        model_router(),
+    );
+    gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
+
+    let contract = SemanticContract {
+        inputs: vec!["query".to_string()],
+        outputs: vec!["results".to_string()],
+        side_effects: vec![SideEffect::NetworkEgress],
+    };
+
+    let mut low = PluginManifest {
+        plugin_id: 1,
+        publisher: "acme-plugins".to_string(),
+        signature: 0,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract: contract.clone(),
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.3,
+            version: 1,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    low.signature = signature(&low);
+    registry
+        .install(&mut monitor, &root, low, TrustDepth::D2, true, 1_000)
+        .unwrap();
+
+    let mut high = PluginManifest {
+        plugin_id: 2,
+        publisher: "globex-plugins".to_string(),
+        signature: 0,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract,
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.9,
+            version: 1,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    high.signature = signature(&high);
+    registry
+        .install(&mut monitor, &root, high, TrustDepth::D2, true, 1_001)
+        .unwrap();
+
+    let response = gateway
+        .invoke_capability(
+            &monitor,
+            &root,
+            InvokeRequest {
+                contract_id: "web.search".to_string(),
+                inputs: serde_json::json!({"query": "hyperion os"}),
+                agent_id: 1,
+                intent_id: 1,
+            },
+            1_000,
+        )
+        .unwrap();
+
+    assert_eq!(
+        response.implementation_used, 2,
+        "with both candidates healthy, the real Model Router must prefer the higher-quality one"
     );
 }
 

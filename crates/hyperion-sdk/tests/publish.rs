@@ -38,6 +38,7 @@ fn an_implementation_that_statically_observes_an_undeclared_permission_fails_the
     let result = prepare_submission(
         contract_without_permissions(),
         implementation(),
+        0.5,
         vec![Operation::NetworkEgress],
     );
     assert!(matches!(
@@ -48,8 +49,13 @@ fn an_implementation_that_statically_observes_an_undeclared_permission_fails_the
 
 #[test]
 fn a_contract_with_no_sensitive_permissions_is_auto_approved() {
-    let submission =
-        prepare_submission(contract_without_permissions(), implementation(), vec![]).unwrap();
+    let submission = prepare_submission(
+        contract_without_permissions(),
+        implementation(),
+        0.5,
+        vec![],
+    )
+    .unwrap();
     assert_eq!(submission.review_status, ReviewStatus::AutoApproved);
 }
 
@@ -63,8 +69,13 @@ fn a_contract_requesting_network_egress_requires_human_review() {
         justification: "fetch results".to_string(),
     }];
 
-    let submission =
-        prepare_submission(contract, implementation(), vec![Operation::NetworkEgress]).unwrap();
+    let submission = prepare_submission(
+        contract,
+        implementation(),
+        0.5,
+        vec![Operation::NetworkEgress],
+    )
+    .unwrap();
     assert_eq!(submission.review_status, ReviewStatus::PendingHumanReview);
 }
 
@@ -81,8 +92,13 @@ fn publishing_without_the_required_human_approval_is_rejected() {
         scope: "web.search".to_string(),
         justification: "fetch results".to_string(),
     }];
-    let submission =
-        prepare_submission(contract, implementation(), vec![Operation::NetworkEgress]).unwrap();
+    let submission = prepare_submission(
+        contract,
+        implementation(),
+        0.5,
+        vec![Operation::NetworkEgress],
+    )
+    .unwrap();
 
     let result = publish(
         &mut monitor,
@@ -106,8 +122,13 @@ fn a_published_capability_lands_in_the_real_registry_as_a_candidate() {
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let registry = PluginRegistry::new();
 
-    let submission =
-        prepare_submission(contract_without_permissions(), implementation(), vec![]).unwrap();
+    let submission = prepare_submission(
+        contract_without_permissions(),
+        implementation(),
+        0.5,
+        vec![],
+    )
+    .unwrap();
     let handle = publish(
         &mut monitor,
         &root,
@@ -132,8 +153,13 @@ fn a_second_independently_published_capability_competes_as_a_second_candidate() 
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let registry = PluginRegistry::new();
 
-    let first =
-        prepare_submission(contract_without_permissions(), implementation(), vec![]).unwrap();
+    let first = prepare_submission(
+        contract_without_permissions(),
+        implementation(),
+        0.5,
+        vec![],
+    )
+    .unwrap();
     publish(
         &mut monitor,
         &root,
@@ -150,7 +176,8 @@ fn a_second_independently_published_capability_competes_as_a_second_candidate() 
 
     let mut second_impl = implementation();
     second_impl.name = "globex-summarizer".to_string();
-    let second = prepare_submission(contract_without_permissions(), second_impl, vec![]).unwrap();
+    let second =
+        prepare_submission(contract_without_permissions(), second_impl, 0.5, vec![]).unwrap();
     publish(
         &mut monitor,
         &root,
