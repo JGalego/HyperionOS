@@ -445,6 +445,7 @@ version = "0.1.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-knowledge-graph",
+ "hyperion-observability",
  "hyperion-recovery",
  "hyperion-storage",
  "serde_json",

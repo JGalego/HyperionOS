@@ -31,6 +31,11 @@
 //! entirely separate from `hyperion-recovery` for exactly the reason the
 //! doc gives (the Storage Engine's stores aren't slot-scoped; the same
 //! live data boots regardless of which image is active).
+//! [`telemetry::cohort_health_from_telemetry`] closes this crate's own
+//! named "caller supplies `CohortHealth` directly" gap for real, reading
+//! the most recent matching samples off a real
+//! `hyperion_observability::TelemetryCollector` rather than a caller
+//! inventing the numbers.
 //!
 //! Deliberately deferred, and why:
 //!
@@ -42,11 +47,14 @@
 //! - **Real signed package fetch/CDN distribution.** `UpdateManifest`
 //!   carries no `package_ref`/content hash to fetch — this crate
 //!   receives an already-in-hand manifest, never downloads anything.
-//! - **Real `hyperion-observability` telemetry polling for
-//!   `cohort_health`.** A caller supplies `CohortHealth` per stage
-//!   directly, exactly as it would read one off a real dashboard —
-//!   wiring this to `hyperion-observability`'s real metrics is future
-//!   integration work, not attempted here.
+//! - **Automatic per-stage polling wired into `apply_update` itself.**
+//!   [`telemetry::cohort_health_from_telemetry`] can build a real
+//!   [`types::CohortHealth`] from `hyperion-observability`'s real
+//!   metrics, but `apply_update`'s `health_for_stage` callback is still
+//!   caller-driven — this crate has no real fleet cohort selection (see
+//!   the bullet above) to decide *which* metric name/tag corresponds to
+//!   "this stage's cohort," so it cannot call the telemetry reader
+//!   itself without inventing that scoping convention.
 //! - **A real expand/contract migration DSL with a declared inverse.**
 //!   [`types::UpdateManifest::touched_objects`] is the flattened input
 //!   `hyperion-recovery`'s bounded, per-object snapshot needs — this
@@ -61,10 +69,12 @@
 
 mod orchestrator;
 mod system_image;
+mod telemetry;
 mod types;
 
 pub use orchestrator::{signature, UpdateOrchestrator};
 pub use system_image::SystemImageController;
+pub use telemetry::cohort_health_from_telemetry;
 pub use types::{
     CohortHealth, CohortStage, CompatibilityCheckResult, HealthThresholds, RollbackReceipt,
     RolloutPolicy, RolloutState, SystemImageSlot, SystemImageSlotName, UpdateError, UpdateManifest,
