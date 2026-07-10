@@ -20,6 +20,17 @@
 //! criterion — the "Launch my product" trace running end-to-end against
 //! stub Capabilities, with a deliberately-failed Agent contained without
 //! corrupting the shared goal state — is this crate's own integration test.
+//! Every real dispatch [`engine::CoordinationSession::allocate`] makes also
+//! opens a real `hyperion-explainability` Explanation Record — `begin`
+//! before dispatch, a `ReasoningStep` naming the assigned Agent and task,
+//! `transition` to `Completed`/`RolledBack`/`Interrupted` depending on the
+//! real [`hyperion_agent_runtime::InvokeOutcome`] — closing the gap
+//! `hyperion-explainability`'s own doc comment names (this crate's
+//! `allocate` specifically) rather than `hyperion-agent-runtime::invoke`
+//! itself, since that lower-level crate can't depend on
+//! `hyperion-explainability` without a real dependency cycle through
+//! `hyperion-recovery` (which depends on `hyperion-agent-runtime` for
+//! crash-recovery reconciliation).
 //!
 //! Deliberately deferred, and why:
 //!
@@ -51,6 +62,13 @@
 //!   optimization for tens of concurrent Agents) — this crate's
 //!   `SharedPlan` is one unpartitioned structure, adequate at this phase's
 //!   test scale.
+//! - **A workspace-wide, shared Explanation Record store.** This
+//!   session's `ExplanationStore` is private to one `CoordinationSession`,
+//!   not shared with `hyperion-api-gateway`'s own separate store or with
+//!   `hyperion-federation`'s direct `AgentRuntime::invoke` calls
+//!   (`offload_execute`/`invoke_agent`), which remain unwired — a
+//!   follow-up for whichever future slice needs one workspace-wide trace
+//!   rather than several independent ones.
 
 mod catalog;
 mod engine;

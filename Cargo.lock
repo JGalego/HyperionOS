@@ -161,6 +161,7 @@ dependencies = [
  "hyperion-agent-runtime",
  "hyperion-capability",
  "hyperion-context",
+ "hyperion-explainability",
  "hyperion-intent",
  "hyperion-knowledge-graph",
  "serde",

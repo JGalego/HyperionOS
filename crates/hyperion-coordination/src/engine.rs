@@ -1,9 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_agent_runtime::{AgentRuntime, InvokeOutcome, LifecycleState, TrustTier};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_explainability::{
+    ControlState, ExplanationId, ExplanationRecord, ExplanationStore, ReasoningStep,
+};
 use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::NodeId;
 
@@ -18,6 +22,13 @@ use crate::types::{
 /// failure — escalate").
 const RETRY_LIMIT: u32 = 1;
 
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock before Unix epoch")
+        .as_secs()
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CoordError {
     #[error("capability does not authorize this operation")]
@@ -26,6 +37,8 @@ pub enum CoordError {
     Intent(#[from] hyperion_intent::IntentError),
     #[error("agent runtime error: {0}")]
     Agent(#[from] hyperion_agent_runtime::AgentError),
+    #[error("explainability error: {0}")]
+    Explainability(#[from] hyperion_explainability::ExplainabilityError),
     #[error("no such coordination session")]
     NotFound,
     #[error("no such task in this session")]
@@ -47,6 +60,14 @@ pub struct CoordinationSession {
     pending_failures: Mutex<HashSet<(u64, NodeId)>>,
     next_session_id: AtomicU64,
     next_conflict_id: AtomicU64,
+    /// docs/18's Explanation Record store for this session's own
+    /// `allocate`-driven invocations — see [`Self::allocate`] and
+    /// [`Self::explanation`]. Owned here, not by `hyperion-agent-runtime`
+    /// itself, because that crate can't depend on `hyperion-explainability`
+    /// without a real dependency cycle through `hyperion-recovery` — see
+    /// this crate's doc comment.
+    explanations: ExplanationStore,
+    next_action_id: AtomicU64,
 }
 
 impl CoordinationSession {
@@ -58,7 +79,15 @@ impl CoordinationSession {
             pending_failures: Mutex::new(HashSet::new()),
             next_session_id: AtomicU64::new(1),
             next_conflict_id: AtomicU64::new(1),
+            explanations: ExplanationStore::new(),
+            next_action_id: AtomicU64::new(1),
         }
+    }
+
+    /// docs/18's "queryable Explanation Record" surface for an
+    /// allocation's Capability dispatch — see [`Self::allocate`].
+    pub fn explanation(&self, id: ExplanationId) -> Option<ExplanationRecord> {
+        self.explanations.get(id)
     }
 
     fn require(
@@ -271,34 +300,82 @@ impl CoordinationSession {
                 serde_json::json!({"task": plan.nodes[idx].description, "force_fail": force_fail});
             let capability = required_capabilities.first().cloned().unwrap_or_default();
 
-            let outcome =
-                match self
-                    .agent_runtime
-                    .invoke(monitor, token, agent_id, &capability, args)?
-                {
-                    InvokeOutcome::Result(_) => {
-                        plan.nodes[idx].status = TaskStatus::Done;
-                        plan.version += 1;
-                        TaskStatus::Done
-                    }
-                    InvokeOutcome::Failed(_) => {
-                        self.handle_task_failure(plan, idx, session_id);
-                        plan.version += 1;
-                        plan.nodes[idx].status
-                    }
-                    InvokeOutcome::Denied
-                    | InvokeOutcome::PendingConsent
-                    | InvokeOutcome::QuotaExceeded => {
-                        // Leave claimed for a later tick rather than treating a
-                        // grant/quota stall as a task failure.
-                        plan.nodes[idx].status = TaskStatus::Claimed;
-                        TaskStatus::Claimed
-                    }
-                };
+            // docs/18's explain-then-commit, opened before the real
+            // dispatch runs — `hyperion-explainability`'s own doc comment
+            // names this crate's `allocate` as one of the Phase 3-7 call
+            // sites nothing had wired yet.
+            let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
+            let explanation_id = self.explanations.begin(
+                monitor,
+                token,
+                action_id,
+                plan.root_intent.0,
+                agent_id,
+                &capability,
+                vec![],
+                now(),
+            )?;
+            self.explanations.append_step(
+                monitor,
+                token,
+                explanation_id,
+                ReasoningStep {
+                    step_index: 0,
+                    description: format!(
+                        "allocated agent {agent_id} to task '{}'",
+                        plan.nodes[idx].description
+                    ),
+                    capability_ref: Some(capability.clone()),
+                    inputs_ref: vec![task_id],
+                    output_ref: None,
+                },
+                Vec::new(),
+            )?;
+            self.explanations.transition(
+                monitor,
+                token,
+                explanation_id,
+                ControlState::Executing,
+            )?;
+
+            let invoke_outcome =
+                self.agent_runtime
+                    .invoke(monitor, token, agent_id, &capability, args)?;
+
+            let (control_state, outcome) = match invoke_outcome {
+                InvokeOutcome::Result(_) => {
+                    plan.nodes[idx].status = TaskStatus::Done;
+                    plan.version += 1;
+                    (ControlState::Completed, TaskStatus::Done)
+                }
+                InvokeOutcome::Failed(_) => {
+                    self.handle_task_failure(plan, idx, session_id);
+                    plan.version += 1;
+                    (ControlState::RolledBack, plan.nodes[idx].status)
+                }
+                InvokeOutcome::Denied => {
+                    // No effect ever occurred — the closest real terminal
+                    // state, not "interrupted" (nothing was running to
+                    // interrupt).
+                    plan.nodes[idx].status = TaskStatus::Claimed;
+                    (ControlState::RolledBack, TaskStatus::Claimed)
+                }
+                InvokeOutcome::PendingConsent | InvokeOutcome::QuotaExceeded => {
+                    // Leave claimed for a later tick rather than treating a
+                    // grant/quota stall as a task failure — genuinely
+                    // "paused, waiting on something external," which is
+                    // exactly what `Interrupted` means here.
+                    plan.nodes[idx].status = TaskStatus::Claimed;
+                    (ControlState::Interrupted, TaskStatus::Claimed)
+                }
+            };
+            self.explanations
+                .transition(monitor, token, explanation_id, control_state)?;
             records.push(AllocationRecord {
                 task_id,
                 agent_instance: agent_id,
                 outcome,
+                explanation_id,
             });
         }
 

@@ -101,6 +101,54 @@ fn launch_trace_completes_all_tasks_across_ticks_respecting_dependencies() {
 }
 
 #[test]
+fn each_allocation_produces_a_real_queryable_explanation_record() {
+    let (_dir, monitor, token, intent_engine, coordination) = setup();
+    let root = match intent_engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+    let session = coordination
+        .create_session(&monitor, &token, &intent_engine, root)
+        .unwrap();
+
+    // Tick 1: market_research succeeds.
+    let records = coordination.allocate(&monitor, &token, session).unwrap();
+    assert_eq!(records.len(), 1);
+    let record = coordination.explanation(records[0].explanation_id).unwrap();
+    assert_eq!(
+        record.control_state,
+        hyperion_explainability::ControlState::Completed
+    );
+    assert_eq!(record.triggering_intent_id, root.0);
+    assert_eq!(record.agent_id, records[0].agent_instance);
+    assert!(!record.reasoning_chain.is_empty());
+
+    // Inject a failure on the next ready task and confirm the resulting
+    // record reflects the real outcome, not a fixed placeholder.
+    let plan = coordination.get_plan(&monitor, &token, session).unwrap();
+    let business_model = task_named(&plan, "business_model").task_id;
+    coordination
+        .inject_failure(&monitor, &token, session, business_model)
+        .unwrap();
+    let records = coordination.allocate(&monitor, &token, session).unwrap();
+    let failed_record = records
+        .iter()
+        .find(|r| r.task_id == business_model)
+        .unwrap();
+    let record = coordination
+        .explanation(failed_record.explanation_id)
+        .unwrap();
+    assert_eq!(
+        record.control_state,
+        hyperion_explainability::ControlState::RolledBack,
+        "an injected capability failure must roll back its own explanation record"
+    );
+}
+
+#[test]
 fn a_failed_task_is_contained_retried_once_then_escalated_without_stalling_siblings() {
     let (_dir, monitor, token, intent_engine, coordination) = setup();
     let root = match intent_engine

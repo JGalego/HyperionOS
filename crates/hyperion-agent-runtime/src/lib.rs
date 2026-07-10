@@ -49,6 +49,14 @@
 //! - **User consent UI** ([13 — Dynamic UI Runtime](../13-dynamic-ui-runtime.md),
 //!   Phase 5) — [`AgentRuntime::resolve_consent`] is a direct, caller-driven
 //!   API standing in for a real consent prompt round-trip.
+//! - **`hyperion-explainability` integration.** This crate cannot depend
+//!   on `hyperion-explainability` directly — `hyperion-explainability`
+//!   depends on `hyperion-recovery`, which itself depends on this crate
+//!   (for crash-recovery reconciliation against in-flight Agent state),
+//!   so a direct dependency here would be a real cycle. Explanation
+//!   Record wiring for a dispatched Capability call belongs one layer up,
+//!   in whichever crate calls [`AgentRuntime::invoke`] (`hyperion-coordination`,
+//!   `hyperion-federation`) and isn't itself downstream of `hyperion-recovery`.
 
 mod broker;
 mod runtime;

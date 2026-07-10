@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use hyperion_agent_runtime::TrustTier;
+use hyperion_explainability::ExplanationId;
 use hyperion_knowledge_graph::NodeId;
 use serde::{Deserialize, Serialize};
 
@@ -89,9 +90,12 @@ pub enum WriteOutcome {
 
 /// One allocation decision made during a [`crate::CoordinationSession::allocate`]
 /// pass, returned for callers/tests to inspect what happened this tick.
+/// `explanation_id` resolves via [`crate::CoordinationSession::explanation`]
+/// to the real `hyperion-explainability` record this dispatch produced.
 #[derive(Debug, Clone)]
 pub struct AllocationRecord {
     pub task_id: NodeId,
     pub agent_instance: u64,
     pub outcome: TaskStatus,
+    pub explanation_id: ExplanationId,
 }

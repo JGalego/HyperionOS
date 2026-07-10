@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 hyperion-agent-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
+hyperion-explainability = { workspace = true }
 hyperion-intent = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
 serde = { workspace = true }
