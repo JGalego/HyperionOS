@@ -134,11 +134,15 @@ pub enum ErasureMode {
 /// docs/16 §4's `ErasureReceipt`, narrowed to a single (this) device — no
 /// `propagated_to_devices` field, since this crate has no multi-device
 /// sync model to propagate across (see this crate's doc comment).
+/// `grace_period_action` is `Some` only for `ErasureMode::SoftDelete` —
+/// see [`crate::erasure::erase`]'s doc comment for how a caller uses it
+/// to reverse the erasure via `hyperion-recovery::undo`.
 #[derive(Debug, Clone)]
 pub struct ErasureReceipt {
     pub object_ids: Vec<NodeId>,
     pub mode: ErasureMode,
     pub completed_at: Option<u64>,
+    pub grace_period_action: Option<hyperion_recovery::ActionId>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -147,4 +151,6 @@ pub enum PrivacyError {
     Unauthorized,
     #[error("knowledge graph error: {0}")]
     Graph(#[from] hyperion_knowledge_graph::GraphError),
+    #[error("recovery error: {0}")]
+    Recovery(#[from] hyperion_recovery::RecoveryError),
 }

@@ -8,6 +8,7 @@ use hyperion_knowledge_graph::KnowledgeGraph;
 use hyperion_privacy::{
     erase, filter_for_recipient, ErasureMode, PrivacyTier, ResidencyTag, SensitivityClass,
 };
+use hyperion_recovery::{RecoveryService, UndoScope};
 
 #[test]
 fn an_object_the_recipient_did_not_declare_needing_is_withheld() {
@@ -109,11 +110,13 @@ fn erasing_an_object_overwrites_its_metadata_and_returns_a_receipt() {
             serde_json::json!({"text": "sensitive"}),
         )
         .unwrap();
+    let recovery = RecoveryService::new(graph.clone());
 
     let receipt = erase(
         &monitor,
         &root,
         &graph,
+        &recovery,
         &[node],
         ErasureMode::CryptoShred,
         1_000,
@@ -121,11 +124,62 @@ fn erasing_an_object_overwrites_its_metadata_and_returns_a_receipt() {
     .unwrap();
     assert_eq!(receipt.object_ids, vec![node]);
     assert_eq!(receipt.completed_at, Some(1_000));
+    assert!(
+        receipt.grace_period_action.is_none(),
+        "CryptoShred is this crate's no-grace-period, no-recovery path"
+    );
 
     let after = graph.get(&monitor, &root, node).unwrap();
     assert_eq!(after.metadata["erased"], serde_json::json!(true));
     assert!(
         after.metadata.get("text").is_none(),
         "erasure must overwrite the prior sensitive fields, not merely tag them"
+    );
+}
+
+#[test]
+fn soft_deleting_an_object_registers_a_real_undoable_grace_period() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let node = graph
+        .put_node(
+            &monitor,
+            &root,
+            None,
+            "Note",
+            None,
+            serde_json::json!({"text": "sensitive"}),
+        )
+        .unwrap();
+    let recovery = RecoveryService::new(graph.clone());
+
+    let receipt = erase(
+        &monitor,
+        &root,
+        &graph,
+        &recovery,
+        &[node],
+        ErasureMode::SoftDelete,
+        1_000,
+    )
+    .unwrap();
+    let action_id = receipt
+        .grace_period_action
+        .expect("SoftDelete must register a real, undoable action");
+
+    let erased = graph.get(&monitor, &root, node).unwrap();
+    assert_eq!(erased.metadata["erased"], serde_json::json!(true));
+
+    recovery
+        .undo(&monitor, &root, UndoScope::SingleAction(action_id))
+        .unwrap();
+
+    let restored = graph.get(&monitor, &root, node).unwrap();
+    assert_eq!(
+        restored.metadata["text"],
+        serde_json::json!("sensitive"),
+        "undo within the grace period must restore the pre-erasure state"
     );
 }

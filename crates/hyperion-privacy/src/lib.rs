@@ -18,7 +18,12 @@
 //! §5's least-privilege context assembly ("build for recipient contract,"
 //! not filter-after), reporting every exclusion with a reason rather than
 //! silently dropping it; [`erasure::erase`] implements docs/16 §5's
-//! erasure request against the real `hyperion-knowledge-graph`.
+//! erasure request against the real `hyperion-knowledge-graph`, and for
+//! `ErasureMode::SoftDelete` registers a real [33 — Rollback &
+//! Recovery](../33-rollback-recovery.md) grace period via
+//! `hyperion-recovery::RecoveryService` — the erasure is journaled as a
+//! committed, undoable `ActionRecord`, not merely tombstoned with no way
+//! back.
 //!
 //! **On `hyperion-model-router`/`hyperion-netstack`/`hyperion-federation`'s
 //! own narrow, two-value `PrivacyTier{Local, ConsentedCloud}` gates**:
@@ -53,11 +58,14 @@
 //!   observable state change, not a byte-level history deletion, and
 //!   nothing here disguises an erasure's network/timing signature (moot
 //!   without a real transport anyway).
-//! - **Grace-period integration with [33 — Rollback &
-//!   Recovery](../33-rollback-recovery.md)'s undo.** `ErasureMode::SoftDelete`
-//!   is a distinct variant from `CryptoShred` but this crate does not
-//!   itself call into `hyperion-recovery` to register an undo window —
-//!   a caller wanting that composition drives both crates itself.
+//! - **Real crash-recovery timers expiring the grace period.**
+//!   [`erasure::erase`] now registers a real, undoable `ActionRecord` for
+//!   every `SoftDelete`, but nothing in this workspace runs a background
+//!   clock that turns that grace period into a permanent `CryptoShred`
+//!   once it lapses — the `ActionRecord` stays undoable indefinitely
+//!   until a caller either calls `recovery.undo(...)` or re-erases with
+//!   `CryptoShred`, matching `hyperion-recovery`'s own "retention/rollup
+//!   compaction" deferral.
 //! - **`memory.*`/`knowledgeGraph.*` full Inspect/Edit/Export API
 //!   surface** (docs/16 §6) — only `erase` is implemented; `inspect`/
 //!   `edit`/`export` are direct callers of `hyperion-knowledge-graph`'s

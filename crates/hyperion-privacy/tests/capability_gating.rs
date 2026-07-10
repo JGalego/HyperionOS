@@ -6,6 +6,7 @@ use std::sync::Arc;
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_knowledge_graph::KnowledgeGraph;
 use hyperion_privacy::{erase, ConsentLedger, DataScope, ErasureMode, PrivacyError};
+use hyperion_recovery::RecoveryService;
 
 #[test]
 fn consent_request_requires_write_rights() {
@@ -37,11 +38,13 @@ fn erase_requires_write_rights() {
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let recovery = RecoveryService::new(graph.clone());
 
     let result = erase(
         &monitor,
         &read_only,
         &graph,
+        &recovery,
         &[],
         ErasureMode::SoftDelete,
         1_000,
