@@ -9,4 +9,5 @@ repository.workspace = true
 hyperion-capability = { workspace = true }
 hyperion-observability = { workspace = true }
 hyperion-privacy = { workspace = true }
+hyperion-scheduler = { workspace = true }
 thiserror = { workspace = true }

@@ -21,6 +21,14 @@
 //! `hyperion-observability` audit entry, closing docs/37's own named
 //! "explanation lag" failure mode (a degraded Capability running
 //! silently before its notice catches up).
+//! [`fit::scheduler_has_headroom_for`]/[`fit::scheduler_backed_resolver`]
+//! implement `scheduler.would_fit(...)` for real against
+//! `hyperion_scheduler::Scheduler`'s live `Ram`/`Vram` ledgers — the two
+//! of this crate's three `CapacityDescriptor` dimensions the scheduler's
+//! `ResourceVector` actually models the same way (see [`fit`]'s doc
+//! comment for why `compute_tops` is deliberately left unchecked rather
+//! than forced onto a scheduler dimension that means something
+//! different).
 //!
 //! Deliberately deferred, and why:
 //!
@@ -28,14 +36,21 @@
 //!   actual silicon/thermal sensors; this crate's [`types::HardwareProfile`]
 //!   is always caller-supplied, matching this workspace's established
 //!   `HardwareProfileSource`-as-fixture pattern.
-//! - **`scheduler.would_fit(...)` against `hyperion_scheduler::ResourceVector`.**
+//! - **Full nine-dimension parity with `hyperion_scheduler::ResourceVector`,
+//!   and a `Substitution` -> resource-footprint mapping.**
 //!   [`degrade::degrade_capability`]'s `resolve_alternate_fits` callback
-//!   is a caller-supplied yes/no — this crate defines its own narrow
-//!   [`types::ResourceConstraint`] (RAM/VRAM/compute-TOPS only, matching
-//!   docs/37's own tier table) rather than forcing parity with the real
-//!   scheduler's nine-dimension vector, which models several dimensions
-//!   (storage IOPS, network bandwidth, battery) docs/37's tier
-//!   discussion never touches.
+//!   is still caller-supplied — [`fit::scheduler_backed_resolver`] now
+//!   builds a real one backed by the scheduler's actual `Ram`/`Vram`
+//!   ledgers, but this crate's own [`types::Substitution`] carries no
+//!   `CapacityDescriptor` (a `ModelTier`/`CapabilityRef` alone doesn't
+//!   say how much RAM/VRAM it needs), so the caller still supplies that
+//!   lookup; and `compute_tops`/storage IOPS/network bandwidth/battery
+//!   are still not checked — this crate's own narrow
+//!   [`types::ResourceConstraint`] (RAM/VRAM/compute-TOPS, matching
+//!   docs/37's own tier table) was a deliberate choice not to force
+//!   parity with dimensions docs/37's tier discussion never touches, and
+//!   `compute_tops` specifically has no scheduler dimension that means
+//!   the same thing (see [`fit`]'s doc comment).
 //! - **`capability_registry.install(plan.capability)`.** [`explain::apply_and_explain`]
 //!   writes the audit notice only; actually installing a substituted
 //!   implementation through `hyperion-plugin-framework`'s registry needs
@@ -57,10 +72,12 @@
 
 mod degrade;
 mod explain;
+mod fit;
 mod types;
 
 pub use degrade::degrade_capability;
 pub use explain::apply_and_explain;
+pub use fit::{scheduler_backed_resolver, scheduler_has_headroom_for};
 pub use types::{
     CapabilityRef, CapacityDescriptor, DegradationOutcome, DegradationPlan, DegradationPolicy,
     HardwareProfile, HardwareTier, ModelTier, ResourceConstraint, ScalabilityError, Substitution,

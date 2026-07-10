@@ -348,6 +348,7 @@ dependencies = [
  "hyperion-capability",
  "hyperion-observability",
  "hyperion-privacy",
+ "hyperion-scheduler",
  "thiserror",
 ]
 

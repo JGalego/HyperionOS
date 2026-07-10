@@ -8,13 +8,15 @@ use crate::types::{
 /// policy whose constraint the hardware satisfies, is full fidelity;
 /// otherwise walk `fallback_order` in its declared, fixed sequence.
 /// `resolve_alternate_fits` stands in for `scheduler.would_fit(...)` —
-/// this crate has its own narrow `ResourceConstraint`, not
-/// `hyperion_scheduler::ResourceVector` (see this crate's doc comment),
-/// so the actual local-tier/alternate-implementation fit check is left
-/// to the caller. `ConsentedCloudUpgrade` is the one branch with a real
-/// dependency here: it checks `hyperion-privacy`'s real `ConsentLedger`
-/// for a standing grant scoped to the named provider, never assuming
-/// consent, exactly like every other consent check in this workspace.
+/// pass [`crate::fit::scheduler_backed_resolver`] for a real
+/// implementation backed by `hyperion_scheduler::Scheduler`'s live
+/// ledgers (see that function's doc comment for exactly which
+/// dimensions it checks and why). `ConsentedCloudUpgrade` is the one
+/// branch with a real dependency here regardless of what's passed for
+/// `resolve_alternate_fits`: it checks `hyperion-privacy`'s real
+/// `ConsentLedger` for a standing grant scoped to the named provider,
+/// never assuming consent, exactly like every other consent check in
+/// this workspace.
 pub fn degrade_capability(
     policy: Option<&DegradationPolicy>,
     profile: &HardwareProfile,
