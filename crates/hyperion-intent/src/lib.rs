@@ -40,11 +40,16 @@
 //!   multiple concurrently-*executing* Intents with real Agents mid-
 //!   execution ([12 — Multi-Agent Coordination](../12-multi-agent-coordination.md),
 //!   Phase 4) for "exclusive-resource conflict" to mean anything real.
-//! - **Memory Engine integration** (docs/05 §7's `infer(slot, ctx,
-//!   MemoryEngine.working_memory(...))`, and Recovery Mechanisms' "a user
-//!   correction is fed back into Memory Engine") — this crate's grounding
-//!   only reads `hyperion-context`; wiring `hyperion-memory` in is
-//!   straightforward once slot-level inference is real enough to need it.
+//! - **Using Working Memory as a real grounding signal.**
+//!   [`engine::IntentEngine::handle_utterance`] now pushes every real
+//!   utterance into a real `hyperion_memory::WorkingMemory` turn buffer
+//!   per session ([`engine::IntentEngine::working_memory_turns`] exposes
+//!   it) — docs/05 §7's `infer(slot, ctx, MemoryEngine.working_memory(...))`
+//!   made real for the bookkeeping half. Actually *using* those turns to
+//!   help resolve an ambiguous mention (rather than escalating to
+//!   [`EntityResolution::Ambiguous`] immediately) needs real text/semantic
+//!   matching this workspace's mock AI backend can't do yet — grounding
+//!   itself still only reads `hyperion-context`.
 //! - **`submit()` handing off to a real Multi-Agent Coordination** (Phase
 //!   4, not built) — [`IntentEngine::submit`] returns an
 //!   [`ExecutionTicket`] naming the ready-to-run leaves, but nothing

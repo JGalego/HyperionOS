@@ -9,6 +9,7 @@ repository.workspace = true
 hyperion-capability = { workspace = true }
 hyperion-context = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
+hyperion-memory = { workspace = true }
 hyperion-storage = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

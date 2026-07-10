@@ -7,6 +7,7 @@ use hyperion_context::{ContextEngine, ContextError, EntityResolution};
 use hyperion_knowledge_graph::{
     EdgeOrigin, ExplainRef, GraphError, KnowledgeGraph, NodeId, ProvenanceChain,
 };
+use hyperion_memory::WorkingMemory;
 
 use crate::templates::{self, Template};
 use crate::types::{ExecutionTicket, HandleOutcome, Intent, IntentStatus, MutationOp};
@@ -36,6 +37,11 @@ pub enum IntentError {
     CyclicDependency,
 }
 
+/// docs/08 §4's own working-memory sizing is caller-defined; ten recent
+/// turns is a hosted-simulator-appropriate default, not a value docs/05
+/// or docs/08 pin down.
+const WORKING_MEMORY_TURN_CAPACITY: usize = 10;
+
 /// docs/05 — Intent Engine. See this crate's doc comment for what's
 /// deferred.
 pub struct IntentEngine {
@@ -45,6 +51,12 @@ pub struct IntentEngine {
     /// narrowed reference-resolution target for reconciliation (§5); see
     /// this crate's doc comment.
     active_graphs: Mutex<HashMap<String, Vec<NodeId>>>,
+    /// docs/05 §7's Memory Engine integration: every real
+    /// `hyperion_memory::WorkingMemory` turn buffer this engine has
+    /// pushed an utterance into, keyed by session — see this crate's doc
+    /// comment on what's still deferred (using these turns as a real
+    /// grounding signal, not just recording them).
+    working_memories: Mutex<HashMap<String, WorkingMemory>>,
 }
 
 impl IntentEngine {
@@ -53,7 +65,21 @@ impl IntentEngine {
             graph,
             context,
             active_graphs: Mutex::new(HashMap::new()),
+            working_memories: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The real `hyperion-memory` turn buffer for `session_id`, if this
+    /// engine has ever handled an utterance for it — queryable proof
+    /// [`Self::handle_utterance`] genuinely records into a real
+    /// `WorkingMemory`, not a private, parallel buffer.
+    pub fn working_memory_turns(&self, session_id: &str) -> Vec<String> {
+        self.working_memories
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .map(|wm| wm.turns().map(str::to_string).collect())
+            .unwrap_or_default()
     }
 
     fn put_intent(
@@ -105,6 +131,13 @@ impl IntentEngine {
         utterance: &str,
         session_id: &str,
     ) -> Result<HandleOutcome, IntentError> {
+        self.working_memories
+            .lock()
+            .unwrap()
+            .entry(session_id.to_string())
+            .or_insert_with(|| WorkingMemory::new(session_id, WORKING_MEMORY_TURN_CAPACITY))
+            .push_turn(utterance);
+
         let lower = utterance.to_lowercase();
         if CANCEL_KEYWORDS.iter().any(|kw| lower.contains(kw)) {
             let active_root = self

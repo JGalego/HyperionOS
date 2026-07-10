@@ -27,6 +27,31 @@ fn setup() -> (
 }
 
 #[test]
+fn handle_utterance_records_every_turn_into_a_real_working_memory_buffer() {
+    let (_dir, monitor, token, engine, _graph) = setup();
+
+    engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "session-1")
+        .unwrap();
+    engine
+        .handle_utterance(&monitor, &token, "actually, cancel that", "session-1")
+        .unwrap();
+
+    let turns: Vec<_> = engine.working_memory_turns("session-1");
+    assert_eq!(
+        turns,
+        vec![
+            "I need to launch my startup".to_string(),
+            "actually, cancel that".to_string(),
+        ]
+    );
+
+    // A session this engine has never handled an utterance for has no
+    // buffer at all -- not an empty one fabricated on demand.
+    assert!(engine.working_memory_turns("never-seen-session").is_empty());
+}
+
+#[test]
 fn launch_my_startup_decomposes_into_the_dependency_chain_with_one_ready_leaf() {
     let (_dir, monitor, token, engine, _graph) = setup();
     let root = match engine

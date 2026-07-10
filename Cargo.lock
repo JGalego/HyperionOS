@@ -220,6 +220,7 @@ dependencies = [
  "hyperion-capability",
  "hyperion-context",
  "hyperion-knowledge-graph",
+ "hyperion-memory",
  "hyperion-storage",
  "serde",
  "serde_json",
