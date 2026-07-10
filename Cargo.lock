@@ -148,6 +148,7 @@ name = "hyperion-context"
 version = "0.1.0"
 dependencies = [
  "hyperion-capability",
+ "hyperion-ipc",
  "hyperion-knowledge-graph",
  "serde",
  "serde_json",

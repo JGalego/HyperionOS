@@ -46,11 +46,19 @@
 //!   envelope "signing" is a non-cryptographic checksum — sufficient to
 //!   prove and test the fail-closed-on-mismatch and no-replay behavior
 //!   docs/07 requires, but explicitly not a security boundary yet.
-//! - **Transport.** docs/07 §Interfaces itself says "Context Propagation
-//!   owns only the envelope contract... not the bytes-on-the-wire
-//!   transport" — wiring `export`/`import` to real IPC ([30 — IPC
-//!   Framework](../30-ipc-framework.md)) or cross-device sync happens at the
-//!   Phase 4 / Phase 7 call sites that don't exist yet, not in this crate.
+//! - **A production transport call site.** docs/07 §Interfaces says
+//!   "Context Propagation owns only the envelope contract... not the
+//!   bytes-on-the-wire transport" — this crate still has no built-in
+//!   dependency on [30 — IPC Framework](../30-ipc-framework.md), and
+//!   deliberately so (neither `hyperion-agent-runtime` nor
+//!   `hyperion-federation` calls `export`/`import` today, so there is no
+//!   real production call site to wire yet). What *is* now proven,
+//!   dev-dependency-only, in `tests/ipc_transport.rs`: a real
+//!   `ContextEnvelope` genuinely serializes to bytes, crosses a real
+//!   `hyperion-ipc::IpcBus` `NOTIFY` frame between two separate Trust
+//!   Boundaries, and imports cleanly on the other side — the envelope
+//!   contract's shape survives a real wire hop, not just a same-call
+//!   round trip.
 
 mod engine;
 mod propagation;
