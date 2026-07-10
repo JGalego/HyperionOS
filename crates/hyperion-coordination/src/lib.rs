@@ -8,6 +8,12 @@
 //! (allocation spawns and invokes real [`hyperion_agent_runtime::AgentInstance`]s).
 //! This is the top of the Phase 1-4 stack: every crate built so far in this
 //! workspace is load-bearing underneath a call to [`CoordinationSession::allocate`].
+//! [`CoordinationSession::create_session`] takes a real
+//! `hyperion_intent::ExecutionTicket` (from `IntentEngine::submit`), not a
+//! bare `NodeId` — `hyperion-intent`'s own doc comment named that hand-off
+//! as never actually happening ("nothing actually assigns or dispatches an
+//! Agent to them yet"); requiring the real ticket here makes it a real,
+//! enforced precondition rather than an unused, parallel API.
 //!
 //! Real: capability-and-trust-tier-gated task allocation (§5.1) — trust is
 //! a hard eligibility filter, never a scoring input; optimistic-concurrency

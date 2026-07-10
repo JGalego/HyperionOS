@@ -42,6 +42,35 @@ fn task_named<'a>(
 }
 
 #[test]
+fn create_session_consumes_a_real_execution_ticket_from_submit() {
+    let (_dir, monitor, token, intent_engine, coordination) = setup();
+    let root = match intent_engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+
+    // The real hand-off docs/05 named as never happening: submit()'s own
+    // ExecutionTicket is what create_session now requires, not a bare
+    // NodeId a caller could produce without ever calling submit().
+    let ticket = intent_engine.submit(&monitor, &token, root).unwrap();
+    assert_eq!(ticket.root, root);
+    assert_eq!(
+        ticket.ready_leaves.len(),
+        1,
+        "only market_research has no unmet dependency yet"
+    );
+
+    let session = coordination
+        .create_session(&monitor, &token, &intent_engine, &ticket)
+        .unwrap();
+    let plan = coordination.get_plan(&monitor, &token, session).unwrap();
+    assert_eq!(plan.root_intent, ticket.root);
+}
+
+#[test]
 fn launch_trace_completes_all_tasks_across_ticks_respecting_dependencies() {
     let (_dir, monitor, token, intent_engine, coordination) = setup();
     let root = match intent_engine
@@ -52,7 +81,12 @@ fn launch_trace_completes_all_tasks_across_ticks_respecting_dependencies() {
         other => panic!("expected Submitted, got {other:?}"),
     };
     let session = coordination
-        .create_session(&monitor, &token, &intent_engine, root)
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
         .unwrap();
 
     // Tick 1: only market_research has no unmet dependency.
@@ -111,7 +145,12 @@ fn each_allocation_produces_a_real_queryable_explanation_record() {
         other => panic!("expected Submitted, got {other:?}"),
     };
     let session = coordination
-        .create_session(&monitor, &token, &intent_engine, root)
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
         .unwrap();
 
     // Tick 1: market_research succeeds.
@@ -159,7 +198,12 @@ fn a_failed_task_is_contained_retried_once_then_escalated_without_stalling_sibli
         other => panic!("expected Submitted, got {other:?}"),
     };
     let session = coordination
-        .create_session(&monitor, &token, &intent_engine, root)
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
         .unwrap();
 
     coordination.allocate(&monitor, &token, session).unwrap(); // market_research
@@ -221,7 +265,12 @@ fn contradictory_subplan_is_arbitrated_by_stated_priority_not_a_coin_flip() {
         other => panic!("expected Submitted, got {other:?}"),
     };
     let session = coordination
-        .create_session(&monitor, &token, &intent_engine, root)
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
         .unwrap();
     coordination.allocate(&monitor, &token, session).unwrap();
     coordination.allocate(&monitor, &token, session).unwrap(); // business_model + branding both Done
@@ -269,7 +318,12 @@ fn unranked_contradiction_escalates_rather_than_guessing() {
         other => panic!("expected Submitted, got {other:?}"),
     };
     let session = coordination
-        .create_session(&monitor, &token, &intent_engine, root)
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
         .unwrap();
     coordination.allocate(&monitor, &token, session).unwrap();
     coordination.allocate(&monitor, &token, session).unwrap();

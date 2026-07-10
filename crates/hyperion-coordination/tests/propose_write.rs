@@ -34,8 +34,9 @@ fn session_with_root() -> (
         HandleOutcome::Submitted(id) => id,
         other => panic!("expected Submitted, got {other:?}"),
     };
+    let ticket = intent_engine.submit(&monitor, &token, root).unwrap();
     let session = coordination
-        .create_session(&monitor, &token, &intent_engine, root)
+        .create_session(&monitor, &token, &intent_engine, &ticket)
         .unwrap();
     (monitor, token, coordination, session)
 }

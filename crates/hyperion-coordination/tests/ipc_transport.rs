@@ -61,8 +61,11 @@ fn a_propose_write_message_survives_a_real_ipc_hop_and_is_applied_for_real() {
         HandleOutcome::Submitted(id) => id,
         other => panic!("expected Submitted, got {other:?}"),
     };
+    let ticket = intent_engine
+        .submit(&monitor, &receiver_root, root)
+        .unwrap();
     let session_id = coordination
-        .create_session(&monitor, &receiver_root, &intent_engine, root)
+        .create_session(&monitor, &receiver_root, &intent_engine, &ticket)
         .unwrap();
 
     let message = ProposeWriteMessage {

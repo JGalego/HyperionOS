@@ -50,10 +50,11 @@
 //!   [`EntityResolution::Ambiguous`] immediately) needs real text/semantic
 //!   matching this workspace's mock AI backend can't do yet — grounding
 //!   itself still only reads `hyperion-context`.
-//! - **`submit()` handing off to a real Multi-Agent Coordination** (Phase
-//!   4, not built) — [`IntentEngine::submit`] returns an
-//!   [`ExecutionTicket`] naming the ready-to-run leaves, but nothing
-//!   actually assigns or dispatches an Agent to them yet.
+//! - ~~`submit()` handing off to a real Multi-Agent Coordination~~ — now
+//!   real: `hyperion-coordination::CoordinationSession::create_session`
+//!   requires a real [`ExecutionTicket`] from [`IntentEngine::submit`] as
+//!   its input, not a bare `NodeId` a caller could produce without ever
+//!   calling `submit`.
 
 mod engine;
 mod templates;

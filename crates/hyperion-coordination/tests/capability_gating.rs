@@ -32,7 +32,8 @@ fn create_session_and_allocate_require_write_rights() {
         other => panic!("expected Submitted, got {other:?}"),
     };
 
-    let result = coordination.create_session(&monitor, &read_only, &intent_engine, root);
+    let ticket = intent_engine.submit(&monitor, &read_only, root).unwrap();
+    let result = coordination.create_session(&monitor, &read_only, &intent_engine, &ticket);
     assert!(matches!(result, Err(CoordError::Unauthorized)));
 }
 
@@ -57,8 +58,9 @@ fn revoking_a_token_blocks_further_access_re_checked_live() {
         HandleOutcome::Submitted(id) => id,
         other => panic!("expected Submitted, got {other:?}"),
     };
+    let ticket = intent_engine.submit(&monitor, &delegate, root).unwrap();
     let session = coordination
-        .create_session(&monitor, &delegate, &intent_engine, root)
+        .create_session(&monitor, &delegate, &intent_engine, &ticket)
         .unwrap();
     assert!(coordination.allocate(&monitor, &delegate, session).is_ok());
 

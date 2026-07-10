@@ -8,7 +8,7 @@ use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_explainability::{
     ControlState, ExplanationId, ExplanationRecord, ExplanationStore, ReasoningStep,
 };
-use hyperion_intent::IntentEngine;
+use hyperion_intent::{ExecutionTicket, IntentEngine};
 use hyperion_knowledge_graph::NodeId;
 
 use crate::catalog::{best_fit_manifest, required_capabilities_for};
@@ -104,16 +104,21 @@ impl CoordinationSession {
     /// docs/12 §6's `createSession` + `decompose`, fused: reads the Intent
     /// Graph's leaves via `IntentEngine::get_graph` and each leaf's
     /// prerequisites via `IntentEngine::depends_on_targets`, turning each
-    /// into a [`TaskNode`].
+    /// into a [`TaskNode`]. Takes a real `hyperion_intent::ExecutionTicket`
+    /// (from `IntentEngine::submit`) rather than a bare `NodeId` — that
+    /// crate's own doc comment named `submit`/`ExecutionTicket` as never
+    /// actually handed off to a real Multi-Agent Coordination; requiring
+    /// one here is that hand-off made real, not optional.
     pub fn create_session(
         &self,
         monitor: &CapabilityMonitor,
         token: &CapabilityToken,
         intent_engine: &IntentEngine,
-        root: NodeId,
+        ticket: &ExecutionTicket,
     ) -> Result<u64, CoordError> {
         self.require(monitor, token, RightsMask::WRITE)?;
 
+        let root = ticket.root;
         let intents = intent_engine.get_graph(monitor, token, root)?;
         let mut nodes = Vec::new();
         for leaf in intents.iter().filter(|i| i.id != root) {
