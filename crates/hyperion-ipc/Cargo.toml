@@ -7,6 +7,7 @@ description = "Hyperion L1 IPC framework: capability-scoped message passing (doc
 
 [dependencies]
 hyperion-capability = { workspace = true }
+bitflags = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
