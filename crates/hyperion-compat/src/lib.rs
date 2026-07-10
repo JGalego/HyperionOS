@@ -1,0 +1,73 @@
+//! Hyperion L1 Compatibility Layer — Phase 9, fourth and final slice.
+//!
+//! Implements docs/27-compatibility-layer.md's Trust Boundary isolation
+//! and staged artifact-promotion gate — the Phase 9 exit criterion: "a
+//! legacy Windows/Linux/Android application runs inside \[27\]'s Trust
+//! Boundary without corrupting the Knowledge Graph." No real Windows/
+//! Linux/Android binary executes in this hosted simulator (see this
+//! crate's doc comment for what's stubbed); what's real is everything
+//! docs/27 itself says doesn't depend on actually executing foreign
+//! code: the Trust Boundary/grant bookkeeping, default-deny path
+//! resolution, and the two-stage capture/promotion gate.
+//!
+//! Real: [`host::CompatHost::launch`] mints a fresh
+//! `hyperion_capability::TrustBoundaryId` per session at
+//! `max(profile.min_depth, target.default_depth())`, and — the literal
+//! docs/27 §5 mechanism — resolves a Web-target `NetworkPolicy::Allow`
+//! at admission time into a real `hyperion-netstack` domain-egress grant
+//! scoped to the same domain pattern, "not a second, unrelated network-
+//! access path." [`host::CompatHost::shim_open`] is docs/27 §3's
+//! default-deny path gate: a `guest_path` outside every declared
+//! filesystem root is refused outright, and a write additionally
+//! requires an explicit write grant already present on the session —
+//! the guest itself never holds a capability token, "every token
+//! belongs to the Compatibility Host mediating on its behalf"
+//! (confused-deputy prevention, the same invariant docs/03 states for
+//! every other sandboxed subject in this workspace). The critical
+//! separation the Knowledge-Graph-non-corruption guarantee rests on:
+//! [`host::CompatHost::shim_open`]'s capture (Stage A) never writes to
+//! the Knowledge Graph — only [`host::CompatHost::promote_artifact`]'s
+//! explicit, consent-gated Stage B does, via the real
+//! `hyperion-knowledge-graph::put_node`. [`host::CompatHost::terminate`]
+//! implements the doc's "microreboot" recovery — cascade-revoking every
+//! token the session was ever granted.
+//!
+//! Deliberately deferred, and why (all of these require real
+//! infrastructure a hosted simulator cannot provide):
+//!
+//! - **Real Windows VM/hardware virtualization** (EPT/NPT, foreign guest
+//!   kernel, virtual GPU output) — docs/27 assumes full VM, not a Wine-
+//!   style API translation layer; nothing simulates a foreign kernel
+//!   here.
+//! - **Real Android container + translated permission surface + ART
+//!   runtime**, and **real Linux container/namespace runtime.**
+//! - **A real browser rendering engine** for `LegacyTarget::Web` — this
+//!   crate mediates the *network* half (via `hyperion-netstack`'s real
+//!   `web.fetch.raw`) but renders nothing.
+//! - **Real framebuffer/compositor capture and platform accessibility
+//!   bridges** (Windows UI Automation, Android `AccessibilityService`,
+//!   X11 AT-SPI, OCR-based pixel fallback).
+//! - **Real content-type sniffing.** [`host::CompatHost::promote_artifact`]
+//!   takes `sniffed_type` as a caller-supplied string — no real file-
+//!   format detection runs; a caller (or a future integration with
+//!   [22 — Local AI Runtime](../22-local-ai-runtime.md)) supplies it.
+//! - **`ShimPathMapping.semantic_root`/case-insensitive path-translation
+//!   details.** [`types::CompatibilityProfile::filesystem_roots`] is a
+//!   flat list of guest-path-prefix strings; the doc's richer
+//!   `ShimPathMapping` (per-root `semantic_root`/`case_sensitivity`) is
+//!   narrowed to what the default-deny prefix check actually needs.
+//! - **A clipboard/inter-Workspace IPC bridge.** Docs/27 itself gives no
+//!   API signature for this ("described only prose-level... no API
+//!   surfaced") — nothing to implement against.
+//! - **A dedicated `TrustDepth` shared with `hyperion-plugin-framework`.**
+//!   Each crate declares its own four-value depth label rather than
+//!   sharing one — see [`types::TrustDepth`]'s own doc comment.
+
+mod host;
+mod types;
+
+pub use host::CompatHost;
+pub use types::{
+    CompatError, CompatSession, CompatibilityProfile, IngestedArtifact, LegacyTarget,
+    NetworkPolicy, PromotionPolicy, PromotionState, SessionId, TrustDepth,
+};

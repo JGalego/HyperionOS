@@ -100,11 +100,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-api-gateway"
+version = "0.1.0"
+dependencies = [
+ "hyperion-agent-runtime",
+ "hyperion-capability",
+ "hyperion-context",
+ "hyperion-explainability",
+ "hyperion-intent",
+ "hyperion-knowledge-graph",
+ "hyperion-memory",
+ "hyperion-plugin-framework",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-capability"
 version = "0.1.0"
 dependencies = [
  "bitflags",
  "proptest",
+ "thiserror",
+]
+
+[[package]]
+name = "hyperion-compat"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-knowledge-graph",
+ "hyperion-netstack",
+ "hyperion-storage",
+ "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
@@ -249,6 +279,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-plugin-framework"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-privacy"
 version = "0.1.0"
 dependencies = [
@@ -279,6 +317,16 @@ version = "0.1.0"
 dependencies = [
  "hyperion-capability",
  "proptest",
+ "thiserror",
+]
+
+[[package]]
+name = "hyperion-sdk"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-plugin-framework",
+ "serde_json",
  "thiserror",
 ]
 
