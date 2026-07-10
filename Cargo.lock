@@ -136,6 +136,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-device"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-intent"
 version = "0.1.0"
 dependencies = [
