@@ -146,6 +146,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-federation"
+version = "0.1.0"
+dependencies = [
+ "hyperion-agent-runtime",
+ "hyperion-capability",
+ "hyperion-scheduler",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-intent"
 version = "0.1.0"
 dependencies = [

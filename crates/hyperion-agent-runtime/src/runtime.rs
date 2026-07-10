@@ -281,6 +281,19 @@ impl AgentRuntime {
         Ok(checkpoint.instance_id)
     }
 
+    /// Exposes a checkpoint's contents (manifest, bound Intent reference)
+    /// so a caller orchestrating *across* two `AgentRuntime` instances —
+    /// `hyperion-federation`'s cross-device migration is the motivating
+    /// case — can transfer it, since [`Self::resume`] only ever continues
+    /// an instance record within this same runtime.
+    pub fn get_checkpoint(&self, checkpoint_id: u64) -> Option<AgentCheckpoint> {
+        self.checkpoints
+            .lock()
+            .unwrap()
+            .get(&checkpoint_id)
+            .cloned()
+    }
+
     pub fn terminate(
         &self,
         monitor: &CapabilityMonitor,

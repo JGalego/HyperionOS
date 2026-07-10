@@ -7,6 +7,7 @@ members = [
     "crates/hyperion-context",
     "crates/hyperion-coordination",
     "crates/hyperion-device",
+    "crates/hyperion-federation",
     "crates/hyperion-intent",
     "crates/hyperion-ipc",
     "crates/hyperion-knowledge-graph",
@@ -31,6 +32,7 @@ hyperion-capability = { path = "crates/hyperion-capability" }
 hyperion-context = { path = "crates/hyperion-context" }
 hyperion-coordination = { path = "crates/hyperion-coordination" }
 hyperion-device = { path = "crates/hyperion-device" }
+hyperion-federation = { path = "crates/hyperion-federation" }
 hyperion-intent = { path = "crates/hyperion-intent" }
 hyperion-ipc = { path = "crates/hyperion-ipc" }
 hyperion-knowledge-graph = { path = "crates/hyperion-knowledge-graph" }
