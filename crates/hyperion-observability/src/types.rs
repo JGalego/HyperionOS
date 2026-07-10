@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use hyperion_explainability::ExplanationRecord;
+use hyperion_model_router::Rationale;
 
 pub type TraceId = u64;
 pub type SpanId = u64;
@@ -83,16 +84,23 @@ pub enum AuditAction {
     ExplainRecord,
     ConsentChange,
     AdminOverride,
+    /// A real `hyperion-model-router` routing decision — see
+    /// [`AuditPayload::ModelRouting`].
+    ModelRouting,
 }
 
 /// docs/34 §1's `AuditLogEntry.payload` — this doc doesn't redefine
 /// [18 — Explainability & Trust](../18-explainability-and-trust.md)'s
 /// `ExplanationRecord`, it embeds it as-is, exactly as docs/34's own
 /// extraction notes: "this doc does not redefine explainability's
-/// record, it consumes it."
+/// record, it consumes it." [`AuditPayload::ModelRouting`] does the same
+/// for [23 — Multi-Model Orchestration](../23-multi-model-orchestration.md)'s
+/// real [`hyperion_model_router::Rationale`] — this crate's own doc
+/// comment named that Rationale as real but never fed to audit/telemetry.
 #[derive(Debug, Clone)]
 pub enum AuditPayload {
     Explanation(ExplanationRecord),
+    ModelRouting(Rationale),
     Grant {
         capability_ref: String,
     },

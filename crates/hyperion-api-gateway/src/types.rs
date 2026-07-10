@@ -146,4 +146,6 @@ pub enum ApiError {
     Context(#[from] hyperion_context::ContextError),
     #[error("model router error: {0}")]
     ModelRouter(#[from] hyperion_model_router::ModelRouterError),
+    #[error("observability error: {0}")]
+    Observability(#[from] hyperion_observability::ObservabilityError),
 }

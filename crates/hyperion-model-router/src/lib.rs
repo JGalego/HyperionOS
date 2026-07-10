@@ -45,10 +45,13 @@
 //!   is tracked and lightly discounted in scoring, but no random sampling
 //!   actually splits live traffic by percentage; that needs
 //!   [32 — Update System](../32-update-system.md) (Phase 9/10).
-//! - **Durable decision log / `get_rationale` by id** ([34 — Observability
-//!   & Telemetry](../34-observability-telemetry.md), Phase 8) — every
-//!   [`RoutingDecision`] already carries its full [`Rationale`] inline;
-//!   there is no separate persisted lookup-by-`invocation_id` yet.
+//! - ~~Durable decision log~~ — now real: `hyperion-api-gateway`'s
+//!   `invoke_capability` appends every real routing decision's
+//!   [`Rationale`] to `hyperion-observability::AuditLedger` via the new
+//!   `AuditPayload::ModelRouting` variant, giving it a durable, queryable
+//!   log. `get_rationale`-by-`invocation_id` specifically is still not a
+//!   dedicated index — the ledger's own `query`/`seq` lookup is by
+//!   `target` (the capability id) and sequence, not `invocation_id`.
 
 mod registry;
 mod router;

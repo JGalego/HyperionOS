@@ -113,6 +113,7 @@ dependencies = [
  "hyperion-knowledge-graph",
  "hyperion-memory",
  "hyperion-model-router",
+ "hyperion-observability",
  "hyperion-plugin-framework",
  "hyperion-recovery",
  "hyperion-security",
@@ -293,6 +294,7 @@ version = "0.1.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-explainability",
+ "hyperion-model-router",
  "thiserror",
 ]
 

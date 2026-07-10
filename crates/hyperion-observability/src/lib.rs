@@ -6,9 +6,10 @@
 //! metrics/logs/traces ([`telemetry::TelemetryCollector`]), and a never-
 //! sampled, durability-first, tamper-evident audit ledger
 //! ([`ledger::AuditLedger`]) for security-relevant events — grants,
-//! revocations, and [18 — Explainability & Trust](../18-explainability-and-trust.md)'s
-//! `ExplanationRecord`s, embedded into `AuditLogEntry.payload` as-is
-//! rather than redefined.
+//! revocations, [18 — Explainability & Trust](../18-explainability-and-trust.md)'s
+//! `ExplanationRecord`s, and [23 — Multi-Model Orchestration](../23-multi-model-orchestration.md)'s
+//! routing `Rationale`s, each embedded into `AuditLogEntry.payload`
+//! as-is rather than redefined.
 //!
 //! Real: [`ledger::AuditLedger::append`] is the *only* write path into
 //! the ledger, hash-chained (`entry_hash = H(prev_hash || canonical(payload)
@@ -22,6 +23,13 @@
 //! §2's real scheduler-feedback estimators; [`aggregate::build_aggregate`]
 //! implements docs/34 §5's k-anonymity gate exactly — suppressed entirely
 //! (never partial) below the cohort floor or without opt-in consent.
+//! [`types::AuditPayload::ModelRouting`] closes `hyperion-model-router`'s
+//! own "every `RoutingDecision` carries its full `Rationale` inline, but
+//! there is no separate persisted lookup" gap — `hyperion-api-gateway`'s
+//! `invoke_capability` now appends every real routing decision's
+//! `Rationale` here, giving it a real, durable, queryable log for the
+//! first time, even though lookup is still by `seq`/`target`
+//! (the capability id), not a dedicated `invocation_id` index.
 //!
 //! Deliberately deferred, and why:
 //!

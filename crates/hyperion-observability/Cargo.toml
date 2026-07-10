@@ -8,4 +8,5 @@ repository.workspace = true
 [dependencies]
 hyperion-capability = { workspace = true }
 hyperion-explainability = { workspace = true }
+hyperion-model-router = { workspace = true }
 thiserror = { workspace = true }

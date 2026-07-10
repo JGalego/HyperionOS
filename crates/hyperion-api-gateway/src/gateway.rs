@@ -9,6 +9,7 @@ use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::{GraphQuery, KnowledgeGraph, NodeId, QueryHit};
 use hyperion_memory::{ErasureReceipt, MemoryEngine, MemoryFilter};
 use hyperion_model_router::ModelRouter;
+use hyperion_observability::{AuditAction, AuditLedger, AuditPayload, PrincipalRef};
 use hyperion_plugin_framework::PluginRegistry;
 use hyperion_recovery::RecoveryService;
 use hyperion_security::{InterventionLevel, PendingAction};
@@ -34,6 +35,9 @@ pub struct ApiGateway {
     model_router: Arc<ModelRouter>,
     recovery: Arc<RecoveryService>,
     context: Arc<ContextEngine>,
+    /// Backs the real routing-decision audit trail `invoke_capability`
+    /// now writes — see this crate's doc comment.
+    audit: Arc<AuditLedger>,
     scope_grants: Mutex<HashMap<TokenId, HashSet<ApiScope>>>,
     next_action_id: AtomicU64,
 }
@@ -56,6 +60,7 @@ impl ApiGateway {
         context: Arc<ContextEngine>,
     ) -> Self {
         let recovery = Arc::new(RecoveryService::new(graph.clone()));
+        let audit = Arc::new(AuditLedger::new());
         ApiGateway {
             intent,
             memory,
@@ -65,6 +70,7 @@ impl ApiGateway {
             model_router,
             recovery,
             context,
+            audit,
             scope_grants: Mutex::new(HashMap::new()),
             next_action_id: AtomicU64::new(1),
         }
@@ -210,6 +216,19 @@ impl ApiGateway {
         Ok(self.context.assemble(monitor, token, scope, budget)?)
     }
 
+    /// Queryable proof that [`Self::invoke_capability`] really appends a
+    /// real `hyperion_observability::AuditPayload::ModelRouting` entry
+    /// per routing decision, rather than computing and discarding the
+    /// `Rationale` — see this crate's doc comment.
+    pub fn audit_query(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        filter: impl Fn(&hyperion_observability::AuditLogEntry) -> bool,
+    ) -> Result<Vec<hyperion_observability::AuditLogEntry>, ApiError> {
+        Ok(self.audit.query(monitor, token, filter)?)
+    }
+
     /// docs/26 §4's `invokeCapability`: look up the Contract's competing
     /// implementations, run the real `hyperion-security` Risk-Assessment
     /// Engine against the request's [`crate::types::RiskHints`] (denying
@@ -301,6 +320,15 @@ impl ApiGateway {
             consequence_tier_for(risk_assessment.intervention_level),
         );
         let decision = self.model_router.route(&invocation);
+        self.audit.append(
+            monitor,
+            token,
+            PrincipalRef::Capability(token.token_id().0),
+            AuditAction::ModelRouting,
+            Some(request.contract_id.clone()),
+            AuditPayload::ModelRouting(decision.rationale.clone()),
+            now,
+        )?;
         if decision.chosen.is_none() {
             return Err(ApiError::NoEligibleImplementation);
         }

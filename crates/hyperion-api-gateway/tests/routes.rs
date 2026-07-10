@@ -255,6 +255,83 @@ fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation
 }
 
 #[test]
+fn invoke_capability_appends_a_real_model_routing_audit_entry() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let context = Arc::new(ContextEngine::new(graph.clone()));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
+    let memory = Arc::new(MemoryEngine::new(graph.clone()));
+    let registry = Arc::new(PluginRegistry::new());
+    let explainability = Arc::new(ExplanationStore::new());
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry.clone(),
+        explainability,
+        model_router(),
+        context,
+    );
+    gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
+
+    let mut manifest = PluginManifest {
+        plugin_id: 1,
+        publisher: "acme-plugins".to_string(),
+        signature: 0,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract: SemanticContract {
+                inputs: vec!["query".to_string()],
+                outputs: vec!["results".to_string()],
+                side_effects: vec![SideEffect::NetworkEgress],
+            },
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.9,
+            version: 1,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    manifest.signature = signature(&manifest);
+    registry
+        .install(&mut monitor, &root, manifest, TrustDepth::D2, true, 1_000)
+        .unwrap();
+
+    gateway
+        .invoke_capability(
+            &monitor,
+            &root,
+            InvokeRequest {
+                contract_id: "web.search".to_string(),
+                inputs: serde_json::json!({"query": "hyperion os"}),
+                agent_id: 1,
+                intent_id: 1,
+                risk: RiskHints::default(),
+                confirmed: false,
+            },
+            1_000,
+        )
+        .unwrap();
+
+    let entries = gateway
+        .audit_query(&monitor, &root, |e| {
+            e.action == hyperion_observability::AuditAction::ModelRouting
+        })
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].target.as_deref(), Some("web.search"));
+    match &entries[0].payload {
+        hyperion_observability::AuditPayload::ModelRouting(rationale) => {
+            assert!(!rationale.candidates_considered.is_empty());
+        }
+        other => panic!("expected ModelRouting payload, got {other:?}"),
+    }
+}
+
+#[test]
 fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_whose_circuit_is_open(
 ) {
     let mut monitor = CapabilityMonitor::new();
