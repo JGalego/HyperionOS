@@ -113,6 +113,8 @@ dependencies = [
  "hyperion-memory",
  "hyperion-model-router",
  "hyperion-plugin-framework",
+ "hyperion-recovery",
+ "hyperion-security",
  "serde_json",
  "tempfile",
  "thiserror",

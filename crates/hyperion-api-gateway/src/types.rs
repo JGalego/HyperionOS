@@ -2,6 +2,7 @@ use hyperion_explainability::ExplanationId;
 use hyperion_intent::HandleOutcome;
 use hyperion_knowledge_graph::NodeId;
 use hyperion_plugin_framework::PluginId;
+use hyperion_security::{IntentProvenanceChain, InterventionLevel, SensitivityHint};
 
 /// docs/26 §2's per-endpoint scope strings (`"intent:submit"`,
 /// `"memory:erase"`, ...), as a closed enum instead of open strings —
@@ -53,16 +54,59 @@ impl From<HandleOutcome> for SubmitIntentResponse {
     }
 }
 
+/// Caller-supplied risk-classifier hints, threaded straight into
+/// `hyperion_security::PendingAction` — that crate's own doc comment
+/// frames `scope_size`/`reversible`/`SensitivityHint` etc. as "caller-
+/// supplied hints rather than the full classifier pipeline docs/15 §7
+/// assumes exist upstream," so the gateway does not attempt to derive
+/// them itself; it just forwards whatever the caller asserts.
+///
+/// [`Default`] reads as the least-risky action (a single, reversible,
+/// public, fully-confident, fully-corroborated touch) — the same
+/// silent-proceed outcome every `invoke_capability` call had before this
+/// gate existed, so call sites that aren't exercising risk assessment
+/// don't need to construct one field-by-field.
+#[derive(Debug, Clone)]
+pub struct RiskHints {
+    pub object_refs: Vec<NodeId>,
+    pub scope_size: u32,
+    pub reversible: bool,
+    pub sensitivity: SensitivityHint,
+    pub intent_confidence: f32,
+    pub corroboration: f32,
+    pub provenance: Option<IntentProvenanceChain>,
+}
+
+impl Default for RiskHints {
+    fn default() -> Self {
+        RiskHints {
+            object_refs: Vec::new(),
+            scope_size: 1,
+            reversible: true,
+            sensitivity: SensitivityHint::Public,
+            intent_confidence: 1.0,
+            corroboration: 1.0,
+            provenance: None,
+        }
+    }
+}
+
 /// docs/26 §2's Capability Invocation API `InvokeRequest` — never names
 /// an Implementation, only a `contractId`; selection is delegated
-/// entirely to the registry + this crate's placeholder selection (see
-/// this crate's doc comment on the deferred real Model Router wiring).
+/// entirely to the registry + the real `hyperion-model-router` (see
+/// this crate's doc comment). `risk`/`confirmed` feed docs/15's real
+/// Risk-Assessment Engine gate: an action classified
+/// `RequireExplicitConfirm` or higher is rejected unless `confirmed` is
+/// set, and `RequireBackupFirst` additionally requires (and gets) a real
+/// `hyperion-recovery` recovery point before it's allowed to proceed.
 #[derive(Debug, Clone)]
 pub struct InvokeRequest {
     pub contract_id: String,
     pub inputs: serde_json::Value,
     pub agent_id: u64,
     pub intent_id: u64,
+    pub risk: RiskHints,
+    pub confirmed: bool,
 }
 
 /// docs/26 §2's `InvokeResponse`.
@@ -85,6 +129,10 @@ pub enum ApiError {
     OutOfScopeObject,
     #[error("no eligible implementation could satisfy this capability invocation")]
     NoEligibleImplementation,
+    #[error("this action was assessed as {0:?} and requires explicit confirmation before it can proceed")]
+    ConfirmationRequired(InterventionLevel),
+    #[error("security risk-assessment error: {0}")]
+    Security(#[from] hyperion_security::SecurityError),
     #[error("intent engine error: {0}")]
     Intent(#[from] hyperion_intent::IntentError),
     #[error("memory engine error: {0}")]

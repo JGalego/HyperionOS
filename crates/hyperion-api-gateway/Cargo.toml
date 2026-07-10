@@ -16,6 +16,8 @@ hyperion-knowledge-graph = { workspace = true }
 hyperion-memory = { workspace = true }
 hyperion-model-router = { workspace = true }
 hyperion-plugin-framework = { workspace = true }
+hyperion-recovery = { workspace = true }
+hyperion-security = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 

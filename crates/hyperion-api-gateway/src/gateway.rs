@@ -3,12 +3,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, TokenId};
-use hyperion_explainability::{ControlState, ExplanationStore};
+use hyperion_explainability::{ControlState, ExplanationStore, ReasoningStep};
 use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::{GraphQuery, KnowledgeGraph, NodeId, QueryHit};
 use hyperion_memory::{ErasureReceipt, MemoryEngine, MemoryFilter};
 use hyperion_model_router::ModelRouter;
 use hyperion_plugin_framework::PluginRegistry;
+use hyperion_recovery::RecoveryService;
+use hyperion_security::{InterventionLevel, PendingAction};
 
 use crate::router_bridge::{default_invocation, to_router_descriptor};
 use crate::types::{
@@ -27,6 +29,7 @@ pub struct ApiGateway {
     registry: Arc<PluginRegistry>,
     explainability: Arc<ExplanationStore>,
     model_router: Arc<ModelRouter>,
+    recovery: Arc<RecoveryService>,
     scope_grants: Mutex<HashMap<TokenId, HashSet<ApiScope>>>,
     next_action_id: AtomicU64,
 }
@@ -41,6 +44,7 @@ impl ApiGateway {
         explainability: Arc<ExplanationStore>,
         model_router: Arc<ModelRouter>,
     ) -> Self {
+        let recovery = Arc::new(RecoveryService::new(graph.clone()));
         ApiGateway {
             intent,
             memory,
@@ -48,6 +52,7 @@ impl ApiGateway {
             registry,
             explainability,
             model_router,
+            recovery,
             scope_grants: Mutex::new(HashMap::new()),
             next_action_id: AtomicU64::new(1),
         }
@@ -178,11 +183,17 @@ impl ApiGateway {
     }
 
     /// docs/26 §4's `invokeCapability`: look up the Contract's competing
-    /// implementations, ask the real `hyperion-model-router` which one
-    /// wins (via [`crate::router_bridge`]'s adapter — see this crate's
-    /// doc comment for exactly what that bridge does and doesn't carry
-    /// yet), dispatch, and record an Explanation — explain-then-commit,
-    /// per [18 — Explainability & Trust](../18-explainability-and-trust.md).
+    /// implementations, run the real `hyperion-security` Risk-Assessment
+    /// Engine against the request's [`crate::types::RiskHints`] (denying
+    /// with [`ApiError::ConfirmationRequired`] if it demands confirmation
+    /// the caller hasn't given), ask the real `hyperion-model-router`
+    /// which implementation wins (via [`crate::router_bridge`]'s adapter
+    /// — see this crate's doc comment for exactly what that bridge does
+    /// and doesn't carry yet), dispatch, and record an Explanation —
+    /// explain-then-commit, per
+    /// [18 — Explainability & Trust](../18-explainability-and-trust.md),
+    /// including the risk rationale as a real reasoning step and a real
+    /// recovery-point undo reference when one was created.
     /// On dispatch failure, reports the failure to the Model Router's
     /// real circuit breaker and retries against the next entry in its
     /// `fallback_chain` before giving up with
@@ -205,6 +216,36 @@ impl ApiGateway {
             return Err(ApiError::NoEligibleImplementation);
         }
 
+        let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
+
+        // docs/15's real Risk-Assessment Engine, run synchronously before
+        // dispatch — see this crate's doc comment for exactly what it
+        // does and doesn't derive.
+        let pending_action = PendingAction {
+            action_id,
+            object_refs: request.risk.object_refs.clone(),
+            scope_size: request.risk.scope_size,
+            reversible: request.risk.reversible,
+            sensitivity: request.risk.sensitivity,
+            intent_confidence: request.risk.intent_confidence,
+            corroboration: request.risk.corroboration,
+            provenance: request.risk.provenance.clone(),
+        };
+        let risk_assessment = hyperion_security::assess_and_prepare(
+            monitor,
+            token,
+            &self.recovery,
+            &pending_action,
+            now,
+        )?;
+        if risk_assessment.intervention_level >= InterventionLevel::RequireExplicitConfirm
+            && !request.confirmed
+        {
+            return Err(ApiError::ConfirmationRequired(
+                risk_assessment.intervention_level,
+            ));
+        }
+
         // Sync the Model Router's view of this capability_id's candidates
         // with the Plugin Framework's current registry state. Re-done on
         // every call rather than incrementally maintained — correctness
@@ -225,7 +266,6 @@ impl ApiGateway {
             return Err(ApiError::NoEligibleImplementation);
         }
 
-        let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
         let explanation_id = self.explainability.begin(
             monitor,
             token,
@@ -236,6 +276,23 @@ impl ApiGateway {
             vec![],
             now,
         )?;
+        self.explainability.append_step(
+            monitor,
+            token,
+            explanation_id,
+            ReasoningStep {
+                step_index: 0,
+                description: risk_assessment.rationale.clone(),
+                capability_ref: Some(request.contract_id.clone()),
+                inputs_ref: request.risk.object_refs.clone(),
+                output_ref: None,
+            },
+            vec![],
+        )?;
+        if let Some(recovery_point) = risk_assessment.recovery_point_ref {
+            self.explainability
+                .attach_undo_ref(monitor, token, explanation_id, recovery_point)?;
+        }
         self.explainability
             .transition(monitor, token, explanation_id, ControlState::Executing)?;
 

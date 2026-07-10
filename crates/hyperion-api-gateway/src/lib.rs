@@ -40,10 +40,40 @@
 //! lives in the gateway (not either subsystem crate) because
 //! `hyperion-model-router`'s own doc comment explicitly doesn't want a
 //! dependency on the Plugin Framework, and the gateway already depends
-//! on both.
+//! on both. [`gateway::ApiGateway::invoke_capability`] also now calls
+//! the real `hyperion-security` Risk-Assessment Engine
+//! (`hyperion_security::assess_and_prepare`) against caller-supplied
+//! [`RiskHints`] before dispatch: an action assessed at
+//! `RequireExplicitConfirm` or above is rejected with
+//! [`ApiError::ConfirmationRequired`] unless [`InvokeRequest::confirmed`]
+//! is set, and `RequireBackupFirst` additionally gets a real
+//! `hyperion-recovery` recovery point created synchronously and attached
+//! to the action's Explanation Record via
+//! `hyperion_explainability::ExplanationStore::attach_undo_ref` — closing
+//! the loop `attach_undo_ref`'s own doc comment names
+//! (`record.undo_ref = risk.recovery_point_ref`) and completing Phase 8's
+//! literal exit criterion ("a risky action... correctly triggers
+//! backup-then-confirm") in the one real production call site that
+//! reaches `hyperion-explainability` at all. The risk-assessment
+//! rationale is also recorded as a real `ReasoningStep` via `append_step`
+//! — this integration's one production caller had previously only ever
+//! exercised `begin`/`transition`.
 //!
 //! Deliberately deferred, and why:
 //!
+//! - **Deriving `RiskHints` from real signals.** The gateway still takes
+//!   `scope_size`/`reversible`/`sensitivity`/`intent_confidence`/
+//!   `corroboration`/`provenance` as caller-supplied hints (matching
+//!   `hyperion-security::PendingAction`'s own framing) rather than
+//!   deriving them from the actual request — e.g. blast radius from a
+//!   real object-touch count, or provenance taint from the real Context/
+//!   Intent chain. `hyperion-security` itself defers the classifiers;
+//!   this gateway integration doesn't build them either.
+//! - **`set_confidence` for the risk-assessment record.** A risk
+//!   *composite score* and a decision *confidence score* are different
+//!   signals — reporting the former as the latter would misrepresent
+//!   what the record means, so this integration leaves `confidence`
+//!   unset here rather than fabricate one.
 //! - **The Context API entirely.** Wiring `hyperion-context`'s richer
 //!   `ContextBundle`/subscription-delta shape faithfully was judged, at
 //!   this crate's scope, to add more risk of a subtly wrong integration
@@ -86,5 +116,6 @@ mod types;
 
 pub use gateway::ApiGateway;
 pub use types::{
-    ApiError, ApiScope, InvokeRequest, InvokeResponse, SubmitIntentRequest, SubmitIntentResponse,
+    ApiError, ApiScope, InvokeRequest, InvokeResponse, RiskHints, SubmitIntentRequest,
+    SubmitIntentResponse,
 };

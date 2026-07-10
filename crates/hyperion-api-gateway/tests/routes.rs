@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use hyperion_ai_runtime::{LocalAiRuntime, MockBackend};
 use hyperion_api_gateway::{
-    ApiError, ApiGateway, ApiScope, InvokeRequest, SubmitIntentRequest, SubmitIntentResponse,
+    ApiError, ApiGateway, ApiScope, InvokeRequest, RiskHints, SubmitIntentRequest,
+    SubmitIntentResponse,
 };
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_context::ContextEngine;
@@ -205,6 +206,8 @@ fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation
                 inputs: serde_json::json!({"query": "hyperion os"}),
                 agent_id: 42,
                 intent_id: 7,
+                risk: RiskHints::default(),
+                confirmed: false,
             },
             1_000,
         )
@@ -322,6 +325,8 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
                 inputs: serde_json::json!({"query": "hyperion os"}),
                 agent_id: 1,
                 intent_id: 1,
+                risk: RiskHints::default(),
+                confirmed: false,
             },
             1_002,
         )
@@ -406,6 +411,8 @@ fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
                 inputs: serde_json::json!({"query": "hyperion os"}),
                 agent_id: 1,
                 intent_id: 1,
+                risk: RiskHints::default(),
+                confirmed: false,
             },
             1_000,
         )
@@ -414,6 +421,163 @@ fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
     assert_eq!(
         response.implementation_used, 2,
         "with both candidates healthy, the real Model Router must prefer the higher-quality one"
+    );
+}
+
+fn risky_pending_action_hints() -> RiskHints {
+    // scope_size >= 10 saturates blast radius to 1.0; reversible: false
+    // zeroes reversibility — together they trip docs/15 §7's
+    // unconditional "irreversible + wide blast radius" floor straight to
+    // `RequireBackupFirst`, regardless of the other (deliberately mild)
+    // inputs, so this test isn't sensitive to the weighted-composite
+    // arithmetic.
+    RiskHints {
+        object_refs: vec![],
+        scope_size: 10,
+        reversible: false,
+        sensitivity: hyperion_security::SensitivityHint::Sensitive,
+        intent_confidence: 0.5,
+        corroboration: 0.0,
+        provenance: None,
+    }
+}
+
+#[test]
+fn a_risky_action_is_rejected_without_confirmation() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let context = Arc::new(ContextEngine::new(graph.clone()));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let memory = Arc::new(MemoryEngine::new(graph.clone()));
+    let registry = Arc::new(PluginRegistry::new());
+    let explainability = Arc::new(ExplanationStore::new());
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry.clone(),
+        explainability,
+        model_router(),
+    );
+    gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
+
+    let mut manifest = PluginManifest {
+        plugin_id: 1,
+        publisher: "acme-plugins".to_string(),
+        signature: 0,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract: SemanticContract {
+                inputs: vec!["query".to_string()],
+                outputs: vec!["results".to_string()],
+                side_effects: vec![SideEffect::NetworkEgress],
+            },
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.9,
+            version: 1,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    manifest.signature = signature(&manifest);
+    registry
+        .install(&mut monitor, &root, manifest, TrustDepth::D2, true, 1_000)
+        .unwrap();
+
+    let result = gateway.invoke_capability(
+        &monitor,
+        &root,
+        InvokeRequest {
+            contract_id: "web.search".to_string(),
+            inputs: serde_json::json!({"query": "hyperion os"}),
+            agent_id: 1,
+            intent_id: 1,
+            risk: risky_pending_action_hints(),
+            confirmed: false,
+        },
+        1_000,
+    );
+
+    assert!(matches!(
+        result,
+        Err(ApiError::ConfirmationRequired(
+            hyperion_security::InterventionLevel::RequireBackupFirst
+        ))
+    ));
+}
+
+#[test]
+fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as_its_undo_ref() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let context = Arc::new(ContextEngine::new(graph.clone()));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let memory = Arc::new(MemoryEngine::new(graph.clone()));
+    let registry = Arc::new(PluginRegistry::new());
+    let explainability = Arc::new(ExplanationStore::new());
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry.clone(),
+        explainability.clone(),
+        model_router(),
+    );
+    gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
+
+    let mut manifest = PluginManifest {
+        plugin_id: 1,
+        publisher: "acme-plugins".to_string(),
+        signature: 0,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract: SemanticContract {
+                inputs: vec!["query".to_string()],
+                outputs: vec!["results".to_string()],
+                side_effects: vec![SideEffect::NetworkEgress],
+            },
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.9,
+            version: 1,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    manifest.signature = signature(&manifest);
+    registry
+        .install(&mut monitor, &root, manifest, TrustDepth::D2, true, 1_000)
+        .unwrap();
+
+    let response = gateway
+        .invoke_capability(
+            &monitor,
+            &root,
+            InvokeRequest {
+                contract_id: "web.search".to_string(),
+                inputs: serde_json::json!({"query": "hyperion os"}),
+                agent_id: 1,
+                intent_id: 1,
+                risk: risky_pending_action_hints(),
+                confirmed: true,
+            },
+            1_000,
+        )
+        .unwrap();
+
+    let record = explainability.get(response.explanation_id).unwrap();
+    assert!(
+        record.undo_ref.is_some(),
+        "a RequireBackupFirst action's Explanation Record must carry a real recovery-point undo ref"
+    );
+    assert_eq!(
+        record.control_state,
+        hyperion_explainability::ControlState::Completed
     );
 }
 
@@ -430,6 +594,8 @@ fn invoke_capability_with_no_registered_contract_is_not_eligible() {
             inputs: serde_json::json!({}),
             agent_id: 1,
             intent_id: 1,
+            risk: RiskHints::default(),
+            confirmed: false,
         },
         1_000,
     );
