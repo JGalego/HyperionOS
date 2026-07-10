@@ -28,13 +28,24 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **Eight of `Contribution`'s nine variants** (`Agent`, `Model`,
-//!   `HardwareSupport`, `KnowledgeProvider`, `UiComponent`,
-//!   `ExecutionEngine`, `AutomationWorkflow`, `MemoryProvider`) — only
-//!   `Capability` has an owning subsystem in this workspace with a
-//!   registration point to call; the other eight would register into
-//!   crates (a device driver registry, a memory-provider registry) this
-//!   workspace's Phase 1-8 crates don't expose an equivalent hook for.
+//! - **Seven of `Contribution`'s remaining eight non-`Capability`
+//!   variants** (`Agent`, `HardwareSupport`, `KnowledgeProvider`,
+//!   `UiComponent`, `ExecutionEngine`, `AutomationWorkflow`,
+//!   `MemoryProvider`) — none of these has an owning subsystem in this
+//!   workspace with a real registration point to call yet (a device
+//!   driver registry, a memory-provider registry). `Agent` in particular
+//!   still has no hook: `hyperion-coordination::catalog::default_manifests`
+//!   is a hardcoded, static built-in list, not a live registry a plugin's
+//!   `AgentManifest` could register into. **`Model` is not actually a
+//!   ninth gap**, on inspection: a "this implementation is backed by a
+//!   model" contribution is already exactly what `Contribution::Capability`'s
+//!   `CapabilityManifest.implementation_kind` (`LocalSmallModel`/
+//!   `LocalLargeModel`) expresses, and `hyperion-api-gateway`'s
+//!   `router_bridge` already bridges every installed `Capability`
+//!   contribution — model-backed or not — into a real
+//!   `hyperion-model-router::register_implementation` call. Adding a
+//!   separate `Contribution::Model` variant would duplicate that shape,
+//!   not close a real gap.
 //! - **Real publisher-key signature verification.** [`review::signature`]
 //!   is the same non-cryptographic-checksum stand-in this workspace uses
 //!   throughout (`hyperion-ai-runtime::checksum`, `hyperion-security`'s
