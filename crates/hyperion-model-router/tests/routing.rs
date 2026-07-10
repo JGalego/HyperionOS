@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use hyperion_ai_runtime::{LocalAiRuntime, MockBackend};
+use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_model_router::{
     CapabilityInvocation, ConsequenceTier, CostModel, ImplId, ImplKind, ImplementationDescriptor,
     ModelRouter, PrivacyTier, RolloutStage, UrgencyClass,
@@ -14,6 +15,12 @@ use hyperion_model_router::{
 
 fn router() -> ModelRouter {
     ModelRouter::new(Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000)))
+}
+
+fn monitor_and_token() -> (CapabilityMonitor, hyperion_capability::CapabilityToken) {
+    let mut monitor = CapabilityMonitor::new();
+    let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    (monitor, token)
 }
 
 fn cloud_descriptor(impl_id: u64, capability_id: &str, quality: f32) -> ImplementationDescriptor {
@@ -72,18 +79,27 @@ fn invocation(
 
 #[test]
 fn privacy_gate_excludes_cloud_candidate_even_with_perfect_scores_and_no_consent() {
+    let (monitor, token) = monitor_and_token();
     let router = router();
     // A cloud candidate engineered to win on every other axis: perfect
     // quality, free, fast.
     let mut cloud = cloud_descriptor(1, "summarize", 1.0);
     cloud.cost_model = CostModel::Free;
     cloud.declared_latency_ms = 1;
-    router.register_implementation(cloud);
-    router.set_rollout_stage(ImplId(1), RolloutStage::Ga);
+    router
+        .register_implementation(&monitor, &token, cloud)
+        .unwrap();
+    router
+        .set_rollout_stage(&monitor, &token, ImplId(1), RolloutStage::Ga)
+        .unwrap();
 
     let local = native_descriptor(2, "summarize", 3_000, 0.3, CostModel::Free);
-    router.register_implementation(local);
-    router.set_rollout_stage(ImplId(2), RolloutStage::Ga);
+    router
+        .register_implementation(&monitor, &token, local)
+        .unwrap();
+    router
+        .set_rollout_stage(&monitor, &token, ImplId(2), RolloutStage::Ga)
+        .unwrap();
 
     let decision = router.route(&invocation(
         "summarize",
@@ -106,9 +122,14 @@ fn privacy_gate_excludes_cloud_candidate_even_with_perfect_scores_and_no_consent
 
 #[test]
 fn cloud_candidate_becomes_eligible_only_with_explicit_consent() {
+    let (monitor, token) = monitor_and_token();
     let router = router();
-    router.register_implementation(cloud_descriptor(1, "summarize", 0.9));
-    router.set_rollout_stage(ImplId(1), RolloutStage::Ga);
+    router
+        .register_implementation(&monitor, &token, cloud_descriptor(1, "summarize", 0.9))
+        .unwrap();
+    router
+        .set_rollout_stage(&monitor, &token, ImplId(1), RolloutStage::Ga)
+        .unwrap();
 
     let no_consent = router.route(&invocation(
         "summarize",
@@ -129,14 +150,15 @@ fn cloud_candidate_becomes_eligible_only_with_explicit_consent() {
 
 #[test]
 fn shadow_stage_candidates_are_never_chosen() {
+    let (monitor, token) = monitor_and_token();
     let router = router();
-    router.register_implementation(native_descriptor(
-        1,
-        "translate",
-        100,
-        0.99,
-        CostModel::Free,
-    ));
+    router
+        .register_implementation(
+            &monitor,
+            &token,
+            native_descriptor(1, "translate", 100, 0.99, CostModel::Free),
+        )
+        .unwrap();
     // Never promoted past Shadow (registration always enters at Shadow).
 
     let decision = router.route(&invocation(
@@ -151,6 +173,7 @@ fn shadow_stage_candidates_are_never_chosen() {
 
 #[test]
 fn interactive_urgency_favors_the_faster_candidate_over_the_higher_quality_one() {
+    let (monitor, token) = monitor_and_token();
     let router = router();
     let fast_low_quality = native_descriptor(1, "chat", 50, 0.5, CostModel::Free);
     // Exceeds the invocation's 5s latency_budget_ms, so its latency_fit
@@ -158,10 +181,18 @@ fn interactive_urgency_favors_the_faster_candidate_over_the_higher_quality_one()
     // 1.0 on latency and the test wouldn't be exercising the trade-off it
     // claims to.
     let slow_high_quality = native_descriptor(2, "chat", 8_000, 0.95, CostModel::Free);
-    router.register_implementation(fast_low_quality);
-    router.set_rollout_stage(ImplId(1), RolloutStage::Ga);
-    router.register_implementation(slow_high_quality);
-    router.set_rollout_stage(ImplId(2), RolloutStage::Ga);
+    router
+        .register_implementation(&monitor, &token, fast_low_quality)
+        .unwrap();
+    router
+        .set_rollout_stage(&monitor, &token, ImplId(1), RolloutStage::Ga)
+        .unwrap();
+    router
+        .register_implementation(&monitor, &token, slow_high_quality)
+        .unwrap();
+    router
+        .set_rollout_stage(&monitor, &token, ImplId(2), RolloutStage::Ga)
+        .unwrap();
 
     let decision = router.route(&invocation(
         "chat",
@@ -178,13 +209,22 @@ fn interactive_urgency_favors_the_faster_candidate_over_the_higher_quality_one()
 
 #[test]
 fn high_stakes_floors_quality_weight_and_picks_the_higher_quality_candidate() {
+    let (monitor, token) = monitor_and_token();
     let router = router();
     let fast_low_quality = native_descriptor(1, "contract_review", 50, 0.5, CostModel::Free);
     let slow_high_quality = native_descriptor(2, "contract_review", 4_500, 0.95, CostModel::Free);
-    router.register_implementation(fast_low_quality);
-    router.set_rollout_stage(ImplId(1), RolloutStage::Ga);
-    router.register_implementation(slow_high_quality);
-    router.set_rollout_stage(ImplId(2), RolloutStage::Ga);
+    router
+        .register_implementation(&monitor, &token, fast_low_quality)
+        .unwrap();
+    router
+        .set_rollout_stage(&monitor, &token, ImplId(1), RolloutStage::Ga)
+        .unwrap();
+    router
+        .register_implementation(&monitor, &token, slow_high_quality)
+        .unwrap();
+    router
+        .set_rollout_stage(&monitor, &token, ImplId(2), RolloutStage::Ga)
+        .unwrap();
 
     let decision = router.route(&invocation(
         "contract_review",
@@ -205,13 +245,22 @@ fn high_stakes_floors_quality_weight_and_picks_the_higher_quality_candidate() {
 
 #[test]
 fn circuit_breaker_demotes_but_does_not_remove_a_failing_candidate() {
+    let (monitor, token) = monitor_and_token();
     let router = router();
     let flaky = native_descriptor(1, "search", 100, 0.9, CostModel::Free);
     let reliable = native_descriptor(2, "search", 100, 0.5, CostModel::Free);
-    router.register_implementation(flaky);
-    router.set_rollout_stage(ImplId(1), RolloutStage::Ga);
-    router.register_implementation(reliable);
-    router.set_rollout_stage(ImplId(2), RolloutStage::Ga);
+    router
+        .register_implementation(&monitor, &token, flaky)
+        .unwrap();
+    router
+        .set_rollout_stage(&monitor, &token, ImplId(1), RolloutStage::Ga)
+        .unwrap();
+    router
+        .register_implementation(&monitor, &token, reliable)
+        .unwrap();
+    router
+        .set_rollout_stage(&monitor, &token, ImplId(2), RolloutStage::Ga)
+        .unwrap();
 
     let before = router.route(&invocation(
         "search",
@@ -270,4 +319,30 @@ fn no_candidates_at_all_degrades_gracefully_instead_of_panicking() {
     ));
     assert_eq!(decision.chosen, None);
     assert!(decision.fallback_chain.is_empty());
+}
+
+#[test]
+fn registering_or_promoting_a_candidate_requires_write_rights() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let read_only = monitor
+        .cap_derive(&root, RightsMask::READ, None, TrustBoundaryId(2))
+        .unwrap();
+    let router = router();
+
+    let result =
+        router.register_implementation(&monitor, &read_only, cloud_descriptor(1, "x", 0.5));
+    assert!(matches!(
+        result,
+        Err(hyperion_model_router::ModelRouterError::Unauthorized)
+    ));
+
+    router
+        .register_implementation(&monitor, &root, cloud_descriptor(1, "x", 0.5))
+        .unwrap();
+    let result = router.set_rollout_stage(&monitor, &read_only, ImplId(1), RolloutStage::Ga);
+    assert!(matches!(
+        result,
+        Err(hyperion_model_router::ModelRouterError::Unauthorized)
+    ));
 }

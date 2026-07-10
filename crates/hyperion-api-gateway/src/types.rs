@@ -144,4 +144,6 @@ pub enum ApiError {
     Explainability(#[from] hyperion_explainability::ExplainabilityError),
     #[error("context engine error: {0}")]
     Context(#[from] hyperion_context::ContextError),
+    #[error("model router error: {0}")]
+    ModelRouter(#[from] hyperion_model_router::ModelRouterError),
 }

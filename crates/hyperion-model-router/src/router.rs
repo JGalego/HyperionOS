@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use hyperion_ai_runtime::{CapabilityContract, LocalAiRuntime};
+use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 
 use crate::registry::{CircuitBreaker, ImplementationRegistry};
 use crate::types::{
@@ -9,6 +10,12 @@ use crate::types::{
     ImplementationDescriptor, PrivacyTier, Rationale, RolloutStage, RoutingDecision, RoutingScore,
     UrgencyClass,
 };
+
+#[derive(Debug, thiserror::Error)]
+pub enum ModelRouterError {
+    #[error("capability does not authorize registering or promoting a Model Router candidate")]
+    Unauthorized,
+}
 
 struct WeightVector {
     lat: f32,
@@ -86,20 +93,56 @@ impl ModelRouter {
         }
     }
 
+    fn require(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        rights: RightsMask,
+    ) -> Result<(), ModelRouterError> {
+        monitor
+            .check_rights_ok_result(token, rights)
+            .map_err(|_| ModelRouterError::Unauthorized)
+    }
+
     /// docs/23 §Interfaces' `register_implementation` — always enters at
     /// `Shadow` regardless of the descriptor's own field, per §Architecture.
-    pub fn register_implementation(&self, descriptor: ImplementationDescriptor) {
+    /// Capability-gated: this crate's own doc comment named registration
+    /// as "not capability-gated here," since the Plugin Framework was
+    /// meant to be the real Trust Boundary check an "install/register an
+    /// implementation" crossing goes through. `hyperion-plugin-framework`
+    /// itself already re-checks its own installer's rights before this is
+    /// ever reached (via `hyperion-api-gateway`'s bridge), so this is a
+    /// second, independent gate — the same "every layer re-checks live,
+    /// never trusts a caller's prior check" convention this workspace
+    /// already uses everywhere else.
+    pub fn register_implementation(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        descriptor: ImplementationDescriptor,
+    ) -> Result<(), ModelRouterError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
         self.registry.lock().unwrap().register(descriptor);
+        Ok(())
     }
 
     /// docs/23 §Interfaces' `set_rollout_stage` — called by
     /// [32 — Update System](../32-update-system.md) in the real system;
     /// exposed directly here since that document doesn't exist yet.
-    pub fn set_rollout_stage(&self, impl_id: ImplId, stage: RolloutStage) {
+    /// Capability-gated for the same reason as [`Self::register_implementation`].
+    pub fn set_rollout_stage(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        impl_id: ImplId,
+        stage: RolloutStage,
+    ) -> Result<(), ModelRouterError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
         self.registry
             .lock()
             .unwrap()
             .set_rollout_stage(impl_id, stage);
+        Ok(())
     }
 
     pub fn descriptor(&self, impl_id: ImplId) -> Option<ImplementationDescriptor> {

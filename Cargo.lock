@@ -271,6 +271,7 @@ name = "hyperion-model-router"
 version = "0.1.0"
 dependencies = [
  "hyperion-ai-runtime",
+ "hyperion-capability",
  "thiserror",
 ]
 

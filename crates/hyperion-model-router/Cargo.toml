@@ -7,4 +7,5 @@ repository.workspace = true
 
 [dependencies]
 hyperion-ai-runtime = { workspace = true }
+hyperion-capability = { workspace = true }
 thiserror = { workspace = true }

@@ -23,17 +23,18 @@
 //!   to; this crate's `route()` still computes whether ensemble
 //!   verification *would* be needed (`needs_verification`) and reports it
 //!   in the [`Rationale`], but never actually invokes a second candidate.
-//! - **Real Capability Registry** ([24 — Plugin Framework](../24-plugin-framework.md),
-//!   Phase 9) — candidates are registered directly via
-//!   [`ModelRouter::register_implementation`] rather than discovered from a
-//!   real plugin registry, and registration is not capability-gated here:
-//!   Plugin Framework is what actually owns the Trust Boundary a real
-//!   "install/register an implementation" crossing would check against.
-//!   `route()` itself crosses no Trust Boundary — it is a pure decision
-//!   over already-visible registry data plus `hyperion-ai-runtime`'s
-//!   ungated `estimate()` — so, unlike every crate in this workspace that
-//!   actually reads or writes a capability-scoped resource, this one has
-//!   no capability check to perform yet.
+//! - ~~Real Capability Registry~~ — now real:
+//!   `hyperion-api-gateway::router_bridge` discovers candidates from the
+//!   actual `hyperion-plugin-framework` registry and bridges each into
+//!   [`ModelRouter::register_implementation`], so a third-party Capability
+//!   and a first-party equivalent genuinely compete on this crate's real
+//!   weighted scoring. [`ModelRouter::register_implementation`]/
+//!   [`ModelRouter::set_rollout_stage`] are also now capability-gated
+//!   (`RightsMask::WRITE`, returning [`ModelRouterError`]) — the
+//!   "not capability-gated here" gap this bullet used to name. `route()`
+//!   itself still crosses no Trust Boundary of its own — it remains a
+//!   pure decision over already-visible registry data plus
+//!   `hyperion-ai-runtime`'s ungated `estimate()`.
 //! - **Real privacy-tier policy** ([16 — Privacy Architecture](../16-privacy-architecture.md),
 //!   Phase 8) — the privacy gate here is real and hard (a `CloudApi`
 //!   candidate is unconditionally excluded without
@@ -54,7 +55,7 @@ mod router;
 mod types;
 
 pub use registry::ImplementationRegistry;
-pub use router::ModelRouter;
+pub use router::{ModelRouter, ModelRouterError};
 pub use types::{
     CapabilityInvocation, ConsequenceTier, CostModel, ExclusionReason, ImplId, ImplKind,
     ImplementationDescriptor, PrivacyTier, Rationale, RolloutStage, RoutingDecision, RoutingScore,

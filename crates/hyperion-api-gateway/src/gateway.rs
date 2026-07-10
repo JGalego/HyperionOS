@@ -286,9 +286,14 @@ impl ApiGateway {
         for plugin_descriptor in &entry.implementations {
             let router_descriptor = to_router_descriptor(plugin_descriptor, &request.contract_id);
             let impl_id = router_descriptor.impl_id;
-            self.model_router.register_implementation(router_descriptor);
             self.model_router
-                .set_rollout_stage(impl_id, hyperion_model_router::RolloutStage::Ga);
+                .register_implementation(monitor, token, router_descriptor)?;
+            self.model_router.set_rollout_stage(
+                monitor,
+                token,
+                impl_id,
+                hyperion_model_router::RolloutStage::Ga,
+            )?;
         }
 
         let invocation = build_invocation(
