@@ -1,0 +1,91 @@
+use hyperion_knowledge_graph::{NodeId, NodeRecord};
+
+pub type RecoveryPointId = u64;
+pub type ActionId = u64;
+
+/// docs/33 §4's `Trigger`, narrowed to the variants this workspace's
+/// existing crates can actually originate — no `PreUpdate` payload type
+/// exists yet (Phase 10's Update System), so it carries no data here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trigger {
+    Automatic,
+    UserRequested,
+    PreRiskyAction,
+    PreUpdate,
+    PreAgentRun { agent_run_id: u64 },
+    PreGoalFork { goal_id: u64 },
+}
+
+/// docs/33 §4's `RecoveryPoint`. docs/33 frames this as "a durable,
+/// timestamped *reference*, not a copy of data" — true for the real
+/// store's native MVCC/content-addressing, but
+/// `hyperion-knowledge-graph` doesn't yet expose a historical-version
+/// read API (see this crate's doc comment), so
+/// [`crate::service::RecoveryService`] captures a bounded copy of just
+/// the objects a triggering action is about to touch, not a whole-graph
+/// cut. Still cheap, at the scale of one action's `objects_touched`.
+#[derive(Debug, Clone)]
+pub struct RecoveryPoint {
+    pub id: RecoveryPointId,
+    pub created_at: u64,
+    pub trigger: Trigger,
+    pub pinned: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionStatus {
+    Committed,
+    InFlight,
+    Aborted,
+}
+
+/// docs/33 §4's `ActionRecord` — the "undo record." No separate undo-
+/// stack type exists in the doc either; undo is resolved dynamically by
+/// querying the journal, as implemented in
+/// [`crate::service::RecoveryService::undo`].
+#[derive(Debug, Clone)]
+pub struct ActionRecord {
+    pub action_id: ActionId,
+    pub agent_run_id: Option<u64>,
+    pub recovery_point_before: RecoveryPointId,
+    pub objects_touched: Vec<NodeId>,
+    pub status: ActionStatus,
+    pub created_at: u64,
+    pub note: String,
+}
+
+/// docs/33 §4's `UndoScope`, narrowed to the three variants this
+/// workspace can key on today — `Session`/`Goal` need first-class
+/// session/goal ids this workspace doesn't have yet (`hyperion-
+/// coordination`'s `SharedPlan` has no single "goal id" of its own).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndoScope {
+    SingleAction(ActionId),
+    AgentRun(u64),
+    /// Every action recorded against this recovery point, not just one.
+    Global(RecoveryPointId),
+}
+
+/// docs/33 §3's `UndoReceipt` — `NeedsConfirmation` never auto-applies.
+#[derive(Debug, Clone)]
+pub enum UndoReceipt {
+    Targeted { undone_actions: Vec<ActionId> },
+    NeedsConfirmation { conflicting_objects: Vec<NodeId> },
+    NothingToUndo,
+}
+
+pub(crate) type Snapshot = Vec<(NodeId, Option<NodeRecord>)>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum RecoveryError {
+    #[error("capability does not authorize this operation")]
+    Unauthorized,
+    #[error("no such recovery point")]
+    NoSuchRecoveryPoint,
+    #[error("no such action record")]
+    NoSuchAction,
+    #[error("knowledge graph error: {0}")]
+    Graph(#[from] hyperion_knowledge_graph::GraphError),
+    #[error("agent runtime error: {0}")]
+    Agent(#[from] hyperion_agent_runtime::AgentError),
+}

@@ -146,6 +146,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-explainability"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-knowledge-graph",
+ "hyperion-privacy",
+ "hyperion-recovery",
+ "hyperion-storage",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-federation"
 version = "0.1.0"
 dependencies = [
@@ -228,11 +240,58 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-observability"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-explainability",
+ "thiserror",
+]
+
+[[package]]
+name = "hyperion-privacy"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-knowledge-graph",
+ "hyperion-storage",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "hyperion-recovery"
+version = "0.1.0"
+dependencies = [
+ "hyperion-agent-runtime",
+ "hyperion-capability",
+ "hyperion-knowledge-graph",
+ "hyperion-storage",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-scheduler"
 version = "0.1.0"
 dependencies = [
  "hyperion-capability",
  "proptest",
+ "thiserror",
+]
+
+[[package]]
+name = "hyperion-security"
+version = "0.1.0"
+dependencies = [
+ "hyperion-ai-runtime",
+ "hyperion-capability",
+ "hyperion-knowledge-graph",
+ "hyperion-recovery",
+ "hyperion-storage",
+ "tempfile",
  "thiserror",
 ]
 
@@ -268,6 +327,27 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "hyperion-threat-model"
+version = "0.1.0"
+dependencies = [
+ "hyperion-agent-runtime",
+ "hyperion-ai-runtime",
+ "hyperion-capability",
+ "hyperion-device",
+ "hyperion-explainability",
+ "hyperion-federation",
+ "hyperion-knowledge-graph",
+ "hyperion-netstack",
+ "hyperion-observability",
+ "hyperion-privacy",
+ "hyperion-recovery",
+ "hyperion-security",
+ "hyperion-storage",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

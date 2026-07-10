@@ -7,6 +7,7 @@ members = [
     "crates/hyperion-context",
     "crates/hyperion-coordination",
     "crates/hyperion-device",
+    "crates/hyperion-explainability",
     "crates/hyperion-federation",
     "crates/hyperion-intent",
     "crates/hyperion-ipc",
@@ -14,10 +15,15 @@ members = [
     "crates/hyperion-memory",
     "crates/hyperion-model-router",
     "crates/hyperion-netstack",
+    "crates/hyperion-observability",
+    "crates/hyperion-privacy",
+    "crates/hyperion-recovery",
     "crates/hyperion-scheduler",
+    "crates/hyperion-security",
     "crates/hyperion-semantic-fs",
     "crates/hyperion-sim",
     "crates/hyperion-storage",
+    "crates/hyperion-threat-model",
     "crates/hyperion-workspace",
 ]
 
@@ -33,6 +39,7 @@ hyperion-capability = { path = "crates/hyperion-capability" }
 hyperion-context = { path = "crates/hyperion-context" }
 hyperion-coordination = { path = "crates/hyperion-coordination" }
 hyperion-device = { path = "crates/hyperion-device" }
+hyperion-explainability = { path = "crates/hyperion-explainability" }
 hyperion-federation = { path = "crates/hyperion-federation" }
 hyperion-intent = { path = "crates/hyperion-intent" }
 hyperion-ipc = { path = "crates/hyperion-ipc" }
@@ -40,7 +47,11 @@ hyperion-knowledge-graph = { path = "crates/hyperion-knowledge-graph" }
 hyperion-memory = { path = "crates/hyperion-memory" }
 hyperion-model-router = { path = "crates/hyperion-model-router" }
 hyperion-netstack = { path = "crates/hyperion-netstack" }
+hyperion-observability = { path = "crates/hyperion-observability" }
+hyperion-privacy = { path = "crates/hyperion-privacy" }
+hyperion-recovery = { path = "crates/hyperion-recovery" }
 hyperion-scheduler = { path = "crates/hyperion-scheduler" }
+hyperion-security = { path = "crates/hyperion-security" }
 hyperion-semantic-fs = { path = "crates/hyperion-semantic-fs" }
 hyperion-storage = { path = "crates/hyperion-storage" }
 hyperion-workspace = { path = "crates/hyperion-workspace" }

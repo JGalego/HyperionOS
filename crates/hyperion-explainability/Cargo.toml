@@ -1,0 +1,16 @@
+[package]
+name = "hyperion-explainability"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hyperion-capability = { workspace = true }
+hyperion-knowledge-graph = { workspace = true }
+hyperion-privacy = { workspace = true }
+hyperion-recovery = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+hyperion-storage = { workspace = true }
