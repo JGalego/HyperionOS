@@ -57,7 +57,14 @@
 //! reaches `hyperion-explainability` at all. The risk-assessment
 //! rationale is also recorded as a real `ReasoningStep` via `append_step`
 //! — this integration's one production caller had previously only ever
-//! exercised `begin`/`transition`.
+//! exercised `begin`/`transition`. The real routing decision's own
+//! `chosen_reason` is recorded as a second `ReasoningStep`, and
+//! [`router_bridge::to_confidence_and_alternatives`] turns the winning
+//! candidate's real composite fitness score and every other considered/
+//! excluded candidate into a real `set_confidence` call — the winning
+//! score genuinely is a confidence-shaped signal (unlike the risk score,
+//! see below), so this is the first real `set_confidence` caller in the
+//! workspace.
 //!
 //! Deliberately deferred, and why:
 //!
@@ -69,11 +76,12 @@
 //!   real object-touch count, or provenance taint from the real Context/
 //!   Intent chain. `hyperion-security` itself defers the classifiers;
 //!   this gateway integration doesn't build them either.
-//! - **`set_confidence` for the risk-assessment record.** A risk
+//! - **Reusing the risk-assessment score as confidence.** A risk
 //!   *composite score* and a decision *confidence score* are different
 //!   signals — reporting the former as the latter would misrepresent
-//!   what the record means, so this integration leaves `confidence`
-//!   unset here rather than fabricate one.
+//!   what the record means. `set_confidence` is wired here from the
+//!   Model Router's own routing score instead, which is a genuine
+//!   confidence-shaped signal, precisely to avoid that conflation.
 //! - **The Context API entirely.** Wiring `hyperion-context`'s richer
 //!   `ContextBundle`/subscription-delta shape faithfully was judged, at
 //!   this crate's scope, to add more risk of a subtly wrong integration

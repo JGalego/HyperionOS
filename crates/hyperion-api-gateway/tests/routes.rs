@@ -582,6 +582,113 @@ fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as
 }
 
 #[test]
+fn the_routing_decision_produces_a_real_confidence_score_and_a_real_alternative() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let context = Arc::new(ContextEngine::new(graph.clone()));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let memory = Arc::new(MemoryEngine::new(graph.clone()));
+    let registry = Arc::new(PluginRegistry::new());
+    let explainability = Arc::new(ExplanationStore::new());
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry.clone(),
+        explainability.clone(),
+        model_router(),
+    );
+    gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
+
+    let contract = SemanticContract {
+        inputs: vec!["query".to_string()],
+        outputs: vec!["results".to_string()],
+        side_effects: vec![SideEffect::NetworkEgress],
+    };
+
+    let mut low = PluginManifest {
+        plugin_id: 1,
+        publisher: "acme-plugins".to_string(),
+        signature: 0,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract: contract.clone(),
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.3,
+            version: 1,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    low.signature = signature(&low);
+    registry
+        .install(&mut monitor, &root, low, TrustDepth::D2, true, 1_000)
+        .unwrap();
+
+    let mut high = PluginManifest {
+        plugin_id: 2,
+        publisher: "globex-plugins".to_string(),
+        signature: 0,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract,
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.9,
+            version: 1,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    high.signature = signature(&high);
+    registry
+        .install(&mut monitor, &root, high, TrustDepth::D2, true, 1_001)
+        .unwrap();
+
+    let response = gateway
+        .invoke_capability(
+            &monitor,
+            &root,
+            InvokeRequest {
+                contract_id: "web.search".to_string(),
+                inputs: serde_json::json!({"query": "hyperion os"}),
+                agent_id: 1,
+                intent_id: 1,
+                risk: RiskHints::default(),
+                confirmed: false,
+            },
+            1_000,
+        )
+        .unwrap();
+
+    let record = explainability.get(response.explanation_id).unwrap();
+    let confidence = record
+        .confidence
+        .expect("the real routing decision must produce a confidence score");
+    assert!(
+        confidence.value > 0.0 && confidence.value <= 1.0,
+        "expected a real composite fitness score, got {}",
+        confidence.value
+    );
+    assert_eq!(
+        confidence.method,
+        hyperion_explainability::ConfidenceMethod::Heuristic
+    );
+    assert_eq!(
+        record.alternatives.len(),
+        1,
+        "the losing candidate must appear as a real alternative"
+    );
+    assert!(
+        record.reasoning_chain.len() >= 2,
+        "both the risk assessment and the routing decision must contribute a reasoning step"
+    );
+}
+
+#[test]
 fn invoke_capability_with_no_registered_contract_is_not_eligible() {
     let (monitor, root, gateway) = setup();
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();

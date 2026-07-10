@@ -1,7 +1,8 @@
+use hyperion_explainability::{Alternative, ConfidenceMethod, ConfidenceScore};
 use hyperion_model_router::{
-    CapabilityInvocation, ConsequenceTier, CostModel, ImplId, ImplKind as RouterImplKind,
-    ImplementationDescriptor as RouterImplementationDescriptor, PrivacyTier as RouterPrivacyTier,
-    RolloutStage, UrgencyClass,
+    CapabilityInvocation, ConsequenceTier, CostModel, ExclusionReason, ImplId,
+    ImplKind as RouterImplKind, ImplementationDescriptor as RouterImplementationDescriptor,
+    PrivacyTier as RouterPrivacyTier, RolloutStage, RoutingDecision, UrgencyClass,
 };
 use hyperion_plugin_framework::{
     ImplementationDescriptor as PluginImplementationDescriptor,
@@ -70,4 +71,68 @@ pub(crate) fn default_invocation(capability_id: &str) -> CapabilityInvocation {
         latency_budget_ms: 5_000,
         cloud_consent: true,
     }
+}
+
+/// Turns a real `hyperion-model-router` routing decision into
+/// `hyperion-explainability`'s Confidence/Alternatives shape. The winning
+/// candidate's own composite fitness score becomes the `ConfidenceScore`
+/// — a real signal, not a fabricated placeholder: it's exactly how well
+/// the router's weighted scoring fit this candidate, which is a
+/// genuinely different thing from a `hyperion-security` risk score (see
+/// this crate's doc comment on why that one is *not* reused here).
+/// `ConfidenceMethod::Heuristic` is the correct tag since this is a
+/// deterministic weighted-fit formula, not model self-consistency,
+/// verification, or ensemble agreement. Every other candidate this
+/// invocation considered (scored but not chosen) or excluded outright
+/// (a hard gate rejected it before scoring) becomes an `Alternative`.
+pub(crate) fn to_confidence_and_alternatives(
+    decision: &RoutingDecision,
+) -> (ConfidenceScore, Vec<Alternative>) {
+    let winner_composite = decision
+        .rationale
+        .candidates_considered
+        .first()
+        .map(|(_, score)| score.composite)
+        .unwrap_or(0.0);
+
+    let confidence = ConfidenceScore {
+        value: winner_composite,
+        method: ConfidenceMethod::Heuristic,
+    };
+
+    let mut alternatives: Vec<Alternative> = decision
+        .rationale
+        .candidates_considered
+        .iter()
+        .skip(1)
+        .map(|(impl_id, score)| Alternative {
+            description: format!("implementation {}", impl_id.0),
+            score: score.composite,
+            rejection_reason: format!(
+                "composite score {:.3} did not beat the winner's {:.3}",
+                score.composite, winner_composite
+            ),
+        })
+        .collect();
+
+    alternatives.extend(
+        decision
+            .rationale
+            .candidates_excluded
+            .iter()
+            .map(|(impl_id, reason)| Alternative {
+                description: format!("implementation {}", impl_id.0),
+                score: 0.0,
+                rejection_reason: match reason {
+                    ExclusionReason::PrivacyGate => {
+                        "excluded by the privacy gate before scoring".to_string()
+                    }
+                    ExclusionReason::ResourceInfeasible => {
+                        "excluded as not locally feasible before scoring".to_string()
+                    }
+                },
+            }),
+    );
+
+    (confidence, alternatives)
 }

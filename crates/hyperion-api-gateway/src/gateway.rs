@@ -12,7 +12,9 @@ use hyperion_plugin_framework::PluginRegistry;
 use hyperion_recovery::RecoveryService;
 use hyperion_security::{InterventionLevel, PendingAction};
 
-use crate::router_bridge::{default_invocation, to_router_descriptor};
+use crate::router_bridge::{
+    default_invocation, to_confidence_and_alternatives, to_router_descriptor,
+};
 use crate::types::{
     ApiError, ApiScope, InvokeRequest, InvokeResponse, SubmitIntentRequest, SubmitIntentResponse,
 };
@@ -192,8 +194,12 @@ impl ApiGateway {
     /// and doesn't carry yet), dispatch, and record an Explanation —
     /// explain-then-commit, per
     /// [18 — Explainability & Trust](../18-explainability-and-trust.md),
-    /// including the risk rationale as a real reasoning step and a real
-    /// recovery-point undo reference when one was created.
+    /// including the risk rationale and the routing decision's own
+    /// `chosen_reason` as real reasoning steps, the routing decision's
+    /// real winning composite score and every considered/excluded
+    /// candidate as a real Confidence/Alternatives pair (via
+    /// [`crate::router_bridge::to_confidence_and_alternatives`]), and a
+    /// real recovery-point undo reference when one was created.
     /// On dispatch failure, reports the failure to the Model Router's
     /// real circuit breaker and retries against the next entry in its
     /// `fallback_chain` before giving up with
@@ -288,6 +294,27 @@ impl ApiGateway {
                 output_ref: None,
             },
             vec![],
+        )?;
+        self.explainability.append_step(
+            monitor,
+            token,
+            explanation_id,
+            ReasoningStep {
+                step_index: 1,
+                description: decision.rationale.chosen_reason.clone(),
+                capability_ref: Some(request.contract_id.clone()),
+                inputs_ref: Vec::new(),
+                output_ref: None,
+            },
+            vec![],
+        )?;
+        let (confidence, alternatives) = to_confidence_and_alternatives(&decision);
+        self.explainability.set_confidence(
+            monitor,
+            token,
+            explanation_id,
+            confidence,
+            alternatives,
         )?;
         if let Some(recovery_point) = risk_assessment.recovery_point_ref {
             self.explainability
