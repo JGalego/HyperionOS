@@ -81,6 +81,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-agent-runtime"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-ai-runtime"
 version = "0.1.0"
 dependencies = [

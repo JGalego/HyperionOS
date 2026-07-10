@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/hyperion-agent-runtime",
     "crates/hyperion-ai-runtime",
     "crates/hyperion-capability",
     "crates/hyperion-context",
@@ -20,6 +21,7 @@ license = "Apache-2.0"
 repository = "https://github.com/JGalego/HyperionOS"
 
 [workspace.dependencies]
+hyperion-agent-runtime = { path = "crates/hyperion-agent-runtime" }
 hyperion-ai-runtime = { path = "crates/hyperion-ai-runtime" }
 hyperion-capability = { path = "crates/hyperion-capability" }
 hyperion-context = { path = "crates/hyperion-context" }
