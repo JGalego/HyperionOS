@@ -85,10 +85,18 @@ impl IpcBus {
     /// `ipc_call` — docs/30-ipc-framework.md §Algorithms' synchronous
     /// call/response rendezvous. Blocks until the matching `REPLY` arrives,
     /// the peer is gone, or `timeout` elapses.
-    pub fn ipc_call(&self, chan: &Channel, req: Request, timeout: Duration) -> Result<Response, IpcFault> {
+    pub fn ipc_call(
+        &self,
+        chan: &Channel,
+        req: Request,
+        timeout: Duration,
+    ) -> Result<Response, IpcFault> {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        self.pending_replies.lock().unwrap().insert(request_id, reply_tx);
+        self.pending_replies
+            .lock()
+            .unwrap()
+            .insert(request_id, reply_tx);
 
         let frame = Frame {
             magic: HYIP_MAGIC,

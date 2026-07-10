@@ -19,8 +19,8 @@ mod region;
 mod types;
 
 pub use bus::{AuthenticatedCall, IpcBus, Notification, Request, Response};
-pub use hyperion_capability::Operation;
 pub use channel::{channel_open, Channel};
 pub use frame::{Frame, FrameBody};
+pub use hyperion_capability::Operation;
 pub use region::{region_map, region_share, RegionDescriptor};
 pub use types::{ChannelClass, FrameFlags, IpcFault, Route, SchemaId};

@@ -35,15 +35,25 @@ fn revoking_root_invalidates_every_descendant_but_not_siblings() {
     let root_a = m.mint_root(RightsMask::all(), boundary(1), None);
     let root_b = m.mint_root(RightsMask::all(), boundary(1), None); // unrelated object/tree
 
-    let child = m.cap_derive(&root_a, RightsMask::READ, None, boundary(2)).unwrap();
-    let grandchild = m.cap_derive(&child, RightsMask::READ, None, boundary(3)).unwrap();
+    let child = m
+        .cap_derive(&root_a, RightsMask::READ, None, boundary(2))
+        .unwrap();
+    let grandchild = m
+        .cap_derive(&child, RightsMask::READ, None, boundary(3))
+        .unwrap();
 
     let receipt = m.cap_revoke(&child);
     assert_eq!(receipt.descendants_invalidated, 1); // grandchild only
 
     assert!(!m.is_live(&child), "revoked token itself must be dead");
-    assert!(!m.is_live(&grandchild), "descendant of revoked token must be dead");
-    assert!(m.is_live(&root_a), "ancestor of the revoked token must be unaffected");
+    assert!(
+        !m.is_live(&grandchild),
+        "descendant of revoked token must be dead"
+    );
+    assert!(
+        m.is_live(&root_a),
+        "ancestor of the revoked token must be unaffected"
+    );
     assert!(m.is_live(&root_b), "unrelated tree must be unaffected");
 }
 
@@ -51,7 +61,9 @@ fn revoking_root_invalidates_every_descendant_but_not_siblings() {
 fn stale_generation_token_is_rejected_even_after_new_siblings_are_derived() {
     let mut m = CapabilityMonitor::new();
     let root = m.mint_root(RightsMask::all(), boundary(1), None);
-    let child = m.cap_derive(&root, RightsMask::READ, None, boundary(2)).unwrap();
+    let child = m
+        .cap_derive(&root, RightsMask::READ, None, boundary(2))
+        .unwrap();
 
     m.cap_revoke(&child);
     // A stale handle to the same token must still be rejected identically
@@ -64,7 +76,9 @@ fn stale_generation_token_is_rejected_even_after_new_siblings_are_derived() {
 
     // Deriving a fresh sibling from the (still-live) root must not resurrect
     // the revoked child, and the new sibling itself must be independently live.
-    let sibling = m.cap_derive(&root, RightsMask::READ, None, boundary(4)).unwrap();
+    let sibling = m
+        .cap_derive(&root, RightsMask::READ, None, boundary(4))
+        .unwrap();
     assert!(m.is_live(&sibling));
     assert!(!m.is_live(&child));
 }
@@ -72,7 +86,11 @@ fn stale_generation_token_is_rejected_even_after_new_siblings_are_derived() {
 #[test]
 fn expired_token_is_rejected() {
     let mut m = CapabilityMonitor::new();
-    let root = m.mint_root(RightsMask::READ, boundary(1), Some(Duration::from_millis(1)));
+    let root = m.mint_root(
+        RightsMask::READ,
+        boundary(1),
+        Some(Duration::from_millis(1)),
+    );
     std::thread::sleep(Duration::from_millis(20));
     assert!(!m.is_live(&root));
     assert_eq!(
@@ -84,9 +102,18 @@ fn expired_token_is_rejected() {
 #[test]
 fn derived_ttl_cannot_outlive_parent() {
     let mut m = CapabilityMonitor::new();
-    let root = m.mint_root(RightsMask::READ, boundary(1), Some(Duration::from_millis(20)));
+    let root = m.mint_root(
+        RightsMask::READ,
+        boundary(1),
+        Some(Duration::from_millis(20)),
+    );
     let child = m
-        .cap_derive(&root, RightsMask::READ, Some(Duration::from_secs(3600)), boundary(2))
+        .cap_derive(
+            &root,
+            RightsMask::READ,
+            Some(Duration::from_secs(3600)),
+            boundary(2),
+        )
         .unwrap();
 
     std::thread::sleep(Duration::from_millis(40));

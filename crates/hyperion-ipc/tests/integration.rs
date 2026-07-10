@@ -102,8 +102,15 @@ fn revoking_a_token_blocks_the_very_next_call_over_an_already_open_channel() {
     };
 
     // First call succeeds: the channel and the token behind it are both live.
-    bus.ipc_call(&chan, Request { op: ECHO, payload: vec![9] }, Duration::from_secs(1))
-        .expect("first call over a freshly opened channel must succeed");
+    bus.ipc_call(
+        &chan,
+        Request {
+            op: ECHO,
+            payload: vec![9],
+        },
+        Duration::from_secs(1),
+    )
+    .expect("first call over a freshly opened channel must succeed");
 
     // Revoke the client's token — the channel itself is still "open" from
     // the client's point of view (channel_open already happened), but the
@@ -111,7 +118,14 @@ fn revoking_a_token_blocks_the_very_next_call_over_an_already_open_channel() {
     // checked at open time.
     monitor.lock().unwrap().cap_revoke(&client_token);
 
-    let result = bus.ipc_call(&chan, Request { op: ECHO, payload: vec![9] }, Duration::from_secs(1));
+    let result = bus.ipc_call(
+        &chan,
+        Request {
+            op: ECHO,
+            payload: vec![9],
+        },
+        Duration::from_secs(1),
+    );
     assert_eq!(result.unwrap_err(), IpcFault::Kernel(Fault::Revoked));
 
     bus.close_endpoint(server_root.object_id());
@@ -163,8 +177,14 @@ fn notify_is_fire_and_forget_and_still_capability_gated() {
         let guard = monitor.lock().unwrap();
         channel_open(&guard, &client_token, SchemaId(1), ChannelClass::Notify).unwrap()
     };
-    bus.ipc_notify(&chan, Notification { op: ECHO, payload: vec![7] })
-        .expect("a live, sufficiently-privileged token must be able to notify the server");
+    bus.ipc_notify(
+        &chan,
+        Notification {
+            op: ECHO,
+            payload: vec![7],
+        },
+    )
+    .expect("a live, sufficiently-privileged token must be able to notify the server");
 
     bus.close_endpoint(server_root.object_id());
     server.join().unwrap();

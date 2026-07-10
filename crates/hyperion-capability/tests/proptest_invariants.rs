@@ -28,9 +28,8 @@ fn attenuated_subset(parent: RightsMask) -> impl Strategy<Value = RightsMask> {
 /// single `proptest!` parameter yields both halves already related the way
 /// `cap_derive` requires — no manual `TestRunner` needed inside a test body.
 fn parent_and_attenuated_child() -> impl Strategy<Value = (RightsMask, RightsMask)> {
-    rights_strategy().prop_flat_map(|parent| {
-        attenuated_subset(parent).prop_map(move |child| (parent, child))
-    })
+    rights_strategy()
+        .prop_flat_map(|parent| attenuated_subset(parent).prop_map(move |child| (parent, child)))
 }
 
 fn ttl_strategy() -> impl Strategy<Value = Option<Duration>> {

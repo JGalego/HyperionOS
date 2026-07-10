@@ -5,7 +5,10 @@ use hyperion_capability::{CapabilityMonitor, RightsMask};
 
 use crate::ledger::ResourceLedger;
 use crate::owner::OwnerAccount;
-use crate::types::{owner_of, OwnerId, ResourceDimension, ResourceVector, SchedClass, TaskDescriptor, TaskId, Ticket};
+use crate::types::{
+    owner_of, OwnerId, ResourceDimension, ResourceVector, SchedClass, TaskDescriptor, TaskId,
+    Ticket,
+};
 
 /// Aging increment applied to a requeued task's `priority_weight` each
 /// epoch it fails to be admitted — docs/04-scheduler.md §Recovery
@@ -80,7 +83,11 @@ impl Scheduler {
     /// dispatch time, not here (docs/04 §Algorithms 1: "checked... before
     /// it is queued" refers to the fit check happening pre-dispatch, which
     /// `schedule_epoch` performs on every candidate every epoch).
-    pub fn submit_task(&mut self, monitor: &CapabilityMonitor, task: TaskDescriptor) -> Result<Ticket, SchedError> {
+    pub fn submit_task(
+        &mut self,
+        monitor: &CapabilityMonitor,
+        task: TaskDescriptor,
+    ) -> Result<Ticket, SchedError> {
         monitor
             .check_rights_ok_result(&task.cap_token, RightsMask::EXEC)
             .map_err(|_| SchedError::Unauthorized)?;
@@ -100,7 +107,9 @@ impl Scheduler {
             self.release(&alloc);
             return Ok(());
         }
-        if remove_by_id(&mut self.realtime_ready, ticket) || remove_by_id(&mut self.other_ready, ticket) {
+        if remove_by_id(&mut self.realtime_ready, ticket)
+            || remove_by_id(&mut self.other_ready, ticket)
+        {
             return Ok(());
         }
         Err(SchedError::NoSuchTicket)
@@ -122,7 +131,10 @@ impl Scheduler {
     /// finishes; this simulator has no execution to observe, so callers
     /// signal completion explicitly once their simulated work is done.
     pub fn complete(&mut self, ticket: Ticket) -> Result<(), SchedError> {
-        let alloc = self.allocations.remove(&ticket).ok_or(SchedError::NoSuchTicket)?;
+        let alloc = self
+            .allocations
+            .remove(&ticket)
+            .ok_or(SchedError::NoSuchTicket)?;
         self.release(&alloc);
         Ok(())
     }
@@ -203,7 +215,8 @@ impl Scheduler {
             .or_default()
             .currently_held
             .saturating_add_assign(&vector);
-        self.allocations.insert(ticket, Allocation { owner, vector });
+        self.allocations
+            .insert(ticket, Allocation { owner, vector });
 
         let rationale = SchedulingRationale {
             ticket,

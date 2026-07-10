@@ -51,7 +51,9 @@ impl RevocationGraph {
     }
 
     pub(crate) fn insert_child(&mut self, parent: TokenId, child: TokenId) {
-        self.nodes.entry(parent).and_modify(|n| n.children.push(child));
+        self.nodes
+            .entry(parent)
+            .and_modify(|n| n.children.push(child));
         self.nodes.insert(
             child,
             RevocationNode {

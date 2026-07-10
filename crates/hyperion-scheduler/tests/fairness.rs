@@ -16,7 +16,12 @@ use hyperion_scheduler::{
 const SPLITTER: u64 = 1;
 const CHUNKY: u64 = 2;
 
-fn cpu_task(id: u64, owner: u64, cpu: u32, cap_token: hyperion_capability::CapabilityToken) -> TaskDescriptor {
+fn cpu_task(
+    id: u64,
+    owner: u64,
+    cpu: u32,
+    cap_token: hyperion_capability::CapabilityToken,
+) -> TaskDescriptor {
     TaskDescriptor {
         id: TaskId(id),
         owner_intent: IntentId(owner),
@@ -24,7 +29,10 @@ fn cpu_task(id: u64, owner: u64, cpu: u32, cap_token: hyperion_capability::Capab
         class: SchedClass::BackgroundAgent,
         deadline: None,
         priority_weight: 1.0, // equal weight: any share difference must come from request shape, not priority
-        request: ResourceVector { cpu_shares: cpu, ..Default::default() },
+        request: ResourceVector {
+            cpu_shares: cpu,
+            ..Default::default()
+        },
         cap_token,
     }
 }
@@ -45,7 +53,10 @@ fn splitting_demand_into_many_small_tasks_gains_no_unfair_share() {
     for _ in 0..90 {
         next_id += 1;
         sched
-            .submit_task(&monitor, cpu_task(next_id, SPLITTER, 1, splitter_cap.clone()))
+            .submit_task(
+                &monitor,
+                cpu_task(next_id, SPLITTER, 1, splitter_cap.clone()),
+            )
             .unwrap();
     }
     next_id += 1;
@@ -79,7 +90,13 @@ fn splitting_demand_into_many_small_tasks_gains_no_unfair_share() {
         splitter_admitted_units, 50,
         "equal-weight owners must receive an equal share of contested capacity"
     );
-    assert_eq!(sched.query_ledger(ResourceDimension::Cpu).unwrap().allocated, 100);
+    assert_eq!(
+        sched
+            .query_ledger(ResourceDimension::Cpu)
+            .unwrap()
+            .allocated,
+        100
+    );
 }
 
 #[test]
@@ -104,7 +121,10 @@ fn strategy_proofness_holds_across_repeated_epochs_with_reclaim() {
         for _ in 0..15 {
             next_id += 1;
             sched
-                .submit_task(&monitor, cpu_task(next_id, SPLITTER, 1, splitter_cap.clone()))
+                .submit_task(
+                    &monitor,
+                    cpu_task(next_id, SPLITTER, 1, splitter_cap.clone()),
+                )
                 .unwrap();
             round_ids.push(next_id);
         }
