@@ -70,14 +70,12 @@ pub fn run_demo() -> DemoOutcome {
         let scheduler = Arc::clone(&scheduler);
         thread::spawn(move || {
             let mut next_task_id = 0u64;
-            loop {
-                // No lock is held across this blocking receive — see
-                // hyperion-ipc's own recv_raw/authenticate split, which
-                // exists precisely to avoid starving the Client thread's
-                // concurrent monitor.cap_revoke call below.
-                let Ok(frame) = bus.recv_raw(&rx) else {
-                    break; // endpoint closed: shut down cleanly
-                };
+            // No lock is held across this blocking receive — see
+            // hyperion-ipc's own recv_raw/authenticate split, which exists
+            // precisely to avoid starving the Client thread's concurrent
+            // monitor.cap_revoke call below. The loop exits cleanly once
+            // recv_raw errors, i.e. once the endpoint is closed.
+            while let Ok(frame) = bus.recv_raw(&rx) {
                 let call = {
                     let guard = monitor.lock().unwrap();
                     bus.authenticate(frame, &guard, RightsMask::WRITE)
