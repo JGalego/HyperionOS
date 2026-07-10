@@ -26,6 +26,11 @@
 //! linearization, voice-control grammar feeding micro-Intents, switch-scan
 //! grouping) — proving "one Capability UI contract yields several
 //! modalities for free" without needing five hand-built interfaces.
+//! `hyperion-device`'s `tests/cross_device_workspace.rs` (dev-dependency
+//! only, no coupling added here) proves `DeviceRegistry::find_render_surfaces`'s
+//! real query genuinely decides which, and how many, real devices a
+//! compiled [`compiler::WorkspaceGraph`] mounts onto — docs/20 §5.5's
+//! Cross-Device Workspace Assembly's first, closable half.
 //!
 //! Deliberately deferred, and why:
 //!

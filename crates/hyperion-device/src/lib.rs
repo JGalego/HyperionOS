@@ -45,11 +45,16 @@
 //!   [15 — Security Architecture](../15-security-architecture.md) (Phase
 //!   8) key material, the same dependency every other crate in this
 //!   workspace defers real signing to.
-//! - **Cross-device Workspace assembly** (§5.5, §7's `handle_cross_device_workspace`)
-//!   — needs a real `hyperion-workspace` integration deciding which
-//!   Context Bundle fields go to which surface; this crate exposes the
-//!   registry query that step would consult ([`DeviceRegistry::find_render_surfaces`])
-//!   but does not itself drive Workspace generation.
+//! - **Per-surface Context Bundle field-splitting** (§5.5, §7's
+//!   `handle_cross_device_workspace`'s other half) — `tests/cross_device_workspace.rs`
+//!   (dev-dependency-only, no production coupling to `hyperion-workspace`
+//!   added) now proves [`DeviceRegistry::find_render_surfaces`]'s real
+//!   query genuinely decides which, and how many, real devices a
+//!   compiled `hyperion-workspace` Workspace mounts onto. It does not
+//!   decide *which Context Bundle fields* each surface gets — every
+//!   eligible surface mounts the same compiled graph — since that needs
+//!   a real per-surface layout algorithm neither doc's pseudocode fully
+//!   specifies.
 
 mod registry;
 mod types;
