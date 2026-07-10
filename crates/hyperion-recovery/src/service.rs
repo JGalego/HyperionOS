@@ -159,6 +159,33 @@ impl RecoveryService {
         Ok(())
     }
 
+    /// docs/32/33's `restore_to(recovery_point_id)`: restores every object
+    /// this recovery point captured, directly — no `ActionRecord`
+    /// involved, unlike [`Self::undo`]'s conflict-checked path. This is
+    /// the mechanism [21-style] callers outside this crate (docs/32's
+    /// Update System is the motivating case) compose with when they took
+    /// their own `recovery_point_create` snapshot and now need to revert
+    /// to it wholesale, without having journaled individual
+    /// `ActionRecord`s along the way.
+    pub fn restore_to(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        recovery_point_id: RecoveryPointId,
+    ) -> Result<(), RecoveryError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+        let all_ids: Vec<NodeId> = self
+            .snapshots
+            .lock()
+            .unwrap()
+            .get(&recovery_point_id)
+            .ok_or(RecoveryError::NoSuchRecoveryPoint)?
+            .iter()
+            .map(|(id, _)| *id)
+            .collect();
+        self.restore_objects(monitor, token, recovery_point_id, &all_ids)
+    }
+
     /// docs/33 §5's `recover_from_crash()` — the Phase 8 exit criterion:
     /// "a corrupted mid-Agent-execution crash recovers cleanly." Every
     /// still-`InFlight` action is rolled back to the state it captured

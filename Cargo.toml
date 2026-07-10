@@ -21,6 +21,8 @@ members = [
     "crates/hyperion-plugin-framework",
     "crates/hyperion-privacy",
     "crates/hyperion-recovery",
+    "crates/hyperion-release-gate",
+    "crates/hyperion-scalability",
     "crates/hyperion-scheduler",
     "crates/hyperion-sdk",
     "crates/hyperion-security",
@@ -28,6 +30,7 @@ members = [
     "crates/hyperion-sim",
     "crates/hyperion-storage",
     "crates/hyperion-threat-model",
+    "crates/hyperion-update",
     "crates/hyperion-workspace",
 ]
 
@@ -57,11 +60,14 @@ hyperion-observability = { path = "crates/hyperion-observability" }
 hyperion-plugin-framework = { path = "crates/hyperion-plugin-framework" }
 hyperion-privacy = { path = "crates/hyperion-privacy" }
 hyperion-recovery = { path = "crates/hyperion-recovery" }
+hyperion-release-gate = { path = "crates/hyperion-release-gate" }
+hyperion-scalability = { path = "crates/hyperion-scalability" }
 hyperion-scheduler = { path = "crates/hyperion-scheduler" }
 hyperion-sdk = { path = "crates/hyperion-sdk" }
 hyperion-security = { path = "crates/hyperion-security" }
 hyperion-semantic-fs = { path = "crates/hyperion-semantic-fs" }
 hyperion-storage = { path = "crates/hyperion-storage" }
+hyperion-update = { path = "crates/hyperion-update" }
 hyperion-workspace = { path = "crates/hyperion-workspace" }
 bitflags = "2"
 thiserror = "2"

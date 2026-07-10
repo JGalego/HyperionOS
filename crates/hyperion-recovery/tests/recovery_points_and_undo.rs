@@ -280,3 +280,78 @@ fn pin_and_unpin_round_trip() {
     recovery.unpin(&monitor, &root, rp).unwrap();
     assert!(!recovery.recovery_point(rp).unwrap().pinned);
 }
+
+#[test]
+fn restore_to_reverts_every_object_the_recovery_point_captured_with_no_action_record_involved() {
+    let (monitor, root, recovery, graph) = setup();
+    let a = graph
+        .put_node(
+            &monitor,
+            &root,
+            None,
+            "Note",
+            None,
+            serde_json::json!({"text": "a1"}),
+        )
+        .unwrap();
+    let b = graph
+        .put_node(
+            &monitor,
+            &root,
+            None,
+            "Note",
+            None,
+            serde_json::json!({"text": "b1"}),
+        )
+        .unwrap();
+
+    let rp = recovery
+        .recovery_point_create(&monitor, &root, Trigger::PreUpdate, &[a, b], 1_000)
+        .unwrap();
+
+    // Mutate both objects with no ActionRecord ever journaled — the
+    // caller (docs/32's Update System is the motivating case) is
+    // composing its own rollback substrate on top of the recovery point
+    // alone.
+    graph
+        .put_node(
+            &monitor,
+            &root,
+            Some(a),
+            "Note",
+            None,
+            serde_json::json!({"text": "a2"}),
+        )
+        .unwrap();
+    graph
+        .put_node(
+            &monitor,
+            &root,
+            Some(b),
+            "Note",
+            None,
+            serde_json::json!({"text": "b2"}),
+        )
+        .unwrap();
+
+    recovery.restore_to(&monitor, &root, rp).unwrap();
+
+    assert_eq!(
+        graph.get(&monitor, &root, a).unwrap().metadata["text"],
+        serde_json::json!("a1")
+    );
+    assert_eq!(
+        graph.get(&monitor, &root, b).unwrap().metadata["text"],
+        serde_json::json!("b1")
+    );
+}
+
+#[test]
+fn restore_to_an_unknown_recovery_point_fails() {
+    let (monitor, root, recovery, _graph) = setup();
+    let result = recovery.restore_to(&monitor, &root, 999);
+    assert!(matches!(
+        result,
+        Err(hyperion_recovery::RecoveryError::NoSuchRecoveryPoint)
+    ));
+}

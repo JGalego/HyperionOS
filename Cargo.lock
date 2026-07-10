@@ -312,6 +312,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-release-gate"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-observability",
+ "thiserror",
+]
+
+[[package]]
+name = "hyperion-scalability"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-observability",
+ "hyperion-privacy",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-scheduler"
 version = "0.1.0"
 dependencies = [
@@ -396,6 +415,19 @@ dependencies = [
  "hyperion-storage",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "hyperion-update"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-knowledge-graph",
+ "hyperion-recovery",
+ "hyperion-storage",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
