@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hyperion-capability",
+    "crates/hyperion-ipc",
+    "crates/hyperion-scheduler",
+    "crates/hyperion-sim",
+]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/JGalego/HyperionOS"
+
+[workspace.dependencies]
+hyperion-capability = { path = "crates/hyperion-capability" }
+hyperion-ipc = { path = "crates/hyperion-ipc" }
+hyperion-scheduler = { path = "crates/hyperion-scheduler" }
+bitflags = "2"
+thiserror = "2"
+proptest = "1"

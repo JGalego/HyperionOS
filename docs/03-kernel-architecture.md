@@ -203,9 +203,11 @@ whole guest OS."
 /// An unforgeable reference to exactly one kernel object plus a rights mask.
 /// Only ever constructed or narrowed by the Capability Monitor.
 struct CapabilityToken {
+    token_id: TokenId,          // opaque, monitor-assigned identity of *this* delegation node;
+                                 // distinct from object_id (see generation note below)
     object_id: ObjectId,        // opaque, monitor-assigned; never user-synthesizable
     rights: RightsMask,         // bitmask: READ | WRITE | MAP | EXEC | GRANT | REVOKE | ...
-    generation: u64,            // bumped on revocation; stale tokens fail validation
+    generation: u64,            // snapshot of token_id's node generation; bumped on revocation
     origin: TrustBoundaryId,    // which boundary this token was minted for
     expiry: Option<Instant>,    // optional TTL, per 02 §5
 }
@@ -247,6 +249,15 @@ outstanding delegations, not in overall token count) — a single user action ("
 provably removes every downstream authority it had delegated, satisfying [02 §4's](02-core-architecture.md#4-design-invariants)
 "everything is undoable" invariant at the kernel layer.
 
+Generation is tracked **per `RevocationNode` (i.e. per `token_id`), not per `object_id`.** A single
+object commonly has many independent tokens referencing it — a root capability plus several
+attenuated children handed to unrelated holders, each its own node in the revocation graph. Keying
+the generation counter by `object_id` instead would mean revoking any one delegated token bumps a
+counter shared by every other token for that object, invalidating siblings and even the parent that
+performed the revocation — directly contradicting this section's own claim that revocation cascades
+only to "the whole delegated subtree," not to the object's entire holder set. The check in
+`cap_invoke` below reads `registry_generation(live.token_id)` for this reason.
+
 **Admission at a Trust Boundary depth.** When a Capability is instantiated
 (see [02 — Capability](02-core-architecture.md#capability)), the monitor reads its declared trust
 level and resource profile, selects a minimum sandboxing depth from the table above, and mints the
@@ -281,7 +292,9 @@ fn cap_invoke(caller: &CapabilityTable, tok: CapabilityToken, op: Operation, arg
     let live = slot.as_ref().ok_or(Fault::Revoked)?;
 
     // Reject stale generations: revocation is instantaneous from the token's view.
-    if live.generation != registry_generation(live.object_id) {
+    // Keyed by token_id (this delegation node), NOT object_id — see the note in
+    // §Algorithms above on why a shared per-object counter would over-revoke siblings.
+    if live.generation != registry_generation(live.token_id) {
         return Err(Fault::Revoked);
     }
     if live.expiry.map_or(false, |t| now() > t) {
@@ -305,14 +318,16 @@ fn cap_invoke(caller: &CapabilityTable, tok: CapabilityToken, op: Operation, arg
 fn cap_derive(caller: &mut CapabilityTable, parent: CapabilityToken,
               rights: RightsMask, ttl: Option<Duration>) -> Result<CapabilityToken, Fault>
 {
-    let parent_node = revocation_graph::lookup(parent).ok_or(Fault::NoSuchCapability)?;
+    let parent_node = revocation_graph::lookup(parent.token_id).ok_or(Fault::NoSuchCapability)?;
     if !parent.rights.contains(&rights) {
         return Err(Fault::CannotEscalate);   // attenuation only: subset, never superset
     }
     let child = CapabilityToken {
+        token_id: revocation_graph::fresh_token_id(),  // its own node, own counter
         object_id: parent.object_id,
         rights,
-        generation: parent.generation,
+        generation: 0,   // baseline of the *new* node, not the parent's counter value —
+                         // the two are independent counters under per-node generation tracking
         origin: caller.boundary,
         expiry: min_ttl(parent.expiry, ttl),
     };
