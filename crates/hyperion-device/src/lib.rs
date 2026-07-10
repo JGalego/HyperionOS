@@ -18,16 +18,24 @@
 //! invocation time (an undeclared or wrong-direction capability is denied,
 //! never dispatched); and substitute-device handoff (§10's canonical
 //! "car loses connectivity mid-navigation, hands off to phone" example).
+//! [`DeviceRegistry::register`] also persists every `DeviceObject` as a
+//! real `hyperion-knowledge-graph` node (doc §4: "a Semantic Object
+//! subtype") — [`DeviceRegistry::kg_node_for`] resolves a `device_id` to
+//! the real node it created.
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **Persisting `DeviceObject` as a real Knowledge Graph node.** Doc
-//!   §4 calls it "a Semantic Object subtype," but this slice keeps the
-//!   registry in-process rather than wiring `hyperion-knowledge-graph` —
-//!   the pairing/trust/presence state machine is the architectural core
-//!   this phase needs proven; persistence is a mechanical follow-on with
-//!   no new algorithm of its own, the same judgment call
-//!   `hyperion-model-router` made about a real Capability Registry.
+//! - **Re-syncing the Knowledge Graph node after registration.**
+//!   `heartbeat`/`tick`/`pair` update the in-process `DeviceObject`
+//!   (presence, `last_heartbeat`, grants) but don't call `put_node`
+//!   again — `heartbeat`/`tick` in particular take no
+//!   `CapabilityMonitor`/`CapabilityToken` at all (a device's own
+//!   physical heartbeat isn't itself a capability-mediated action, and
+//!   `tick` sweeps every device at once, with no single token that would
+//!   authorize writing all of them), so wiring a write into either would
+//!   need its own real design pass rather than a mechanical copy-paste of
+//!   `register`'s pattern. The KG node is a real, queryable registration-
+//!   time snapshot, not yet a live mirror.
 //! - **Real discovery protocols** (mDNS/BLE/Matter/cloud-relay, §5.1) — a
 //!   device's `CapabilityManifest` is supplied directly to
 //!   [`DeviceRegistry::register`] by the caller, standing in for whatever

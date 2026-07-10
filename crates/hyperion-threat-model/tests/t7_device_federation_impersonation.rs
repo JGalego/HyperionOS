@@ -3,12 +3,15 @@
 //! more-trusted device, and revoking a paired device must block
 //! invocation immediately.
 
+use std::sync::Arc;
+
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_device::{
     CapabilityManifestEntry, DeviceRegistry, DeviceType, Direction, SafetyClass,
     TrustTier as DeviceTrustTier,
 };
 use hyperion_federation::{FederationHub, FederationTrustTier};
+use hyperion_knowledge_graph::KnowledgeGraph;
 
 #[test]
 fn t7_a_more_trusted_device_wins_a_conflicting_anchor_claim_over_a_stale_holder() {
@@ -33,7 +36,9 @@ fn t7_a_more_trusted_device_wins_a_conflicting_anchor_claim_over_a_stale_holder(
 fn t7_revoking_a_paired_device_immediately_blocks_further_invocation() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
-    let registry = DeviceRegistry::new();
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let registry = DeviceRegistry::new(graph);
     let device = registry
         .register(
             &monitor,

@@ -2,20 +2,28 @@
 //! validation, the transient-connectivity state machine (§5.6), and the
 //! car-loses-connectivity-mid-navigation substitute handoff (§10).
 
+use std::sync::Arc;
+
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_device::{
     CapabilityManifestEntry, DeviceError, DeviceRegistry, DeviceType, Direction, PresenceState,
     SafetyClass, TrustTier,
 };
+use hyperion_knowledge_graph::KnowledgeGraph;
 
 fn setup() -> (
+    tempfile::TempDir,
     CapabilityMonitor,
     hyperion_capability::CapabilityToken,
     DeviceRegistry,
+    Arc<KnowledgeGraph>,
 ) {
+    let dir = tempfile::tempdir().unwrap();
     let mut monitor = CapabilityMonitor::new();
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
-    (monitor, token, DeviceRegistry::new())
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let registry = DeviceRegistry::new(graph.clone());
+    (dir, monitor, token, registry, graph)
 }
 
 fn display_manifest() -> Vec<CapabilityManifestEntry> {
@@ -27,8 +35,35 @@ fn display_manifest() -> Vec<CapabilityManifestEntry> {
 }
 
 #[test]
+fn register_persists_the_device_as_a_real_knowledge_graph_node() {
+    let (_dir, monitor, token, registry, graph) = setup();
+    let device = registry
+        .register(
+            &monitor,
+            &token,
+            DeviceType::Display,
+            "Acme",
+            "Display-1",
+            display_manifest(),
+            1,
+            0,
+        )
+        .unwrap();
+
+    let node_id = registry
+        .kg_node_for(device)
+        .expect("register must persist a real Knowledge Graph node");
+
+    let node = graph.get(&monitor, &token, node_id).unwrap();
+    assert_eq!(node.object_type, "device");
+    assert_eq!(node.metadata["device_id"], device);
+    assert_eq!(node.metadata["manufacturer"], "Acme");
+    assert_eq!(node.metadata["model"], "Display-1");
+}
+
+#[test]
 fn actuation_tier_pairing_requires_explicit_confirmation() {
-    let (monitor, token, registry) = setup();
+    let (_dir, monitor, token, registry, _graph) = setup();
     let robot = registry
         .register(
             &monitor,
@@ -72,7 +107,7 @@ fn actuation_tier_pairing_requires_explicit_confirmation() {
 
 #[test]
 fn a_sense_tier_pairing_cannot_be_used_to_invoke_an_actuate_capability() {
-    let (monitor, token, registry) = setup();
+    let (_dir, monitor, token, registry, _graph) = setup();
     let device = registry
         .register(
             &monitor,
@@ -110,7 +145,7 @@ fn a_sense_tier_pairing_cannot_be_used_to_invoke_an_actuate_capability() {
 
 #[test]
 fn invoking_an_undeclared_or_unpaired_capability_is_denied() {
-    let (monitor, token, registry) = setup();
+    let (_dir, monitor, token, registry, _graph) = setup();
     let display = registry
         .register(
             &monitor,
@@ -167,7 +202,7 @@ fn invoking_an_undeclared_or_unpaired_capability_is_denied() {
 
 #[test]
 fn presence_degrades_then_disconnects_and_recovers_on_heartbeat() {
-    let (monitor, token, registry) = setup();
+    let (_dir, monitor, token, registry, _graph) = setup();
     let device = registry
         .register(
             &monitor,
@@ -208,7 +243,7 @@ fn presence_degrades_then_disconnects_and_recovers_on_heartbeat() {
 
 #[test]
 fn a_disconnected_device_refuses_invocation_and_a_substitute_is_found() {
-    let (monitor, token, registry) = setup();
+    let (_dir, monitor, token, registry, _graph) = setup();
     let nav_capability = "car.navigation.set_destination";
     let car = registry
         .register(

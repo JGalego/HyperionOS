@@ -1,8 +1,17 @@
 //! Mirrors every other crate in this workspace: every call is capability-
 //! gated, re-checked live against the monitor.
 
+use std::sync::Arc;
+
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_device::{DeviceError, DeviceRegistry, DeviceType, TrustTier};
+use hyperion_knowledge_graph::KnowledgeGraph;
+
+fn registry() -> (tempfile::TempDir, DeviceRegistry) {
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    (dir, DeviceRegistry::new(graph))
+}
 
 #[test]
 fn register_requires_write_rights() {
@@ -12,7 +21,7 @@ fn register_requires_write_rights() {
         .cap_derive(&root, RightsMask::READ, None, TrustBoundaryId(2))
         .unwrap();
 
-    let registry = DeviceRegistry::new();
+    let (_dir, registry) = registry();
     let result = registry.register(
         &monitor,
         &read_only,
@@ -34,7 +43,7 @@ fn revoking_a_token_blocks_further_access_re_checked_live() {
         .cap_derive(&root, RightsMask::all(), None, TrustBoundaryId(2))
         .unwrap();
 
-    let registry = DeviceRegistry::new();
+    let (_dir, registry) = registry();
     let device = registry
         .register(
             &monitor,

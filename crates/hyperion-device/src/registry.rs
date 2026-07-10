@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_knowledge_graph::{KnowledgeGraph, NodeId};
 
 use crate::types::{
     CapabilityManifestEntry, DeviceObject, DeviceType, Direction, PairingRecord, PresenceState,
@@ -25,6 +26,8 @@ pub enum DeviceError {
     ActuationRequiresConfirmation,
     #[error("device is not reachable")]
     Unreachable,
+    #[error("knowledge graph error: {0}")]
+    Graph(#[from] hyperion_knowledge_graph::GraphError),
 }
 
 /// docs/20 — Device Framework. See this crate's doc comment for what's
@@ -33,20 +36,23 @@ pub struct DeviceRegistry {
     devices: Mutex<HashMap<u64, DeviceObject>>,
     pairings: Mutex<HashMap<u64, PairingRecord>>,
     next_id: AtomicU64,
-}
-
-impl Default for DeviceRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// docs/20 §4: "a Semantic Object subtype" — every registered
+    /// `DeviceObject` is mirrored here as a real Knowledge Graph node,
+    /// keyed by `device_id`. Populated at [`Self::register`] time only;
+    /// see this crate's doc comment on why later mutations
+    /// (`heartbeat`/`tick`/`pair`) don't yet re-sync it.
+    graph: Arc<KnowledgeGraph>,
+    kg_nodes: Mutex<HashMap<u64, NodeId>>,
 }
 
 impl DeviceRegistry {
-    pub fn new() -> Self {
+    pub fn new(graph: Arc<KnowledgeGraph>) -> Self {
         DeviceRegistry {
             devices: Mutex::new(HashMap::new()),
             pairings: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
+            graph,
+            kg_nodes: Mutex::new(HashMap::new()),
         }
     }
 
@@ -78,20 +84,33 @@ impl DeviceRegistry {
     ) -> Result<u64, DeviceError> {
         self.require(monitor, token, RightsMask::WRITE)?;
         let device_id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.devices.lock().unwrap().insert(
+        let device = DeviceObject {
             device_id,
-            DeviceObject {
-                device_id,
-                device_type,
-                manufacturer: manufacturer.to_string(),
-                model: model.to_string(),
-                capability_manifest,
-                owner,
-                presence: PresenceState::Connected,
-                last_heartbeat: now,
-            },
-        );
+            device_type,
+            manufacturer: manufacturer.to_string(),
+            model: model.to_string(),
+            capability_manifest,
+            owner,
+            presence: PresenceState::Connected,
+            last_heartbeat: now,
+        };
+
+        let metadata = serde_json::to_value(&device).expect("DeviceObject always serializes");
+        let node_id = self
+            .graph
+            .put_node(monitor, token, None, "device", None, metadata)?;
+        self.kg_nodes.lock().unwrap().insert(device_id, node_id);
+
+        self.devices.lock().unwrap().insert(device_id, device);
         Ok(device_id)
+    }
+
+    /// The real Knowledge Graph node [`Self::register`] created for
+    /// `device_id`, per docs/20 §4's "a Semantic Object subtype" — the
+    /// queryable proof this registry doesn't just hold `DeviceObject`s
+    /// in-process.
+    pub fn kg_node_for(&self, device_id: u64) -> Option<NodeId> {
+        self.kg_nodes.lock().unwrap().get(&device_id).copied()
     }
 
     fn required_tier_for(direction: Direction) -> TrustTier {
