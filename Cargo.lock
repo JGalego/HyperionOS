@@ -81,6 +81,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-ai-runtime"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "proptest",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-capability"
 version = "0.1.0"
 dependencies = [
