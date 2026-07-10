@@ -4,6 +4,10 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_scheduler::{
+    AgentId, IntentId, ResourceDimension, ResourceLedger, ResourceVector, SchedClass, Scheduler,
+    TaskDescriptor, TaskId,
+};
 
 use crate::broker::{self, GrantDecision};
 use crate::stubs;
@@ -40,6 +44,11 @@ pub struct AgentRuntime {
     instances: Mutex<HashMap<u64, AgentInstance>>,
     checkpoints: Mutex<HashMap<u64, AgentCheckpoint>>,
     next_id: AtomicU64,
+    /// docs/04's real unified Scheduler, backing [`Self::invoke`]'s quota
+    /// gate — see this crate's doc comment on why admission is delegated
+    /// here instead of `QuotaState`'s own private counter.
+    scheduler: Mutex<Scheduler>,
+    next_task_id: AtomicU64,
 }
 
 impl Default for AgentRuntime {
@@ -50,11 +59,40 @@ impl Default for AgentRuntime {
 
 impl AgentRuntime {
     pub fn new() -> Self {
+        let mut scheduler = Scheduler::new();
+        // One nominal dimension stands in for "a Capability invocation's
+        // resource footprint" — `DEFAULT_QUOTA` reused as the ledger's
+        // capacity keeps this the same number `QuotaState` always used,
+        // just enforced by the real admission algorithm instead of a
+        // private counter.
+        scheduler.register_resource_provider(ResourceLedger::new(
+            ResourceDimension::InferenceTokens,
+            DEFAULT_QUOTA,
+            0,
+        ));
         AgentRuntime {
             instances: Mutex::new(HashMap::new()),
             checkpoints: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
+            scheduler: Mutex::new(scheduler),
+            next_task_id: AtomicU64::new(1),
         }
+    }
+
+    /// Real headroom remaining on the Scheduler's single
+    /// `InferenceTokens` ledger this runtime's Capability invocations
+    /// draw from — queryable proof that [`Self::invoke`] round-trips
+    /// through the real admission algorithm rather than a private
+    /// counter: it reads `DEFAULT_QUOTA` before any call and after every
+    /// call, since each invocation's resource request is released the
+    /// moment its (synchronous, in this simulator) dispatch finishes.
+    pub fn resource_headroom(&self) -> u32 {
+        self.scheduler
+            .lock()
+            .unwrap()
+            .query_ledger(ResourceDimension::InferenceTokens)
+            .map(|l| l.headroom(false))
+            .unwrap_or(0)
     }
 
     fn require(
@@ -149,7 +187,44 @@ impl AgentRuntime {
             GrantDecision::Granted => {}
         }
 
-        if !instance.quota.has_headroom() {
+        // docs/04's real Scheduler admission gate, replacing a private
+        // `QuotaState.has_headroom()` counter that never touched the rest
+        // of the system's real resource model. `QuotaState` itself is
+        // still updated below for the circuit-breaker's own bookkeeping
+        // (unrelated to this gate) and observability.
+        let task_id = TaskId(self.next_task_id.fetch_add(1, Ordering::Relaxed));
+        let ticket = self
+            .scheduler
+            .lock()
+            .unwrap()
+            .submit_task(
+                monitor,
+                TaskDescriptor {
+                    id: task_id,
+                    owner_intent: IntentId(instance.bound_intent.unwrap_or(0)),
+                    owner_agent: Some(AgentId(instance_id)),
+                    class: SchedClass::InteractiveAgent,
+                    deadline: None,
+                    priority_weight: 1.0,
+                    request: ResourceVector {
+                        inference_tokens_per_sec: 1,
+                        ..Default::default()
+                    },
+                    cap_token: token.clone(),
+                },
+            )
+            .map_err(|_| AgentError::Unauthorized)?;
+        let admitted = self
+            .scheduler
+            .lock()
+            .unwrap()
+            .schedule_epoch()
+            .into_iter()
+            .find(|r| r.ticket == ticket)
+            .map(|r| r.admitted)
+            .unwrap_or(false);
+        if !admitted {
+            let _ = self.scheduler.lock().unwrap().cancel(ticket);
             Self::audit(instance, "quota_exceeded", capability_ref);
             return Ok(InvokeOutcome::QuotaExceeded);
         }
@@ -157,7 +232,10 @@ impl AgentRuntime {
         instance.state = LifecycleState::Executing;
         instance.quota.calls_used_this_window += 1;
 
-        match stubs::dispatch(capability_ref, &args) {
+        let dispatch_result = stubs::dispatch(capability_ref, &args);
+        let _ = self.scheduler.lock().unwrap().complete(ticket);
+
+        match dispatch_result {
             Ok(result) => {
                 instance.quota.consecutive_failures = 0;
                 Self::audit(instance, "invoked", capability_ref);

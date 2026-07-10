@@ -55,6 +55,34 @@ fn spawn_binds_immediately_and_baseline_capability_is_granted_without_a_prompt()
 }
 
 #[test]
+fn invoke_round_trips_through_the_real_scheduler_without_leaking_capacity() {
+    let (monitor, token, runtime) = setup();
+    let id = runtime.spawn(&monitor, &token, manifest(), None).unwrap();
+
+    let headroom_before = runtime.resource_headroom();
+    assert!(
+        headroom_before > 0,
+        "a freshly constructed runtime's real Scheduler ledger must start with headroom"
+    );
+
+    runtime
+        .invoke(
+            &monitor,
+            &token,
+            id,
+            "web.search",
+            json!({"query": "rust ownership"}),
+        )
+        .unwrap();
+
+    assert_eq!(
+        runtime.resource_headroom(),
+        headroom_before,
+        "a completed invocation must release its real Scheduler reservation, not leak it"
+    );
+}
+
+#[test]
 fn requestable_capability_blocks_on_consent_then_proceeds_once_approved() {
     let (monitor, token, runtime) = setup();
     let id = runtime.spawn(&monitor, &token, manifest(), None).unwrap();

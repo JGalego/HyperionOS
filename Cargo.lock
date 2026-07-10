@@ -85,6 +85,7 @@ name = "hyperion-agent-runtime"
 version = "0.1.0"
 dependencies = [
  "hyperion-capability",
+ "hyperion-scheduler",
  "serde",
  "serde_json",
  "thiserror",

@@ -12,10 +12,19 @@
 //! Real: the full lifecycle state machine (§3.3, narrowed per below), the
 //! Capability Broker's three-way grant resolution (§6.1: baseline ->
 //! immediate grant, requestable -> consent gate, undeclared -> unconditional
-//! deny), a token-bucket quota with a real consecutive-failure circuit
-//! breaker (§6.2) that suspends a runaway instance, and checkpoint/resume
-//! that revokes open grants rather than carrying them across (§6.3) — "open
-//! grants (revoked, not carried across — resume re-requests them)."
+//! deny), a real consecutive-failure circuit breaker (§6.2) that suspends a
+//! runaway instance, and checkpoint/resume that revokes open grants rather
+//! than carrying them across (§6.3) — "open grants (revoked, not carried
+//! across — resume re-requests them)." [`AgentRuntime::invoke`]'s quota
+//! gate is the real `hyperion-scheduler` admission algorithm, not a private
+//! counter: each invocation submits a real `TaskDescriptor` (one nominal
+//! `InferenceTokens` unit, `SchedClass::InteractiveAgent`) to this runtime's
+//! own `Scheduler`, runs a real `schedule_epoch`, and only proceeds if the
+//! real ledger admits it — releasing the reservation via `complete` the
+//! moment dispatch (synchronous, in this simulator) finishes.
+//! [`AgentRuntime::resource_headroom`] exposes the real ledger's headroom
+//! as queryable proof this round-trips through the real algorithm rather
+//! than bypassing it.
 //!
 //! Per docs/41-implementation-phases.md's own Phase 4 guidance, invocation
 //! dispatches to a small, first-party, in-house stub Capability set
@@ -37,11 +46,15 @@
 //!   breaker and `hyperion-coordination`'s failure-containment logic (next
 //!   in this phase) have something real to react to without needing a real
 //!   Capability that can actually fail on its own.
-//! - **Real Scheduler quota integration** ([04 — Scheduler](../04-scheduler.md),
-//!   already real in this workspace) — `QuotaState` here is a self-contained
-//!   token bucket, not wired into `hyperion-scheduler`'s `ResourceLedger`/
-//!   admission model. Real integration is a legitimate next step but a
-//!   separate slice from this one.
+//! - **Proving the Scheduler gate can actually deny.** `invoke()` already
+//!   holds a single global lock across its own entire body, and releases
+//!   its Scheduler reservation the instant its (synchronous) dispatch
+//!   returns — so under this simulator's current one-call-at-a-time
+//!   architecture, no two invocations can ever genuinely overlap, and the
+//!   real admission gate above can never be observed denying anything in
+//!   a test, only round-tripping. `QuotaState.calls_used_this_window` is
+//!   still tracked for observability; `consecutive_failures`/the circuit
+//!   breaker are unrelated and untouched by this integration.
 //! - **Watchdog heartbeats, real serialized reasoning state.** Checkpoints
 //!   serialize the manifest and bound Intent reference only — there is no
 //!   real reasoning trace to serialize yet (no real model is driving any
