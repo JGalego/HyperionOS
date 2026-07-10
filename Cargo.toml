@@ -5,6 +5,7 @@ members = [
     "crates/hyperion-ipc",
     "crates/hyperion-scheduler",
     "crates/hyperion-sim",
+    "crates/hyperion-storage",
 ]
 
 [workspace.package]
@@ -16,6 +17,10 @@ repository = "https://github.com/JGalego/HyperionOS"
 hyperion-capability = { path = "crates/hyperion-capability" }
 hyperion-ipc = { path = "crates/hyperion-ipc" }
 hyperion-scheduler = { path = "crates/hyperion-scheduler" }
+hyperion-storage = { path = "crates/hyperion-storage" }
 bitflags = "2"
 thiserror = "2"
 proptest = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"

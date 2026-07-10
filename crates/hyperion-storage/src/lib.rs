@@ -1,0 +1,41 @@
+//! Hyperion L2/L3 storage engine — Phase 2 kickoff.
+//!
+//! Implements the architectural core of docs/28-storage-engine.md: a
+//! write-ahead log as the sole atomicity boundary, with every other store
+//! a rebuildable materialized view of it, so "partially written Semantic
+//! Object" is structurally impossible rather than merely rare. Every call
+//! is capability-gated through `hyperion-capability`, consistent with every
+//! other crate in this workspace and with docs/28 §Security Considerations'
+//! "every call... carries a capability token... re-evaluated on every
+//! `get_object`... never cached across a Trust Boundary."
+//!
+//! This is a deliberately narrow first slice of a five-subsystem phase
+//! (docs/41-implementation-phases.md's Phase 2 also covers the concrete
+//! schema in 29, the Knowledge Graph in 09, and the Context Engine in
+//! 06/07 — none of which exist yet). Scoped out of *this* crate, and why:
+//!
+//! - **Content-addressed blob store** (BLAKE3 hashing, content-defined
+//!   chunking, envelope encryption) — a substantial subsystem in its own
+//!   right; this engine currently persists metadata only.
+//! - **Graph index and vector index** — [09 — Knowledge
+//!   Graph](../09-knowledge-graph.md)'s concern, meant to be layered on top
+//!   of this engine's WAL, not duplicated inside it.
+//! - **Sync/replication** (Merkle-diff, CRDT merge across devices) — this
+//!   is single-device only; multi-device sync is
+//!   [21 — Distributed Execution](../21-distributed-execution.md)'s
+//!   concern (Phase 7).
+//! - **Garbage collection / compaction** — nothing here is ever deleted or
+//!   compacted yet.
+//!
+//! What *is* implemented and tested: the WAL as commit boundary, optimistic
+//! concurrency via compare-and-swap on the version pointer, and full
+//! crash-consistent recovery by replay — the three properties docs/28
+//! §Testing Strategy calls out first.
+
+mod engine;
+mod types;
+mod wal;
+
+pub use engine::StorageEngine;
+pub use types::{ObjectId, StorageError, VersionId, VersionRecord, WalRecord};
+pub use wal::Wal;
