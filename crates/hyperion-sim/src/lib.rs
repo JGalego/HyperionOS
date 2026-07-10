@@ -9,6 +9,8 @@
 //! the work they trigger is real `hyperion-scheduler` admission, not a
 //! standalone unit test of either piece.
 
+mod boot;
+
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -20,6 +22,10 @@ use hyperion_ipc::{
 use hyperion_scheduler::{
     IntentId, ResourceDimension, ResourceLedger, ResourceVector, SchedClass, Scheduler,
     TaskDescriptor, TaskId,
+};
+
+pub use boot::{
+    cold_boot, BootReport, COVERED_PHASES, NOT_YET_COVERED_PHASES, PRIVILEGED_CORE_INIT_BUDGET,
 };
 
 pub const SERVER: TrustBoundaryId = TrustBoundaryId(1);
