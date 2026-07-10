@@ -2,10 +2,11 @@
 //!
 //! Implements docs/26-apis.md's "thin, uniform gateway in front of five
 //! subsystem servers": one auth path, one route dispatch, real backends
-//! for three of the five subsystems (Intent, Knowledge Graph, Memory),
-//! and the Capability Invocation path that is docs/24's Plugin Framework
-//! and docs/25's SDK's shared runtime entry point — "26 is the thing a
-//! published Capability's implementation is ultimately invoked through."
+//! for four of the five subsystems (Intent, Knowledge Graph, Memory,
+//! Context), and the Capability Invocation path that is docs/24's Plugin
+//! Framework and docs/25's SDK's shared runtime entry point — "26 is the
+//! thing a published Capability's implementation is ultimately invoked
+//! through."
 //!
 //! Real: [`gateway::ApiGateway::authorize`]'s two-step check — live-
 //! token verify via `hyperion-capability`'s real generation-based
@@ -14,9 +15,13 @@
 //! matches docs/26 §3's "mints no separate identity model, it re-checks
 //! the same tokens the kernel issues" exactly.
 //! [`gateway::ApiGateway::submit_intent`]/`kg_query`/`kg_write`/
-//! `memory_write` are real pass-throughs to the already-real
-//! `hyperion-intent`/`hyperion-knowledge-graph`/`hyperion-memory` crates,
-//! not mocks. [`gateway::ApiGateway::memory_erase`]/`memory_export`
+//! `memory_write`/`context_assemble` are real pass-throughs to the
+//! already-real `hyperion-intent`/`hyperion-knowledge-graph`/
+//! `hyperion-memory`/`hyperion-context` crates, not mocks —
+//! `context_assemble` shares the exact same `ContextEngine` instance the
+//! caller already threads into `IntentEngine::new`, rather than a second,
+//! disconnected one, so its working-set hysteresis genuinely reflects
+//! the same context Intent grounding sees. [`gateway::ApiGateway::memory_erase`]/`memory_export`
 //! implement docs/26 §3's explicit carve-out — bypassing the scope check
 //! entirely for a user's own export/erase, per the doc's own words, not
 //! merely widening it. [`gateway::ApiGateway::invoke_capability`]
@@ -82,11 +87,11 @@
 //!   what the record means. `set_confidence` is wired here from the
 //!   Model Router's own routing score instead, which is a genuine
 //!   confidence-shaped signal, precisely to avoid that conflation.
-//! - **The Context API entirely.** Wiring `hyperion-context`'s richer
-//!   `ContextBundle`/subscription-delta shape faithfully was judged, at
-//!   this crate's scope, to add more risk of a subtly wrong integration
-//!   than value — three of five subsystems (Intent, KG, Memory) are real
-//!   here; Context is left for a follow-up rather than a rushed fourth.
+//! - **`resolve_entity`/`expand`/`explain`/`current_expertise`.**
+//!   [`gateway::ApiGateway::context_assemble`] wires the one method
+//!   docs/26 §2's Context API actually needs (`assemble`); the rest of
+//!   `hyperion-context`'s surface isn't part of that API shape and stays
+//!   unexposed through the gateway.
 //! - **Real privacy/urgency/consequence signals feeding the Model
 //!   Router.** [`router_bridge::default_invocation`] uses permissive,
 //!   fixed defaults (`Interactive`/`Routine`/`cloud_consent: true`) —
@@ -123,6 +128,7 @@ mod router_bridge;
 mod types;
 
 pub use gateway::ApiGateway;
+pub use hyperion_context::{Budget, ContextBundle, Scope};
 pub use types::{
     ApiError, ApiScope, InvokeRequest, InvokeResponse, RiskHints, SubmitIntentRequest,
     SubmitIntentResponse,

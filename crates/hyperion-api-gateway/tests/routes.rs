@@ -40,7 +40,7 @@ fn setup() -> (
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
@@ -51,6 +51,7 @@ fn setup() -> (
         registry,
         explainability,
         model_router(),
+        context,
     );
     (monitor, root, gateway)
 }
@@ -62,6 +63,7 @@ fn all_scopes() -> HashSet<ApiScope> {
         ApiScope::KgQuery,
         ApiScope::KgWrite,
         ApiScope::CapabilityInvoke,
+        ApiScope::ContextAssemble,
     ]
     .into_iter()
     .collect()
@@ -153,13 +155,43 @@ fn memory_erase_succeeds_even_without_any_scope_grant() {
 }
 
 #[test]
+fn context_assemble_routes_to_the_real_context_engine() {
+    let (monitor, root, gateway) = setup();
+    gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
+
+    let id = gateway
+        .kg_write(
+            &monitor,
+            &root,
+            "Note",
+            serde_json::json!({"text": "hello"}),
+        )
+        .unwrap();
+
+    let bundle = gateway
+        .context_assemble(
+            &monitor,
+            &root,
+            &hyperion_api_gateway::Scope {
+                intent_id: "i1".to_string(),
+                session_id: "s1".to_string(),
+                mentions: Vec::new(),
+                anchors: vec![id],
+            },
+            hyperion_api_gateway::Budget::default(),
+        )
+        .unwrap();
+    assert!(bundle.entries.iter().any(|e| e.node_id == id));
+}
+
+#[test]
 fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
@@ -170,6 +202,7 @@ fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation
         registry.clone(),
         explainability.clone(),
         model_router(),
+        context,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 
@@ -229,7 +262,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
@@ -241,6 +274,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
         registry.clone(),
         explainability,
         router.clone(),
+        context,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 
@@ -342,7 +376,7 @@ fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
@@ -353,6 +387,7 @@ fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
         registry.clone(),
         explainability,
         model_router(),
+        context,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 
@@ -449,7 +484,7 @@ fn a_risky_action_is_rejected_without_confirmation() {
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
@@ -460,6 +495,7 @@ fn a_risky_action_is_rejected_without_confirmation() {
         registry.clone(),
         explainability,
         model_router(),
+        context,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 
@@ -516,7 +552,7 @@ fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
@@ -527,6 +563,7 @@ fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as
         registry.clone(),
         explainability.clone(),
         model_router(),
+        context,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 
@@ -588,7 +625,7 @@ fn the_routing_decision_produces_a_real_confidence_score_and_a_real_alternative(
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
@@ -599,6 +636,7 @@ fn the_routing_decision_produces_a_real_confidence_score_and_a_real_alternative(
         registry.clone(),
         explainability.clone(),
         model_router(),
+        context,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 

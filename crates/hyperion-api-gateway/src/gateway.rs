@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, TokenId};
+use hyperion_context::{Budget, ContextBundle, ContextEngine, Scope};
 use hyperion_explainability::{ControlState, ExplanationStore, ReasoningStep};
 use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::{GraphQuery, KnowledgeGraph, NodeId, QueryHit};
@@ -32,11 +33,18 @@ pub struct ApiGateway {
     explainability: Arc<ExplanationStore>,
     model_router: Arc<ModelRouter>,
     recovery: Arc<RecoveryService>,
+    context: Arc<ContextEngine>,
     scope_grants: Mutex<HashMap<TokenId, HashSet<ApiScope>>>,
     next_action_id: AtomicU64,
 }
 
 impl ApiGateway {
+    /// `context` is taken as a parameter, not built internally like
+    /// [`RecoveryService`] — it's the *same* `ContextEngine` instance the
+    /// caller already threads into `hyperion_intent::IntentEngine::new`,
+    /// and a second, disconnected instance would silently diverge (its
+    /// own working-set hysteresis, its own bundle history) rather than
+    /// sharing state with the one Intent grounding actually uses.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         intent: Arc<IntentEngine>,
@@ -45,6 +53,7 @@ impl ApiGateway {
         registry: Arc<PluginRegistry>,
         explainability: Arc<ExplanationStore>,
         model_router: Arc<ModelRouter>,
+        context: Arc<ContextEngine>,
     ) -> Self {
         let recovery = Arc::new(RecoveryService::new(graph.clone()));
         ApiGateway {
@@ -55,6 +64,7 @@ impl ApiGateway {
             explainability,
             model_router,
             recovery,
+            context,
             scope_grants: Mutex::new(HashMap::new()),
             next_action_id: AtomicU64::new(1),
         }
@@ -182,6 +192,22 @@ impl ApiGateway {
         filter: &MemoryFilter,
     ) -> Result<serde_json::Value, ApiError> {
         Ok(self.memory.export(monitor, token, filter)?)
+    }
+
+    /// docs/26 §2's Context API `POST /context/assemble`, backed by the
+    /// real `hyperion-context` engine — the fourth of the gateway's five
+    /// subsystem routes, previously left unwired (see this crate's doc
+    /// comment on why it was a deliberate follow-up rather than a rushed
+    /// fourth alongside Intent/KG/Memory).
+    pub fn context_assemble(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        scope: &Scope,
+        budget: Budget,
+    ) -> Result<ContextBundle, ApiError> {
+        self.authorize(monitor, token, ApiScope::ContextAssemble)?;
+        Ok(self.context.assemble(monitor, token, scope, budget)?)
     }
 
     /// docs/26 §4's `invokeCapability`: look up the Contract's competing

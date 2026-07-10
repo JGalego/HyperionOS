@@ -14,6 +14,7 @@ pub enum ApiScope {
     KgQuery,
     KgWrite,
     CapabilityInvoke,
+    ContextAssemble,
 }
 
 /// docs/26 §2's Intent API `SubmitIntentRequest`, narrowed to what
@@ -141,4 +142,6 @@ pub enum ApiError {
     Graph(#[from] hyperion_knowledge_graph::GraphError),
     #[error("explainability error: {0}")]
     Explainability(#[from] hyperion_explainability::ExplainabilityError),
+    #[error("context engine error: {0}")]
+    Context(#[from] hyperion_context::ContextError),
 }

@@ -32,7 +32,7 @@ fn setup() -> (
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
@@ -43,6 +43,7 @@ fn setup() -> (
         registry,
         explainability,
         model_router(),
+        context,
     );
     (monitor, root, gateway)
 }
@@ -85,7 +86,7 @@ fn revoking_the_token_blocks_further_access_re_checked_live() {
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent = Arc::new(IntentEngine::new(graph.clone(), context));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
@@ -96,6 +97,7 @@ fn revoking_the_token_blocks_further_access_re_checked_live() {
         registry,
         explainability,
         model_router(),
+        context,
     );
 
     gateway
