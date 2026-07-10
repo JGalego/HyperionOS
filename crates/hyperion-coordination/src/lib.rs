@@ -64,10 +64,11 @@
 //!   test scale.
 //! - **A workspace-wide, shared Explanation Record store.** This
 //!   session's `ExplanationStore` is private to one `CoordinationSession`,
-//!   not shared with `hyperion-api-gateway`'s own separate store or with
-//!   `hyperion-federation`'s direct `AgentRuntime::invoke` calls
-//!   (`offload_execute`/`invoke_agent`), which remain unwired — a
-//!   follow-up for whichever future slice needs one workspace-wide trace
+//!   not shared with `hyperion-api-gateway`'s own separate store or
+//!   `hyperion-federation`'s own separate one (that crate's
+//!   `dispatch_offload`/`invoke_agent` now open real records too, just
+//!   into their own store) — a follow-up for whichever future slice
+//!   needs one workspace-wide trace
 //!   rather than several independent ones.
 
 mod catalog;

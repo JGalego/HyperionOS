@@ -25,9 +25,25 @@
 //! checkpoint/spawn/terminate machinery *across* two independent
 //! `AgentRuntime` instances — the checkpoint's manifest and bound Intent
 //! reference genuinely transfer, they are not merely relabeled.
+//! [`FederationHub::dispatch_offload`] and [`FederationHub::invoke_agent`]
+//! each open a real `hyperion-explainability` Explanation Record around
+//! their dispatch (`begin` before, a `ReasoningStep` naming the device/
+//! agent, `transition` to `Completed`/`RolledBack`/`Interrupted` on the
+//! real outcome) — these were this crate's own two remaining direct
+//! `AgentRuntime::invoke` call sites `hyperion-coordination`'s own
+//! Explanation Record wiring didn't reach.
 //!
 //! Deliberately deferred, and why:
 //!
+//! - **A real originating Intent id.** Neither dispatch method has a real
+//!   Intent concept to attribute its Explanation Record to yet, so both
+//!   record under the sentinel `triggering_intent_id = 0` — see
+//!   [`FederationHub::trace_intent`].
+//! - **One workspace-wide, shared Explanation Record store.** This hub's
+//!   store is private to it, not shared with `hyperion-coordination`'s or
+//!   `hyperion-api-gateway`'s own separate stores — the same deliberate
+//!   per-owner boundary `hyperion-coordination`'s doc comment already
+//!   notes.
 //! - **Real network transport, heartbeat timing, ambient anti-entropy.**
 //!   Ledger publication and lease renewal are direct method calls driven
 //!   by a caller-supplied clock, not a real heartbeat loop; storage

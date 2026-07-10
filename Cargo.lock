@@ -199,6 +199,7 @@ version = "0.1.0"
 dependencies = [
  "hyperion-agent-runtime",
  "hyperion-capability",
+ "hyperion-explainability",
  "hyperion-scheduler",
  "serde_json",
  "thiserror",

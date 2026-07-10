@@ -79,6 +79,38 @@ fn picks_the_lowest_latency_feasible_candidate() {
 }
 
 #[test]
+fn dispatch_offload_produces_a_real_completed_explanation_record() {
+    let (monitor, root, hub) = setup();
+    hub.join_device(&monitor, &root, 1, FederationTrustTier::OwnedPrimary)
+        .unwrap();
+    hub.publish_ledger(1, ample_ledger(), 20, 1_000, 60)
+        .unwrap();
+
+    let descriptor = OffloadDescriptor {
+        request: small_request(),
+        deadline_ms: None,
+        privacy_tier: PrivacyTier::Local,
+    };
+    hub.dispatch_offload(
+        &monitor,
+        &root,
+        &descriptor,
+        "web.search",
+        serde_json::json!({"query": "hyperion os"}),
+        1_000,
+    )
+    .unwrap();
+
+    let records = hub.trace_intent(0);
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].control_state,
+        hyperion_explainability::ControlState::Completed
+    );
+    assert!(!records[0].reasoning_chain.is_empty());
+}
+
+#[test]
 fn unconsented_cloud_device_is_architecturally_invisible() {
     let (monitor, root, hub) = setup();
     hub.join_device(&monitor, &root, 1, FederationTrustTier::CloudRented)

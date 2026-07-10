@@ -55,6 +55,7 @@ fn an_agent_survives_migration_with_its_manifest_and_intent_intact() {
             agent,
             "web.search",
             serde_json::json!({"query": "restaurants"}),
+            1_020,
         )
         .unwrap();
     assert!(matches!(
@@ -88,6 +89,34 @@ fn the_source_instance_is_terminated_after_migration() {
     // the sole prerequisite for that request.
     let back = hub.migrate(&monitor, &root, agent, 1, 1_020, 60);
     assert!(back.is_ok());
+}
+
+#[test]
+fn invoke_agent_produces_a_real_completed_explanation_record() {
+    let (monitor, root, hub) = setup();
+    hub.join_device(&monitor, &root, 1, FederationTrustTier::OwnedPrimary)
+        .unwrap();
+    let agent = hub
+        .spawn_agent(&monitor, &root, 1, manifest(), None, 1_000, 60)
+        .unwrap();
+
+    hub.invoke_agent(
+        &monitor,
+        &root,
+        agent,
+        "web.search",
+        serde_json::json!({"query": "hyperion os"}),
+        1_010,
+    )
+    .unwrap();
+
+    let records = hub.trace_intent(0);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].agent_id, agent);
+    assert_eq!(
+        records[0].control_state,
+        hyperion_explainability::ControlState::Completed
+    );
 }
 
 #[test]
@@ -143,6 +172,7 @@ fn spawn_agent_yields_a_bound_instance_ready_to_invoke() {
             agent,
             "web.search",
             serde_json::json!({"query": "x"}),
+            1_000,
         )
         .unwrap();
     assert!(matches!(

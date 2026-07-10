@@ -4,6 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use hyperion_agent_runtime::{AgentManifest, AgentRuntime, InvokeOutcome};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_explainability::{
+    ControlState, ExplanationId, ExplanationRecord, ExplanationStore, ReasoningStep,
+};
 use hyperion_scheduler::{ResourceDimension, ResourceVector};
 
 use crate::types::{
@@ -29,6 +32,8 @@ pub enum FederationError {
     NotAuthoritative,
     #[error("agent runtime error: {0}")]
     Agent(#[from] hyperion_agent_runtime::AgentError),
+    #[error("explainability error: {0}")]
+    Explainability(#[from] hyperion_explainability::ExplainabilityError),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -47,6 +52,11 @@ pub struct FederationHub {
     agents: Mutex<HashMap<u64, AgentRef>>,
     next_agent_id: AtomicU64,
     next_migration_id: AtomicU64,
+    /// docs/18's Explanation Record store for this hub's own
+    /// `dispatch_offload`/`invoke_agent` dispatches — see those methods
+    /// and [`Self::explanation`]/[`Self::trace_intent`].
+    explanations: ExplanationStore,
+    next_action_id: AtomicU64,
 }
 
 impl Default for FederationHub {
@@ -65,7 +75,23 @@ impl FederationHub {
             agents: Mutex::new(HashMap::new()),
             next_agent_id: AtomicU64::new(1),
             next_migration_id: AtomicU64::new(1),
+            explanations: ExplanationStore::new(),
+            next_action_id: AtomicU64::new(1),
         }
+    }
+
+    /// docs/18's "queryable Explanation Record" surface for this hub's
+    /// own dispatches — see [`Self::dispatch_offload`]/[`Self::invoke_agent`].
+    pub fn explanation(&self, id: ExplanationId) -> Option<ExplanationRecord> {
+        self.explanations.get(id)
+    }
+
+    /// Every record this hub has opened under `intent_id` — federation
+    /// dispatches don't yet carry a real originating Intent id (no
+    /// concept exists at this layer), so every call currently records
+    /// under the sentinel `intent_id = 0`; see this crate's doc comment.
+    pub fn trace_intent(&self, intent_id: u64) -> Vec<ExplanationRecord> {
+        self.explanations.trace_intent(intent_id)
     }
 
     fn require(
@@ -216,12 +242,61 @@ impl FederationHub {
                 trust_tier: hyperion_agent_runtime::TrustTier::System,
             };
             let instance = runtime.spawn(monitor, token, manifest, None)?;
+
+            let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
+            let explanation_id = self.explanations.begin(
+                monitor,
+                token,
+                action_id,
+                0,
+                instance,
+                capability_ref,
+                vec![],
+                now,
+            )?;
+            self.explanations.append_step(
+                monitor,
+                token,
+                explanation_id,
+                ReasoningStep {
+                    step_index: 0,
+                    description: format!(
+                        "offloaded to device {} (latency {}ms)",
+                        candidate.device_id, candidate.network_latency_ms
+                    ),
+                    capability_ref: Some(capability_ref.to_string()),
+                    inputs_ref: Vec::new(),
+                    output_ref: None,
+                },
+                Vec::new(),
+            )?;
+            self.explanations.transition(
+                monitor,
+                token,
+                explanation_id,
+                ControlState::Executing,
+            )?;
+
             let outcome = runtime.invoke(monitor, token, instance, capability_ref, args.clone())?;
             runtime.terminate(monitor, token, instance, "offload_complete")?;
 
             match outcome {
-                InvokeOutcome::Result(value) => return Ok(value),
+                InvokeOutcome::Result(value) => {
+                    self.explanations.transition(
+                        monitor,
+                        token,
+                        explanation_id,
+                        ControlState::Completed,
+                    )?;
+                    return Ok(value);
+                }
                 _ => {
+                    self.explanations.transition(
+                        monitor,
+                        token,
+                        explanation_id,
+                        ControlState::RolledBack,
+                    )?;
                     excluded.push(candidate.device_id);
                     continue;
                 }
@@ -377,6 +452,7 @@ impl FederationHub {
         global_agent_id: u64,
         capability_ref: &str,
         args: serde_json::Value,
+        now: u64,
     ) -> Result<InvokeOutcome, FederationError> {
         self.require(monitor, token, RightsMask::EXEC)?;
         let agent_ref = *self
@@ -386,13 +462,57 @@ impl FederationHub {
             .get(&global_agent_id)
             .ok_or(FederationError::NoSuchAgent)?;
         let runtime = self.device(agent_ref.device_id)?;
-        Ok(runtime.invoke(
+
+        let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
+        let explanation_id = self.explanations.begin(
+            monitor,
+            token,
+            action_id,
+            0,
+            global_agent_id,
+            capability_ref,
+            vec![],
+            now,
+        )?;
+        self.explanations.append_step(
+            monitor,
+            token,
+            explanation_id,
+            ReasoningStep {
+                step_index: 0,
+                description: format!(
+                    "invoked global agent {global_agent_id} on device {}",
+                    agent_ref.device_id
+                ),
+                capability_ref: Some(capability_ref.to_string()),
+                inputs_ref: Vec::new(),
+                output_ref: None,
+            },
+            Vec::new(),
+        )?;
+        self.explanations
+            .transition(monitor, token, explanation_id, ControlState::Executing)?;
+
+        let outcome = runtime.invoke(
             monitor,
             token,
             agent_ref.local_instance,
             capability_ref,
             args,
-        )?)
+        )?;
+        self.explanations.transition(
+            monitor,
+            token,
+            explanation_id,
+            match &outcome {
+                InvokeOutcome::Result(_) => ControlState::Completed,
+                InvokeOutcome::PendingConsent | InvokeOutcome::QuotaExceeded => {
+                    ControlState::Interrupted
+                }
+                InvokeOutcome::Denied | InvokeOutcome::Failed(_) => ControlState::RolledBack,
+            },
+        )?;
+        Ok(outcome)
     }
 
     pub fn device_of(&self, global_agent_id: u64) -> Option<u64> {
