@@ -4,6 +4,7 @@ members = [
     "crates/hyperion-ai-runtime",
     "crates/hyperion-capability",
     "crates/hyperion-context",
+    "crates/hyperion-intent",
     "crates/hyperion-ipc",
     "crates/hyperion-knowledge-graph",
     "crates/hyperion-memory",
@@ -22,6 +23,7 @@ repository = "https://github.com/JGalego/HyperionOS"
 hyperion-ai-runtime = { path = "crates/hyperion-ai-runtime" }
 hyperion-capability = { path = "crates/hyperion-capability" }
 hyperion-context = { path = "crates/hyperion-context" }
+hyperion-intent = { path = "crates/hyperion-intent" }
 hyperion-ipc = { path = "crates/hyperion-ipc" }
 hyperion-knowledge-graph = { path = "crates/hyperion-knowledge-graph" }
 hyperion-memory = { path = "crates/hyperion-memory" }

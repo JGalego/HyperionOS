@@ -111,6 +111,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-intent"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-context",
+ "hyperion-knowledge-graph",
+ "hyperion-storage",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-ipc"
 version = "0.1.0"
 dependencies = [
