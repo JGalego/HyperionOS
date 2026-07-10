@@ -23,6 +23,53 @@ fn a_trace_reconstructs_every_span_recorded_under_it() {
 }
 
 #[test]
+fn merge_remote_trace_reconstructs_the_whole_cross_device_trace_tree() {
+    // Two independent collectors, standing in for two real federation
+    // devices -- each only ever sees its own local slice of one shared
+    // trace_id, the way hyperion-federation's per-device instances
+    // genuinely would.
+    let device_a = TelemetryCollector::new();
+    let device_b = TelemetryCollector::new();
+    let trace_id = 7;
+
+    let root_span = device_a.start_span(trace_id, "handle_intent", None, 1_000);
+    device_a.end_span(root_span, 1_010, SpanStatus::Ok);
+
+    let remote_span = device_b.start_span(trace_id, "offloaded_capability", None, 1_020);
+    device_b.end_span(remote_span, 1_090, SpanStatus::Ok);
+    device_b.emit_log(LogEvent {
+        level: LogLevel::Info,
+        message: "ran on device B".to_string(),
+        redaction_class: RedactionClass::None,
+        timestamp: 1_050,
+        trace_id: Some(trace_id),
+    });
+
+    assert_eq!(
+        device_a.spans_for_trace(trace_id).len(),
+        1,
+        "before merging, device A only sees its own local span"
+    );
+
+    device_a.merge_remote_trace(trace_id, &device_b);
+
+    let merged_spans = device_a.spans_for_trace(trace_id);
+    assert_eq!(
+        merged_spans.len(),
+        2,
+        "after merging, device A reconstructs the whole cross-device trace"
+    );
+    assert!(merged_spans.iter().any(|s| s.span_id == remote_span));
+    let merged_logs = device_a.logs_for_trace(trace_id);
+    assert_eq!(merged_logs.len(), 1);
+    assert_eq!(merged_logs[0].message, "ran on device B");
+
+    // Device B's own view is untouched -- merging is a one-way pull into
+    // the receiving collector, not a two-way sync.
+    assert_eq!(device_b.spans_for_trace(trace_id).len(), 1);
+}
+
+#[test]
 fn metrics_are_queryable_by_name() {
     let collector = TelemetryCollector::new();
     collector.record_metric(MetricSample {

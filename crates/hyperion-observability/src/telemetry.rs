@@ -108,6 +108,33 @@ impl TelemetryCollector {
             .cloned()
             .collect()
     }
+
+    /// [21 — Distributed Execution](../21-distributed-execution.md)'s
+    /// distributed trace merging, made real: pulls another device's
+    /// `TelemetryCollector`'s spans/logs for one real [`TraceId`] into
+    /// this collector, so [`Self::spans_for_trace`]/[`Self::logs_for_trace`]
+    /// on the receiving side reconstructs the *whole* cross-device trace
+    /// tree docs/34 §2 describes ("`trace_id` minted at Intent creation,
+    /// threaded through every Agent/Capability call... one Intent = one
+    /// reconstructable trace tree"), not just this one device's local
+    /// slice of it. A best-effort append, not a CRDT merge: `span_id` is
+    /// only unique *within* the collector that minted it, so a merged
+    /// trace can contain two spans sharing a `span_id` if they
+    /// originated on different devices — giving every span a real,
+    /// globally-unique identity across devices is a further, separate
+    /// refinement this doesn't attempt. Calling this twice with the same
+    /// remote data duplicates entries; a caller merges each remote batch
+    /// once.
+    pub fn merge_remote_trace(&self, trace_id: TraceId, remote: &TelemetryCollector) {
+        self.spans
+            .lock()
+            .unwrap()
+            .extend(remote.spans_for_trace(trace_id));
+        self.logs
+            .lock()
+            .unwrap()
+            .extend(remote.logs_for_trace(trace_id));
+    }
 }
 
 /// docs/34 §2's continuous EWMA over a resource-utilization metric,

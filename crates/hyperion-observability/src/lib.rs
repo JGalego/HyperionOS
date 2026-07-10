@@ -19,7 +19,10 @@
 //! [`telemetry::TelemetryCollector`] implements the metrics/spans/logs
 //! side deliberately *without* a capability check (see its doc comment
 //! for why this asymmetry with the audit path is intentional, not an
-//! oversight); [`telemetry::ewma`]/[`telemetry::derivative`] are docs/34
+//! oversight); [`telemetry::TelemetryCollector::merge_remote_trace`]
+//! reconstructs one real cross-device trace tree from two independent
+//! collectors' spans/logs for the same [`types::TraceId`] — docs/21's
+//! distributed trace merging, made real; [`telemetry::ewma`]/[`telemetry::derivative`] are docs/34
 //! §2's real scheduler-feedback estimators; [`aggregate::build_aggregate`]
 //! implements docs/34 §5's k-anonymity gate exactly — suppressed entirely
 //! (never partial) below the cohort floor or without opt-in consent.
@@ -56,10 +59,16 @@
 //!   background scheduled chain verification.**
 //!   [`ledger::AuditLedger::verify_chain`] is on-demand only, not run on
 //!   a background schedule.
-//! - **Real distributed trace merging across devices** ([21 —
-//!   Distributed Execution](../21-distributed-execution.md)) — `trace_id`
-//!   here is a single-process concept; `hyperion-federation`'s per-device
-//!   `AgentRuntime` instances are not wired to share one trace.
+//! - **A production `hyperion-federation` call site for trace merging.**
+//!   [`telemetry::TelemetryCollector::merge_remote_trace`] is now real —
+//!   pulling another collector's spans/logs for one [`types::TraceId`]
+//!   into this one, reconstructing the whole cross-device trace tree —
+//!   but `hyperion-federation` doesn't hold a `TelemetryCollector` per
+//!   device at all yet, so there is no real production call site to
+//!   invoke it from. It's also a best-effort append, not a CRDT merge:
+//!   a span id is only unique *within* the collector that minted it, so
+//!   giving every span a real, globally-unique identity across devices
+//!   is a further, separate refinement.
 
 mod aggregate;
 mod ledger;
