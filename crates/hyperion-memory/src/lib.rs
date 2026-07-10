@@ -10,6 +10,13 @@
 //! that this is what lets a memory record participate in graph traversal —
 //! never a second, parallel store; this crate's `MemoryEngine` is a typed
 //! view over `hyperion-knowledge-graph` nodes, not a new persistence layer.
+//! [`engine::MemoryEngine::run_co_occurrence_pass`] is docs/09 §5.2's
+//! inferred-edge background job's `co-occurs-with` half, made real: a
+//! real `hyperion-scheduler` `BatchDistributable` task links every pair
+//! of Knowledge Graph objects a real `MemoryRecord.provenance` names
+//! together — `hyperion-knowledge-graph`'s own doc comment named exactly
+//! this pairing (a real Memory Engine plus a real scheduler-driven job)
+//! as the missing piece.
 //!
 //! Deliberately deferred, and why:
 //!

@@ -25,6 +25,62 @@ fn setup() -> (
 }
 
 #[test]
+fn run_co_occurrence_pass_links_every_pair_of_objects_a_memory_record_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut monitor = CapabilityMonitor::new();
+    let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let engine = MemoryEngine::new(graph.clone());
+
+    let repo = graph
+        .put_node(&monitor, &token, None, "repository", None, json!({}))
+        .unwrap();
+    let issue = graph
+        .put_node(&monitor, &token, None, "issue", None, json!({}))
+        .unwrap();
+    let unrelated = graph
+        .put_node(&monitor, &token, None, "document", None, json!({}))
+        .unwrap();
+
+    // One real memory record naming both repo and issue in its
+    // provenance -- the real signal run_co_occurrence_pass sources from.
+    engine
+        .remember(
+            &monitor,
+            &token,
+            MemoryTier::Episodic,
+            json!({"summary": "discussed the flaky test in this issue"}),
+            None,
+            0.5,
+            false,
+            vec![repo, issue],
+        )
+        .unwrap();
+
+    let edges_touched = engine.run_co_occurrence_pass(&monitor, &token).unwrap();
+    assert_eq!(edges_touched, 1);
+
+    let subgraph = graph.traverse(&monitor, &token, repo, None, 1).unwrap();
+    let co_occurs = subgraph
+        .edges
+        .iter()
+        .find(|(_, e)| e.predicate == "co-occurs-with" && e.target == issue);
+    assert!(
+        co_occurs.is_some(),
+        "repo and issue must be linked by a real co-occurs-with edge"
+    );
+
+    let unrelated_edge = subgraph
+        .edges
+        .iter()
+        .find(|(_, e)| e.target == unrelated || e.subject == unrelated);
+    assert!(
+        unrelated_edge.is_none(),
+        "an object never named alongside repo must not be linked"
+    );
+}
+
+#[test]
 fn remember_and_query_round_trips_through_the_knowledge_graph() {
     let (_dir, monitor, token, engine) = setup();
     let id = engine

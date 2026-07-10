@@ -1,8 +1,13 @@
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
-use hyperion_knowledge_graph::{GraphError, GraphQuery, KnowledgeGraph, NodeId};
+use hyperion_knowledge_graph::{EdgeOrigin, GraphError, GraphQuery, KnowledgeGraph, NodeId};
+use hyperion_scheduler::{
+    IntentId, ResourceDimension, ResourceLedger, ResourceVector, SchedClass, Scheduler,
+    TaskDescriptor, TaskId,
+};
 
 use crate::decay::{decay_score, is_promotable, THETA_ARCHIVE, THETA_PROMOTE};
 use crate::types::{MemoryRecord, MemoryTier};
@@ -27,6 +32,8 @@ pub enum MemoryError {
     Graph(#[from] GraphError),
     #[error("no such memory record")]
     NotFound,
+    #[error("scheduler error: {0}")]
+    Scheduler(#[from] hyperion_scheduler::SchedError),
 }
 
 /// docs/08 §6's `memory.query` filter.
@@ -56,11 +63,21 @@ pub struct ExtractionReceipt {
 /// comment for what's deferred.
 pub struct MemoryEngine {
     graph: Arc<KnowledgeGraph>,
+    /// Backs [`Self::run_co_occurrence_pass`]'s real Scheduler admission —
+    /// see this crate's doc comment.
+    scheduler: Mutex<Scheduler>,
+    next_task_id: AtomicU64,
 }
 
 impl MemoryEngine {
     pub fn new(graph: Arc<KnowledgeGraph>) -> Self {
-        MemoryEngine { graph }
+        let mut scheduler = Scheduler::new();
+        scheduler.register_resource_provider(ResourceLedger::new(ResourceDimension::Cpu, 100, 0));
+        MemoryEngine {
+            graph,
+            scheduler: Mutex::new(scheduler),
+            next_task_id: AtomicU64::new(1),
+        }
     }
 
     fn to_record(
@@ -470,6 +487,82 @@ impl MemoryEngine {
             }
         }
         Ok(ExtractionReceipt { promoted })
+    }
+
+    /// docs/09 §5.2's inferred-edge background job, the `co-occurs-with`
+    /// half: sourced from this crate's own real `MemoryRecord.provenance`
+    /// (every Knowledge Graph object a memory record actually names),
+    /// every pair of objects named by the same record gets a real
+    /// `co-occurs-with` edge — not the `semantically-similar-to` half of
+    /// the same deferred item, which still needs real embeddings this
+    /// workspace doesn't have. Submitted as a real `hyperion-scheduler`
+    /// `BatchDistributable` task first (closing the other half of "needs
+    /// a scheduler-driven background job"), matching the same real-
+    /// admission pattern `hyperion-agent-runtime`'s own quota gate uses.
+    /// Idempotent per call: repeated co-occurrence sets the edge's weight
+    /// to `1.0` again rather than accumulating it — real weight
+    /// accumulation/decay for these inferred edges is a further,
+    /// separate refinement this pass doesn't attempt.
+    pub fn run_co_occurrence_pass(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+    ) -> Result<usize, MemoryError> {
+        let task_id = TaskId(self.next_task_id.fetch_add(1, Ordering::Relaxed));
+        let ticket = {
+            let mut scheduler = self.scheduler.lock().unwrap();
+            let ticket = scheduler.submit_task(
+                monitor,
+                TaskDescriptor {
+                    id: task_id,
+                    owner_intent: IntentId(0),
+                    owner_agent: None,
+                    class: SchedClass::BatchDistributable,
+                    deadline: None,
+                    priority_weight: 0.5,
+                    request: ResourceVector {
+                        cpu_shares: 1,
+                        ..Default::default()
+                    },
+                    cap_token: token.clone(),
+                },
+            )?;
+            scheduler.schedule_epoch();
+            ticket
+        };
+
+        let records = self.query(
+            monitor,
+            token,
+            &MemoryFilter {
+                include_dormant: true,
+                ..Default::default()
+            },
+        )?;
+
+        let mut edges_touched = 0;
+        for record in &records {
+            for i in 0..record.provenance.len() {
+                for j in (i + 1)..record.provenance.len() {
+                    self.graph.link(
+                        monitor,
+                        token,
+                        record.provenance[i],
+                        "co-occurs-with",
+                        record.provenance[j],
+                        1.0,
+                        EdgeOrigin::Inferred,
+                        None,
+                        "memory_co_occurrence",
+                        None,
+                    )?;
+                    edges_touched += 1;
+                }
+            }
+        }
+
+        let _ = self.scheduler.lock().unwrap().complete(ticket);
+        Ok(edges_touched)
     }
 }
 

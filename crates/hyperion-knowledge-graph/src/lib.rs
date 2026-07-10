@@ -31,12 +31,15 @@
 //!   in-crate. The vector index is brute-force cosine similarity, not an
 //!   HNSW/ANN structure — adequate for a hosted simulator's object counts,
 //!   explicitly not the docs/09 §11 performance target at scale.
-//! - **Inferred-edge background job** (docs/09 §5.2:
-//!   `semantically-similar-to`, `discussed-in`/`co-occurs-with`, and their
-//!   decay) needs both a scheduler-driven background job
-//!   ([04 — Scheduler](../04-scheduler.md), already real) and a real Memory
-//!   Engine (Phase 3, not yet real) to source co-occurrence from — deferred
-//!   whole to Phase 3.
+//! - **`semantically-similar-to` inferred edges, and decay for either
+//!   kind** (docs/09 §5.2). The `co-occurs-with` half is now real:
+//!   `hyperion-memory::MemoryEngine::run_co_occurrence_pass` (that crate
+//!   is real as of Phase 3) submits a real `hyperion-scheduler`
+//!   `BatchDistributable` task and links every pair of objects a real
+//!   `MemoryRecord.provenance` names together. `semantically-similar-to`
+//!   still needs real embeddings this workspace doesn't have, and
+//!   neither kind of inferred edge decays yet (weight is reset to a
+//!   fixed value each pass, not accumulated or aged).
 //! - **Per-object ACL enforcement.** Every public call here is
 //!   capability-gated the same way `hyperion-storage` already gates
 //!   `get_object`/`put_object` — a single coarse READ/WRITE rights check per
