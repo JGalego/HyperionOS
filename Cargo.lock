@@ -100,6 +100,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-knowledge-graph"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-storage",
+ "proptest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-scheduler"
 version = "0.1.0"
 dependencies = [

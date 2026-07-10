@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/hyperion-capability",
     "crates/hyperion-ipc",
+    "crates/hyperion-knowledge-graph",
     "crates/hyperion-scheduler",
     "crates/hyperion-sim",
     "crates/hyperion-storage",
@@ -16,6 +17,7 @@ repository = "https://github.com/JGalego/HyperionOS"
 [workspace.dependencies]
 hyperion-capability = { path = "crates/hyperion-capability" }
 hyperion-ipc = { path = "crates/hyperion-ipc" }
+hyperion-knowledge-graph = { path = "crates/hyperion-knowledge-graph" }
 hyperion-scheduler = { path = "crates/hyperion-scheduler" }
 hyperion-storage = { path = "crates/hyperion-storage" }
 bitflags = "2"
