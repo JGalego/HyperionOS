@@ -301,11 +301,15 @@ impl IntentEngine {
         Ok(())
     }
 
-    /// Every outgoing `depends_on` edge from `node` — built on
+    /// Every outgoing `depends_on` edge from `node` — docs/05 §4's
+    /// `TaskNode.dependencies` equivalent, public so
+    /// `hyperion-coordination` (or any other consumer building a task
+    /// graph from an Intent Graph) can read prerequisite structure without
+    /// this crate exposing raw graph edges. Built on
     /// [`hyperion_knowledge_graph::KnowledgeGraph::explain`] rather than a
     /// new lower-level graph API, since `explain` already exposes exactly
     /// the (subject, predicate, target) triples a directed walk needs.
-    fn depends_on_targets(
+    pub fn depends_on_targets(
         &self,
         monitor: &CapabilityMonitor,
         token: &CapabilityToken,

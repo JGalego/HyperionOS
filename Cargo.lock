@@ -121,6 +121,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-coordination"
+version = "0.1.0"
+dependencies = [
+ "hyperion-agent-runtime",
+ "hyperion-capability",
+ "hyperion-context",
+ "hyperion-intent",
+ "hyperion-knowledge-graph",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "hyperion-intent"
 version = "0.1.0"
 dependencies = [
