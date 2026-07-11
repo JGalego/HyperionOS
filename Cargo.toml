@@ -31,6 +31,7 @@ members = [
     "crates/hyperion-semantic-fs",
     "crates/hyperion-sim",
     "crates/hyperion-storage",
+    "crates/hyperion-supervisor",
     "crates/hyperion-threat-model",
     "crates/hyperion-trust-boundary",
     "crates/hyperion-update",
@@ -72,6 +73,7 @@ hyperion-sdk = { path = "crates/hyperion-sdk" }
 hyperion-security = { path = "crates/hyperion-security" }
 hyperion-semantic-fs = { path = "crates/hyperion-semantic-fs" }
 hyperion-storage = { path = "crates/hyperion-storage" }
+hyperion-supervisor = { path = "crates/hyperion-supervisor" }
 hyperion-trust-boundary = { path = "crates/hyperion-trust-boundary" }
 hyperion-update = { path = "crates/hyperion-update" }
 hyperion-workspace = { path = "crates/hyperion-workspace" }

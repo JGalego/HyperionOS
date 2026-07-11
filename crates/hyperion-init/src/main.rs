@@ -2,11 +2,12 @@
 //!
 //! Per [PRODUCTION_BOOT_PROMPT.md](../../../PRODUCTION_BOOT_PROMPT.md) M1, this replaces
 //! Buildroot's stock BusyBox init to prove the custom-init boot path end to end: mount what's
-//! needed, print a banner, supervise a shell. It is deliberately trivial -- M5 replaces
-//! [`linux::run`] with the real Erlang/OTP-style supervision tree that starts the Capability
-//! Monitor (M2), the IPC bus (M3), the scheduler enforcement daemon (M4), and every Phase 2-10
-//! subsystem as a capability-scoped supervised process. Until then, this crate's only job is to
-//! prove that *something other than BusyBox's init* can be PID 1 and bring the system up cleanly.
+//! needed, print a banner, bring up the real supervision tree. M5 replaced the original M1
+//! placeholder (a single hardcoded supervised shell loop) with [`hyperion_supervisor::Supervisor`]:
+//! every Phase 2-10 subsystem this image ships runs as a real, capability-scoped, supervised
+//! process, restarted with a fresh capability grant if it crashes, alongside a carryover debug
+//! shell folded into the same supervision tree (see [`linux::run`]'s own docs for why the shell
+//! specifically isn't capability-scoped the same way).
 
 #[cfg(target_os = "linux")]
 mod linux;

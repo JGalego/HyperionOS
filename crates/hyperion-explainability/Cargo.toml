@@ -10,6 +10,7 @@ hyperion-capability = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
 hyperion-privacy = { workspace = true }
 hyperion-recovery = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

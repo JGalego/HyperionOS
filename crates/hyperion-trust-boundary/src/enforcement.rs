@@ -123,9 +123,20 @@ pub fn apply_landlock(
 /// cleanly and dies by `SIGSEGV` instead -- confusing to debug from the outside, since nothing
 /// about a `SIGSEGV` points back at seccomp. Both `open` and `openat` are listed for the same
 /// reason: this musl target's libc reaches for plain `open` in places glibc would use `openat`,
-/// so allowlisting only the modern syscall silently breaks musl binaries specifically.
+/// so allowlisting only the modern syscall silently breaks musl binaries specifically. `getpid` was
+/// the next gap found the same way (PRODUCTION_BOOT_PROMPT.md M5, this time via direct evidence
+/// rather than `strace`): a sandboxed process calling `std::process::id()` got back `4294967295`
+/// (`u32::MAX`) instead of its real pid -- musl's `getpid()` wrapper populates its per-process
+/// cache by issuing the real syscall on first call (a fresh `exec` wipes any earlier cache), and
+/// neither it nor `std::process::id()` checks for the syscall failing, so the denied call's `-1`
+/// return silently became `u32::MAX` once cast. Every Trust Boundary process this crate spawns
+/// legitimately needs to know its own pid at some point (if only to log it), so this belongs in
+/// the baseline, not behind a `RightsMask` bit the way the still-deferred socket syscalls do (see
+/// `hyperion-supervisor`'s own docs) -- unlike a socket, a process's own pid isn't a resource
+/// access `RightsMask` governs at all.
 fn baseline_allowed_syscalls() -> Vec<i64> {
     vec![
+        libc::SYS_getpid,
         libc::SYS_execve,
         libc::SYS_read,
         libc::SYS_write,

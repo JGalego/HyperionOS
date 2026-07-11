@@ -86,9 +86,14 @@ pub fn apply_sched_deadline(pid: libc::pid_t, budget: DeadlineBudget) -> Result<
 /// class. Not used by [`crate::apply`] by default; kept available for exactly the case its own
 /// module docs describe.
 pub fn apply_sched_rr(pid: libc::pid_t, priority: i32) -> Result<(), RealtimeError> {
-    let param = libc::sched_param {
-        sched_priority: priority,
-    };
+    // SAFETY: `sched_param` is a plain-data struct of integers with no invariants beyond that;
+    // zero-initializing it is always valid, and necessary here because musl's `sched_param` has
+    // more fields than glibc's (the SCHED_SPORADIC extension fields) -- naming only
+    // `sched_priority` via struct-literal syntax compiles on glibc but not musl, found by actually
+    // cross-compiling for musl (this crate's own tests, run only on the native glibc host until
+    // M5 made a musl-targeting caller of this crate exist, never caught it).
+    let mut param: libc::sched_param = unsafe { std::mem::zeroed() };
+    param.sched_priority = priority;
     // SAFETY: `param` is a valid `sched_param` for the duration of this call.
     let rc = unsafe { libc::sched_setscheduler(pid, libc::SCHED_RR, &param) };
     if rc == 0 {
@@ -125,6 +130,29 @@ mod tests {
                 // A future, privileged environment: real success is the actual best outcome.
             }
             Err(RealtimeError::SchedSetattr(e)) => {
+                assert_eq!(
+                    e.raw_os_error(),
+                    Some(libc::EPERM),
+                    "expected EPERM (no CAP_SYS_NICE in this sandbox), got a different errno \
+                     -- that would indicate a malformed syscall, a real bug, not a privilege gap: {e}"
+                );
+            }
+            Err(other) => panic!("unexpected error variant: {other}"),
+        }
+    }
+
+    /// Same reasoning as `sched_deadline_reaches_real_kernel_admission_control` above, for the
+    /// classic `sched_setscheduler(2)` path instead of `sched_setattr(2)`: no `CAP_SYS_NICE` here
+    /// means `EPERM`, not a malformed-request error, proving the (cross-target-fragile,
+    /// zero-initialized) `sched_param` this function builds really reaches the kernel correctly.
+    #[test]
+    fn sched_rr_reaches_real_kernel_admission_control() {
+        let result = apply_sched_rr(0, 1);
+        match result {
+            Ok(()) => {
+                // A future, privileged environment: real success is the actual best outcome.
+            }
+            Err(RealtimeError::SchedSetscheduler(e)) => {
                 assert_eq!(
                     e.raw_os_error(),
                     Some(libc::EPERM),

@@ -96,7 +96,7 @@ below assume UEFI.
 | M2 — Real capability/Trust-Boundary enforcement | done |
 | M3 — Real IPC transport | done |
 | M4 — Real scheduler enforcement (cgroups v2) | done |
-| M5 — Real init & supervision tree | pending |
+| M5 — Real init & supervision tree | done |
 | M6 — Real persistent storage | pending |
 | M7 — Real console UI, then real display | pending |
 | M8 — Real local AI runtime | pending |
@@ -281,6 +281,96 @@ to reach real kernel admission control — rejected with `EPERM`, proving the sy
 and really evaluated, not that it's unreachable — but this sandbox has no `CAP_SYS_NICE` and no
 `rtprio` rlimit budget to actually be granted the policy, a kernel privilege boundary this crate
 correctly respects rather than works around.
+
+**M5 completion note (2026-07-11):** new crate `crates/hyperion-supervisor` implements the real
+Erlang/OTP-style supervision tree: `Supervisor` owns one `CapabilityMonitor` and a table of every
+real child process it spawned or adopted, keyed by current pid. `spawn_sandboxed` mints a token
+(M2), spawns a real Trust Boundary process for it, and (best-effort) places it in a real cgroup
+(M4). Every child this process forks -- sandboxed services and one plain, unsandboxed carryover
+process a caller can fold in via `adopt_plain` -- is reaped through exactly one blocking
+`waitpid(-1, ...)` call in `reap_and_restart_one`, deliberately: a second, independent waiter
+anywhere else in the same process would race the kernel's single wait-queue for the same exited
+children with no ordering guarantee over which caller reaps a given one -- a real correctness
+hazard avoided by construction, not by convention, the same way every real init system (`runit`,
+`s6`, `systemd`) funnels all child-reaping through one place. On a crash, the dead token is revoked,
+a **fresh** token is minted under the same `origin` lineage, and the service is re-spawned --
+`hyperion-recovery`'s already-real microreboot semantics, reused as the model per the roadmap's own
+reuse-map entry, rehosted onto a real forked process instead of an in-process `AgentInstance`.
+`hyperion-init` replaces M1's placeholder shell-supervision loop with a real `Supervisor`: it mounts
+a real `cgroup2` filesystem at `/sys/fs/cgroup` (a gap M1's own mount list never had a reason to
+close before M4/M5 existed), bootstraps a dedicated delegated subtree for real root the same way
+systemd bootstraps its own at boot, spawns every Phase 2-10 `ServiceSpec` this image ships, and
+folds the M1 debug shell into the *same* wait loop via `adopt_plain` rather than a second,
+parallel one -- a shell still isn't capability-scoped the same way a Phase 2-10 service is
+(deliberately: it exists to let a human debug a real boot by hand, which needs broad access; M7 is
+what gives this system a real, properly capability-scoped interactive surface).
+
+Two representative Phase 2-10 crates prove the mechanism against real, unmodified crate logic
+(per the reuse map's "every other crate... runs unmodified as a real supervised service" entry) --
+new `src/bin/hyperion-observability-service.rs` and `src/bin/hyperion-explainability-service.rs`,
+each a minimal real process that receives its spawn-time capability grant as a `WireToken` claim
+(via `HYPERION_WIRE_TOKEN`), mints its own separate, local capability domain over its own real
+store (an `AuditLedger` append / an `ExplanationStore` begin+append_step+transition), and writes
+the result -- tagged with the received grant's `token_id`/generation -- to a real state file an
+outside observer (or a test) can read back. Both cross-compile to static musl binaries (confirmed
+`static-pie linked`, no dynamic loader dependency), the same requirement M2's own probe binary
+established, since they run under the same real Landlock+seccomp enforcement. Wrapping the
+remaining ~30 Phase 2-10 crates the same way is a real, separate, purely mechanical migration this
+mechanism now makes straightforward -- not attempted here, the same scoping discipline M2/M3/M4
+each already applied to their own milestone.
+
+Proven for real by `tests/real_supervision.rs`: spawns both real service processes, confirms each
+did real, distinguishable, capability-tagged work (its own state file), SIGKILLs observability
+specifically, and confirms -- from outside, via `Supervisor`'s own accessors and by reading the
+respawned instance's own rewritten state file -- a new real pid, a genuinely fresh `token_id` (not
+the stale one), and that explainability's pid/token/restart-count are completely untouched
+throughout: M5's exit criterion, verified both in the supervisor's own bookkeeping and in what the
+respawned *process itself* actually received and used. Verified non-vacuous the same way as
+M1-M4's own caught false positives: temporarily skipped updating the tracked token on restart and
+confirmed the "fresh grant" assertion genuinely fails (`left: 1, right: 1`, the stale id reused)
+before restoring the fix.
+
+Three real, non-obvious bugs surfaced and fixed while getting this real, not guessed or foreseeable
+from documentation alone:
+- **A real `getpid()` gap in M2's own seccomp allowlist.** A sandboxed service calling
+  `std::process::id()` got back `4294967295` (`u32::MAX`) instead of its real pid: `getpid` wasn't
+  in the baseline syscall allowlist, so it was denied (`EPERM`, i.e. `-1`) and the failure was never
+  checked before the `-1` was cast to `u32`. Found via direct evidence (the state file's own
+  content), not `strace` this time. Fixed in `hyperion-trust-boundary`'s baseline allowlist, since
+  every Trust Boundary process legitimately needs its own pid eventually -- this belongs in the
+  baseline, not gated behind a `RightsMask` bit the way the still-deferred socket syscalls are (a
+  process's own pid isn't a resource access a capability governs at all).
+- **A real cross-target bug in M4's `apply_sched_rr`, caught only once a musl-targeting caller of
+  `hyperion-cgroups` existed** (this milestone's service binaries and `hyperion-init` are exactly
+  that first caller): musl's `libc::sched_param` has more fields than glibc's (the `SCHED_SPORADIC`
+  extension fields), so struct-literal syntax naming only `sched_priority` compiled on glibc but not
+  musl. Fixed by zero-initializing the whole struct first, then setting the one field that matters
+  -- portable across both libcs by construction. Also closed a real, pre-existing test-coverage gap
+  found along the way: `apply_sched_rr` had no test at all (only `apply_sched_deadline` did); added
+  one mirroring the existing EPERM-admission-control check.
+- **A real, latent security question in `hyperion-supervisor` itself, caught before it ever shipped
+  a test:** an earlier version of `tests/real_supervision.rs` panicked on a bad assertion partway
+  through and left two real, still-running sandboxed child processes orphaned forever -- alive
+  indefinitely, holding the test harness's own stdout pipe open so the run never appeared to
+  finish, since `SpawnedBoundary`'s own `Drop` deliberately never kills a still-running process (the
+  right behavior for a bare handle, wrong for the tree's own root owner). Fixed with
+  `impl Drop for Supervisor`, which kills and reaps every remaining tracked child unconditionally:
+  correct not just for tests, since nothing in this crate ever wants a dropped `Supervisor`'s real
+  children to keep running unsupervised. Verified the fix actually works during a real panic
+  unwind, not just a normal return, before trusting it.
+
+What's real here vs. deferred, and why: the IPC rendezvous directory (`/run/hyperion/ipc`, M3's own
+named "service-discovery directory" gap) is really created and every service is really told its
+own well-known bind path, but nothing binds there for real yet -- M2's seccomp filter has no
+`socket`/`bind`/`connect` syscalls allowlisted and its Landlock ruleset never handles `MakeSock`,
+exactly the extension M3's own completion note already flagged as deferred and separable, still
+open. Closing it needs `SpawnGrant`/`apply_seccomp`/`apply_landlock` to accept a distinct IPC-rights
+dimension (the rendezvous directory is never the same path as a service's own `fs_scope`, so it
+needs its own Landlock rule) -- a real, separate extension, deliberately not folded into this
+already-large milestone. A respawn attempt that itself keeps failing (distinct from the original
+process merely exiting) is logged and the service drops out of supervision rather than retried
+indefinitely -- a real give-up/alerting policy for that case is a further refinement this MVP
+doesn't attempt.
 
 ## 4. Milestones
 

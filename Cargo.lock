@@ -236,6 +236,7 @@ dependencies = [
  "hyperion-privacy",
  "hyperion-recovery",
  "hyperion-storage",
+ "serde_json",
  "thiserror",
 ]
 
@@ -256,6 +257,10 @@ dependencies = [
 name = "hyperion-init"
 version = "0.1.0"
 dependencies = [
+ "hyperion-capability",
+ "hyperion-scheduler",
+ "hyperion-supervisor",
+ "hyperion-trust-boundary",
  "libc",
 ]
 
@@ -347,6 +352,7 @@ dependencies = [
  "hyperion-capability",
  "hyperion-explainability",
  "hyperion-model-router",
+ "serde_json",
  "thiserror",
 ]
 
@@ -465,6 +471,20 @@ version = "0.1.0"
 dependencies = [
  "hyperion-capability",
  "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "hyperion-supervisor"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-cgroups",
+ "hyperion-scheduler",
+ "hyperion-trust-boundary",
+ "libc",
  "serde_json",
  "tempfile",
  "thiserror",

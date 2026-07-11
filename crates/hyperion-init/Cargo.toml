@@ -3,11 +3,15 @@ name = "hyperion-init"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Hyperion's PID 1 on the Linux-hosted MVP: mounts the real root filesystem and supervises a shell. Placeholder for M5's real supervision tree (PRODUCTION_BOOT_PROMPT.md M1/M5)."
+description = "Hyperion's PID 1 on the Linux-hosted MVP: mounts the real root filesystem and runs the real supervision tree (PRODUCTION_BOOT_PROMPT.md M1/M5)."
 
 [[bin]]
 name = "hyperion-init"
 path = "src/main.rs"
 
 [dependencies]
+hyperion-capability = { workspace = true }
+hyperion-scheduler = { workspace = true }
+hyperion-supervisor = { workspace = true }
+hyperion-trust-boundary = { workspace = true }
 libc = { workspace = true }
