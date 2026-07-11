@@ -7,6 +7,7 @@ use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_explainability::{
     ControlState, ExplanationId, ExplanationRecord, ExplanationStore, ReasoningStep,
 };
+use hyperion_observability::{TelemetryCollector, TraceId};
 use hyperion_scheduler::{ResourceDimension, ResourceVector};
 
 use crate::types::{
@@ -57,6 +58,15 @@ pub struct FederationHub {
     /// and [`Self::explanation`]/[`Self::trace_intent`].
     explanations: ExplanationStore,
     next_action_id: AtomicU64,
+    /// One real `hyperion-observability` `TelemetryCollector` per device,
+    /// mirroring `devices` — [`Self::migrate`] is the real production call
+    /// site for `TelemetryCollector::merge_remote_trace` docs/21's own
+    /// distributed trace merging names: it pulls whatever the source
+    /// device recorded under a migrating agent's `trace_id` into the
+    /// target device's collector, so a caller querying the target after
+    /// migration sees the whole cross-device trace, not just what ran
+    /// there after the hop.
+    telemetry: Mutex<HashMap<u64, Arc<TelemetryCollector>>>,
 }
 
 impl Default for FederationHub {
@@ -77,7 +87,17 @@ impl FederationHub {
             next_migration_id: AtomicU64::new(1),
             explanations: ExplanationStore::new(),
             next_action_id: AtomicU64::new(1),
+            telemetry: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The real `hyperion-observability` `TelemetryCollector`
+    /// [`Self::join_device`] minted for `device_id` — a caller records
+    /// real spans/logs against it exactly as it would for any other
+    /// device-local telemetry source, and [`Self::migrate`] reads from it
+    /// to reconstruct cross-device continuity.
+    pub fn telemetry_for(&self, device_id: u64) -> Option<Arc<TelemetryCollector>> {
+        self.telemetry.lock().unwrap().get(&device_id).cloned()
     }
 
     /// docs/18's "queryable Explanation Record" surface for this hub's
@@ -133,6 +153,10 @@ impl FederationHub {
             .lock()
             .unwrap()
             .insert(device_id, trust_tier);
+        self.telemetry
+            .lock()
+            .unwrap()
+            .insert(device_id, Arc::new(TelemetryCollector::new()));
         Ok(())
     }
 
@@ -150,6 +174,7 @@ impl FederationHub {
         self.devices.lock().unwrap().remove(&device_id);
         self.trust_tiers.lock().unwrap().remove(&device_id);
         self.ledgers.lock().unwrap().remove(&device_id);
+        self.telemetry.lock().unwrap().remove(&device_id);
         Ok(())
     }
 
@@ -530,13 +555,21 @@ impl FederationHub {
     /// instance record within its own runtime), hand off the lease, and
     /// terminate the source instance with reason `"migrated"` — the same
     /// six steps the doc specifies, five of them literally reused from
-    /// `hyperion-agent-runtime`.
+    /// `hyperion-agent-runtime`. Also the real production call site for
+    /// `hyperion_observability::TelemetryCollector::merge_remote_trace`:
+    /// whatever a caller recorded on the source device's collector under
+    /// `trace_id` is pulled into the target device's collector before the
+    /// source instance is torn down, so continuing to query the target's
+    /// telemetry after the hop reconstructs the whole cross-device trace,
+    /// not just what ran there after migration.
+    #[allow(clippy::too_many_arguments)]
     pub fn migrate(
         &self,
         monitor: &CapabilityMonitor,
         token: &CapabilityToken,
         global_agent_id: u64,
         target_device_id: u64,
+        trace_id: TraceId,
         now: u64,
         lease_ttl_secs: u64,
     ) -> Result<MigrationReceipt, FederationError> {
@@ -575,6 +608,14 @@ impl FederationHub {
             checkpoint.manifest.clone(),
             checkpoint.bound_intent,
         )?;
+
+        if let (Some(source_telemetry), Some(target_telemetry)) = (
+            self.telemetry_for(agent_ref.device_id),
+            self.telemetry_for(target_device_id),
+        ) {
+            target_telemetry.merge_remote_trace(trace_id, &source_telemetry);
+        }
+
         source_runtime.terminate(monitor, token, agent_ref.local_instance, "migrated")?;
 
         self.agents.lock().unwrap().insert(

@@ -22,7 +22,12 @@
 //! oversight); [`telemetry::TelemetryCollector::merge_remote_trace`]
 //! reconstructs one real cross-device trace tree from two independent
 //! collectors' spans/logs for the same [`types::TraceId`] — docs/21's
-//! distributed trace merging, made real; [`telemetry::ewma`]/[`telemetry::derivative`] are docs/34
+//! distributed trace merging, made real, and now with a real production
+//! call site: `hyperion-federation`'s `FederationHub` holds one
+//! `TelemetryCollector` per device and `FederationHub::migrate` calls
+//! this at exactly the point docs/21 describes, pulling the source
+//! device's recorded trace into the target's collector before the
+//! source instance is torn down; [`telemetry::ewma`]/[`telemetry::derivative`] are docs/34
 //! §2's real scheduler-feedback estimators; [`aggregate::build_aggregate`]
 //! implements docs/34 §5's k-anonymity gate exactly — suppressed entirely
 //! (never partial) below the cohort floor or without opt-in consent.
@@ -59,16 +64,15 @@
 //!   background scheduled chain verification.**
 //!   [`ledger::AuditLedger::verify_chain`] is on-demand only, not run on
 //!   a background schedule.
-//! - **A production `hyperion-federation` call site for trace merging.**
-//!   [`telemetry::TelemetryCollector::merge_remote_trace`] is now real —
-//!   pulling another collector's spans/logs for one [`types::TraceId`]
-//!   into this one, reconstructing the whole cross-device trace tree —
-//!   but `hyperion-federation` doesn't hold a `TelemetryCollector` per
-//!   device at all yet, so there is no real production call site to
-//!   invoke it from. It's also a best-effort append, not a CRDT merge:
-//!   a span id is only unique *within* the collector that minted it, so
-//!   giving every span a real, globally-unique identity across devices
-//!   is a further, separate refinement.
+//! - **A globally-unique cross-device span identity.**
+//!   [`telemetry::TelemetryCollector::merge_remote_trace`] is now really
+//!   invoked from `hyperion-federation`'s `FederationHub::migrate` (see
+//!   this crate's "Real:" section above), but it remains a best-effort
+//!   append, not a CRDT merge: a span id is only unique *within* the
+//!   collector that minted it, so a merged trace can contain two spans
+//!   sharing a `span_id` if they originated on different devices — giving
+//!   every span a real, globally-unique identity across devices is a
+//!   further, separate refinement this doesn't attempt.
 
 mod aggregate;
 mod ledger;

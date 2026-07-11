@@ -211,6 +211,7 @@ dependencies = [
  "hyperion-agent-runtime",
  "hyperion-capability",
  "hyperion-explainability",
+ "hyperion-observability",
  "hyperion-scheduler",
  "serde_json",
  "thiserror",

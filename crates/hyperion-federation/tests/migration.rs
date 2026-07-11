@@ -6,6 +6,7 @@
 use hyperion_agent_runtime::{AgentManifest, TrustTier};
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_federation::{FederationError, FederationHub, FederationTrustTier, MigrationOutcome};
+use hyperion_observability::SpanStatus;
 
 fn setup() -> (
     CapabilityMonitor,
@@ -40,7 +41,9 @@ fn an_agent_survives_migration_with_its_manifest_and_intent_intact() {
         .unwrap();
     assert_eq!(hub.device_of(agent), Some(1));
 
-    let receipt = hub.migrate(&monitor, &root, agent, 2, 1_010, 60).unwrap();
+    let receipt = hub
+        .migrate(&monitor, &root, agent, 2, 42, 1_010, 60)
+        .unwrap();
     assert_eq!(receipt.outcome, MigrationOutcome::Completed);
     assert_eq!(receipt.target_device, 2);
     assert_eq!(hub.device_of(agent), Some(2));
@@ -79,7 +82,8 @@ fn the_source_instance_is_terminated_after_migration() {
     let agent = hub
         .spawn_agent(&monitor, &root, 1, manifest(), None, 1_000, 60)
         .unwrap();
-    hub.migrate(&monitor, &root, agent, 2, 1_010, 60).unwrap();
+    hub.migrate(&monitor, &root, agent, 2, 42, 1_010, 60)
+        .unwrap();
 
     // Re-deriving a token scoped to device 1 and inspecting its runtime
     // directly isn't exposed by this crate's API by design (the hub owns
@@ -87,7 +91,7 @@ fn the_source_instance_is_terminated_after_migration() {
     // to device 1 must succeed, which is only possible if device 1's
     // runtime still exists and the lease correctly moved to device 2 as
     // the sole prerequisite for that request.
-    let back = hub.migrate(&monitor, &root, agent, 1, 1_020, 60);
+    let back = hub.migrate(&monitor, &root, agent, 1, 42, 1_020, 60);
     assert!(back.is_ok());
 }
 
@@ -139,7 +143,7 @@ fn only_the_current_anchor_device_may_initiate_a_migration() {
     hub.acquire_lease(&monitor, &root, agent, 3, 1_005, 60)
         .unwrap();
 
-    let result = hub.migrate(&monitor, &root, agent, 2, 1_010, 60);
+    let result = hub.migrate(&monitor, &root, agent, 2, 42, 1_010, 60);
     assert!(matches!(result, Err(FederationError::NotAuthoritative)));
 }
 
@@ -152,7 +156,7 @@ fn migrating_to_an_unknown_device_fails_without_side_effects() {
         .spawn_agent(&monitor, &root, 1, manifest(), None, 1_000, 60)
         .unwrap();
 
-    let result = hub.migrate(&monitor, &root, agent, 99, 1_010, 60);
+    let result = hub.migrate(&monitor, &root, agent, 99, 42, 1_010, 60);
     assert!(matches!(result, Err(FederationError::NoSuchDevice)));
     assert_eq!(hub.device_of(agent), Some(1));
 }
@@ -179,4 +183,39 @@ fn spawn_agent_yields_a_bound_instance_ready_to_invoke() {
         outcome,
         hyperion_agent_runtime::InvokeOutcome::Result(_)
     ));
+}
+
+#[test]
+fn migrate_reconstructs_the_whole_cross_device_trace_on_the_target() {
+    let (monitor, root, hub) = setup();
+    hub.join_device(&monitor, &root, 1, FederationTrustTier::OwnedPrimary)
+        .unwrap();
+    hub.join_device(&monitor, &root, 2, FederationTrustTier::OwnedSecondary)
+        .unwrap();
+    let agent = hub
+        .spawn_agent(&monitor, &root, 1, manifest(), Some(777), 1_000, 60)
+        .unwrap();
+
+    let trace_id = 99;
+    let source_telemetry = hub.telemetry_for(1).unwrap();
+    let span = source_telemetry.start_span(trace_id, "web.search", None, 1_000);
+    source_telemetry.end_span(span, 1_005, SpanStatus::Ok);
+
+    let target_telemetry_before = hub.telemetry_for(2).unwrap();
+    assert!(
+        target_telemetry_before.spans_for_trace(trace_id).is_empty(),
+        "before migration, device 2 has no visibility into device 1's trace"
+    );
+
+    hub.migrate(&monitor, &root, agent, 2, trace_id, 1_010, 60)
+        .unwrap();
+
+    let target_telemetry_after = hub.telemetry_for(2).unwrap();
+    let merged = target_telemetry_after.spans_for_trace(trace_id);
+    assert_eq!(
+        merged.len(),
+        1,
+        "migration must pull the source device's real recorded span into the target"
+    );
+    assert_eq!(merged[0].name, "web.search");
 }

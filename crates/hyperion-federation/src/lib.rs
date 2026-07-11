@@ -31,7 +31,16 @@
 //! agent, `transition` to `Completed`/`RolledBack`/`Interrupted` on the
 //! real outcome) — these were this crate's own two remaining direct
 //! `AgentRuntime::invoke` call sites `hyperion-coordination`'s own
-//! Explanation Record wiring didn't reach.
+//! Explanation Record wiring didn't reach. [`FederationHub`] also holds
+//! one real `hyperion_observability::TelemetryCollector` per device
+//! (minted at [`FederationHub::join_device`], resolved by
+//! [`FederationHub::telemetry_for`]), and [`FederationHub::migrate`] is
+//! the real production call site for
+//! `TelemetryCollector::merge_remote_trace` docs/34's own crate doc named
+//! as real but never invoked from anywhere: it pulls whatever a caller
+//! recorded on the source device under a migrating agent's `trace_id`
+//! into the target device's collector before tearing the source instance
+//! down, reconstructing the whole cross-device trace on the target side.
 //!
 //! Deliberately deferred, and why:
 //!

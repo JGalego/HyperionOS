@@ -9,6 +9,7 @@ repository.workspace = true
 hyperion-agent-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
 hyperion-explainability = { workspace = true }
+hyperion-observability = { workspace = true }
 hyperion-scheduler = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
