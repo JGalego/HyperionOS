@@ -92,7 +92,7 @@ below assume UEFI.
 | Milestone | State |
 |---|---|
 | M0 — Toolchain, decision record, QEMU harness | done |
-| M1 — Bootable "Hello Hyperion" image (the literal ask) | pending |
+| M1 — Bootable "Hello Hyperion" image (the literal ask) | done (QEMU); real-hardware USB boot needs the user |
 | M2 — Real capability/Trust-Boundary enforcement | pending |
 | M3 — Real IPC transport | pending |
 | M4 — Real scheduler enforcement (cgroups v2) | pending |
@@ -116,6 +116,25 @@ real, not assumed: `qemu-system-x86_64 -bios OVMF... -drive file=disk.img,format
 runtime, not just compiled in. Caveat this dev sandbox has, which real hardware/CI won't: no
 `/dev/kvm` access here, so this was QEMU-verified under TCG software emulation, not
 KVM-accelerated — an iteration-speed limitation, not a correctness gap in what's being tested.
+
+**M1 completion note (2026-07-11):** `crates/hyperion-init` (a real Rust binary, cross-compiled
+static `x86_64-unknown-linux-musl`) now boots as PID 1 via `init=/hyperion-init` on the kernel
+cmdline, dropped into the rootfs through a Buildroot overlay populated fresh each build. Verified
+via `boot/scripts/boot-test.sh`: the kernel logs `Run /hyperion-init as init process`, the real
+Hyperion banner prints, the essential filesystems mount (including the rw remount), and a fully
+interactive `/bin/sh` comes up with working job control (`setsid()` + `TIOCSCTTY`, the same
+sequence a getty performs, since exec-ing the shell directly from init skips getty entirely) — no
+`can't access tty` warning. First test run was a false pass (the expected string briefly used,
+plain `hyperion-init`, matched the kernel's own cmdline echo `init=/hyperion-init` seconds into
+boot, before the real binary had even run) — corrected to a string that can only come from the
+program's actual output. This is the literal ask: **exit criterion (a)**, "boots in QEMU+OVMF to
+the banner/shell," is met and CI-checkable exactly as designed in §5. **Exit criterion (b)**,
+"boots on at least one real x86_64 UEFI machine from a USB drive," is not something this sandbox
+can perform or verify — no physical hardware or USB drive is reachable from here. The artifact
+(`boot/.tools/buildroot-2026.05/output/images/disk.img`) is ready; the exact `dd` command and its
+safety warning are in `boot/README.md`. This is a genuine handoff to the user, not a gap glossed
+over: someone needs to run that command against real hardware and confirm the same banner/shell
+appears before M1 can be marked fully, unconditionally done.
 
 ## 4. Milestones
 

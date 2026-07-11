@@ -169,6 +169,20 @@ fn spawn_and_wait(path: &str) -> std::io::Result<i32> {
     match pid.cmp(&0) {
         std::cmp::Ordering::Less => Err(std::io::Error::last_os_error()),
         std::cmp::Ordering::Equal => {
+            // The child inherits fd 0/1/2 = /dev/console from PID 1 (the kernel opens the
+            // boot console and wires it to init's stdio before init ever runs), but not a
+            // *controlling* terminal -- without claiming one, the shell has no job control
+            // (no Ctrl-C, no background jobs). setsid() makes the child a new session
+            // leader with no controlling terminal, then TIOCSCTTY claims fd 0 as one, the
+            // same sequence every getty performs before exec-ing a login shell.
+            //
+            // SAFETY: setsid/ioctl are async-signal-safe and valid to call here; errors are
+            // deliberately ignored (worst case is a shell with no job control, not a boot
+            // failure) rather than aborting the one thing M1 needs to prove works.
+            unsafe {
+                libc::setsid();
+                libc::ioctl(0, libc::TIOCSCTTY as _, 0);
+            }
             // SAFETY: c_path and argv are valid for this call, which does not return on success.
             unsafe {
                 libc::execv(c_path.as_ptr(), argv.as_ptr());

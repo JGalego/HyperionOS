@@ -8,7 +8,11 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DISK_IMG="${1:-$BOOT_DIR/.tools/buildroot-2026.05/output/images/disk.img}"
-EXPECT="${BOOT_TEST_EXPECT:-login:}"
+# NB: must not appear in the kernel cmdline itself (e.g. plain "hyperion-init"
+# would false-positive-match "init=/hyperion-init" echoed by the kernel at
+# boot, long before the real hyperion-init binary has run) -- pick a string
+# that can only come from the program's own output.
+EXPECT="${BOOT_TEST_EXPECT:-Humans express goals}"
 TIMEOUT_S="${BOOT_TEST_TIMEOUT:-180}"
 
 # shellcheck source=./qemu-env.sh
