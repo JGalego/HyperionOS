@@ -12,10 +12,10 @@
 //! as-is rather than redefined.
 //!
 //! Real: [`ledger::AuditLedger::append`] is the *only* write path into
-//! the ledger, hash-chained (`entry_hash = H(prev_hash || canonical(payload)
-//! || seq)`) so [`ledger::AuditLedger::verify_chain`] can detect both a
-//! broken hash link and a `seq` gap — the first corruption is reported at
-//! its exact `seq`, never silently repaired, per docs/34 §5;
+//! the ledger, hash-chained with a real BLAKE3 hash (PRODUCTION_BOOT_PROMPT.md M9 — see
+//! [`ledger`]'s own doc comment; `entry_hash = H(prev_hash || canonical(payload) || seq)`) so
+//! [`ledger::AuditLedger::verify_chain`] can detect both a broken hash link and a `seq` gap — the
+//! first corruption is reported at its exact `seq`, never silently repaired, per docs/34 §5;
 //! [`telemetry::TelemetryCollector`] implements the metrics/spans/logs
 //! side deliberately *without* a capability check (see its doc comment
 //! for why this asymmetry with the audit path is intentional, not an
@@ -41,12 +41,17 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **Hardware root-of-trust / TPM signing of Merkle anchors.**
-//!   `AuditLogEntry` has no `signature` field; the hash chain's tamper-
-//!   evidence is real, its cryptographic anchoring to hardware is not —
-//!   docs/34 itself says this degrades gracefully to a software key,
-//!   which this crate doesn't model as a distinct code path since no
-//!   crate in this workspace has a signing key concept yet.
+//! - **Periodic Ed25519-signed Merkle anchors over the hash chain.**
+//!   `AuditLogEntry` has no `signature` field; the hash chain's tamper-evidence is now real
+//!   BLAKE3 (PRODUCTION_BOOT_PROMPT.md M9), which alone already satisfies that milestone's own
+//!   exit criterion ("rejected by a real signature *or* hash-chain check") for this crate's
+//!   piece of it. docs/34 §2's fuller design layers a periodic signed Merkle root over segments
+//!   of the chain on top of that (`device_key.sign(merkle_root(segment))` every
+//!   `ANCHOR_INTERVAL` entries, "hardware root of trust where available, a software key
+//!   otherwise") — a real, separate, additive enhancement (Merkle-tree construction plus
+//!   anchor-interval bookkeeping) this crate does not yet build, named here rather than silently
+//!   implied done by the hash-chain fix above. [`hyperion_crypto::Keystore`] (this workspace's
+//!   new real software keystore) is exactly what a future pass would sign anchors with.
 //! - **The Fleet aggregate-submission network endpoint**
 //!   (`Fleet.submitAggregate`). [`aggregate::build_aggregate`] produces
 //!   the gated report; nothing here sends it anywhere — no real network

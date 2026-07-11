@@ -114,14 +114,17 @@ pub enum AuditPayload {
     Note(String),
 }
 
-/// docs/34 §1's `AuditLogEntry` — the tamper-evident, append-only,
-/// never-rolled-up ledger. `signature` (hardware-root-of-trust/Merkle-
-/// anchor signing) is this crate's deferred real-crypto piece.
+/// docs/34 §1's `AuditLogEntry` — the tamper-evident, append-only, never-rolled-up ledger.
+/// `prev_hash`/`entry_hash` (PRODUCTION_BOOT_PROMPT.md M9) are real BLAKE3 content hashes, not a
+/// non-cryptographic `DefaultHasher` (SipHash) value — see [`crate::ledger`]'s own doc comment.
+/// A hardware-root-of-trust/Merkle-anchor `signature` on top of this hash chain remains this
+/// crate's deferred real-crypto piece: the milestone's own exit criterion accepts a real
+/// signature *or* a real hash-chain check, and this crate's chain is now the latter.
 #[derive(Debug, Clone)]
 pub struct AuditLogEntry {
     pub seq: u64,
-    pub prev_hash: u64,
-    pub entry_hash: u64,
+    pub prev_hash: hyperion_crypto::Hash,
+    pub entry_hash: hyperion_crypto::Hash,
     pub actor: PrincipalRef,
     pub action: AuditAction,
     pub target: Option<String>,

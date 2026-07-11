@@ -2,11 +2,18 @@
 //! candidate when a new model doesn't fit; `pin_count` overrides eviction.
 
 use hyperion_ai_runtime::{
-    LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
+    sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
     ResidencyStatus,
 };
+use hyperion_crypto::Keystore;
 
-fn descriptor(model_id: u64, footprint_mb: u32) -> ModelDescriptor {
+fn keystore() -> (tempfile::TempDir, Keystore) {
+    let dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    (dir, keystore)
+}
+
+fn descriptor(model_id: u64, footprint_mb: u32, keystore: &Keystore) -> ModelDescriptor {
     let mut d = ModelDescriptor {
         model_id,
         class: ModelClass::Slm,
@@ -15,19 +22,24 @@ fn descriptor(model_id: u64, footprint_mb: u32) -> ModelDescriptor {
             footprint_mb,
             expected_tokens_per_sec: 50.0,
         }],
-        checksum: 0,
+        signature: None,
     };
-    d.checksum = hyperion_ai_runtime::checksum(&d);
+    d.signature = Some(sign(&d, keystore));
     d
 }
 
 #[test]
 fn loading_a_second_model_evicts_the_least_valuable_resident() {
+    let (_dir, keystore) = keystore();
     let runtime = LocalAiRuntime::new(Box::new(MockBackend), 1_500);
-    let a = descriptor(1, 1_000);
-    let b = descriptor(2, 1_000);
-    runtime.register_model(a.clone()).unwrap();
-    runtime.register_model(b.clone()).unwrap();
+    let a = descriptor(1, 1_000, &keystore);
+    let b = descriptor(2, 1_000, &keystore);
+    runtime
+        .register_model(a.clone(), &keystore.verifying_key())
+        .unwrap();
+    runtime
+        .register_model(b.clone(), &keystore.verifying_key())
+        .unwrap();
 
     runtime.load(a.model_id, &a.variants[0]).unwrap();
     assert_eq!(
@@ -49,11 +61,16 @@ fn loading_a_second_model_evicts_the_least_valuable_resident() {
 
 #[test]
 fn pinned_model_is_never_evicted() {
+    let (_dir, keystore) = keystore();
     let runtime = LocalAiRuntime::new(Box::new(MockBackend), 1_500);
-    let a = descriptor(1, 1_000);
-    let b = descriptor(2, 1_000);
-    runtime.register_model(a.clone()).unwrap();
-    runtime.register_model(b.clone()).unwrap();
+    let a = descriptor(1, 1_000, &keystore);
+    let b = descriptor(2, 1_000, &keystore);
+    runtime
+        .register_model(a.clone(), &keystore.verifying_key())
+        .unwrap();
+    runtime
+        .register_model(b.clone(), &keystore.verifying_key())
+        .unwrap();
 
     runtime.load(a.model_id, &a.variants[0]).unwrap();
     runtime.pin(a.model_id);
@@ -72,9 +89,12 @@ fn pinned_model_is_never_evicted() {
 
 #[test]
 fn reloading_an_already_hot_model_is_a_cheap_touch_not_a_reload() {
+    let (_dir, keystore) = keystore();
     let runtime = LocalAiRuntime::new(Box::new(MockBackend), 1_000);
-    let a = descriptor(1, 1_000);
-    runtime.register_model(a.clone()).unwrap();
+    let a = descriptor(1, 1_000, &keystore);
+    runtime
+        .register_model(a.clone(), &keystore.verifying_key())
+        .unwrap();
 
     runtime.load(a.model_id, &a.variants[0]).unwrap();
     runtime.load(a.model_id, &a.variants[0]).unwrap();
@@ -86,12 +106,15 @@ fn reloading_an_already_hot_model_is_a_cheap_touch_not_a_reload() {
 
 #[test]
 fn higher_predicted_next_use_survives_eviction_over_a_less_valuable_resident() {
+    let (_dir, keystore) = keystore();
     let runtime = LocalAiRuntime::new(Box::new(MockBackend), 2_000);
-    let a = descriptor(1, 1_000);
-    let b = descriptor(2, 1_000);
-    let c = descriptor(3, 1_000);
+    let a = descriptor(1, 1_000, &keystore);
+    let b = descriptor(2, 1_000, &keystore);
+    let c = descriptor(3, 1_000, &keystore);
     for d in [&a, &b, &c] {
-        runtime.register_model(d.clone()).unwrap();
+        runtime
+            .register_model(d.clone(), &keystore.verifying_key())
+            .unwrap();
     }
 
     runtime.load(a.model_id, &a.variants[0]).unwrap();

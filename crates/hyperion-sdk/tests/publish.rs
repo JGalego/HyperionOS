@@ -4,11 +4,18 @@
 //! `hyperion-plugin-framework` registry as one more competing candidate.
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use hyperion_plugin_framework::{Operation, PluginRegistry, SideEffect, TrustDepth};
 use hyperion_sdk::{
     prepare_submission, publish, Contract, Implementation, LatencyClass, PermissionRequest,
     ReviewStatus, Runtime, SdkError, TrustLevel,
 };
+
+fn keystore() -> (tempfile::TempDir, Keystore) {
+    let dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    (dir, keystore)
+}
 
 fn contract_without_permissions() -> Contract {
     Contract {
@@ -84,6 +91,7 @@ fn publishing_without_the_required_human_approval_is_rejected() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
 
     let mut contract = contract_without_permissions();
     contract.side_effects = vec![SideEffect::NetworkEgress];
@@ -111,6 +119,7 @@ fn publishing_without_the_required_human_approval_is_rejected() {
         false,
         TrustDepth::D2,
         1_000,
+        &keystore,
     );
     assert!(matches!(result, Err(SdkError::SubmissionRejected)));
     assert!(registry.query("document.summarize").is_none());
@@ -121,6 +130,7 @@ fn a_published_capability_lands_in_the_real_registry_as_a_candidate() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
 
     let submission = prepare_submission(
         contract_without_permissions(),
@@ -140,6 +150,7 @@ fn a_published_capability_lands_in_the_real_registry_as_a_candidate() {
         false,
         TrustDepth::D0,
         1_000,
+        &keystore,
     )
     .unwrap();
 
@@ -152,6 +163,7 @@ fn a_second_independently_published_capability_competes_as_a_second_candidate() 
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
 
     let first = prepare_submission(
         contract_without_permissions(),
@@ -171,6 +183,7 @@ fn a_second_independently_published_capability_competes_as_a_second_candidate() 
         false,
         TrustDepth::D0,
         1_000,
+        &keystore,
     )
     .unwrap();
 
@@ -189,6 +202,7 @@ fn a_second_independently_published_capability_competes_as_a_second_candidate() 
         false,
         TrustDepth::D0,
         1_001,
+        &keystore,
     )
     .unwrap();
 

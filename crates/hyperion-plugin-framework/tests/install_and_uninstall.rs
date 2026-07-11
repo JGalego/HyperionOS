@@ -2,17 +2,23 @@
 //! are minted, and revoking them all is a single cascade.
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use hyperion_plugin_framework::{
-    signature, CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind,
-    Operation, PluginError, PluginManifest, PluginRegistry, SemanticContract, SideEffect,
-    TrustDepth,
+    sign, CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind, Operation,
+    PluginError, PluginManifest, PluginRegistry, SemanticContract, SideEffect, TrustDepth,
 };
 
-fn manifest_with_web_search() -> PluginManifest {
+fn keystore() -> (tempfile::TempDir, Keystore) {
+    let dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    (dir, keystore)
+}
+
+fn manifest_with_web_search(keystore: &Keystore) -> PluginManifest {
     let mut manifest = PluginManifest {
         plugin_id: 1,
         publisher: "acme-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "web.search".to_string(),
@@ -32,7 +38,7 @@ fn manifest_with_web_search() -> PluginManifest {
         }],
         min_trust_depth: TrustDepth::D1,
     };
-    manifest.signature = signature(&manifest);
+    manifest.signature = Some(sign(&manifest, keystore));
     manifest
 }
 
@@ -41,15 +47,17 @@ fn a_valid_manifest_installs_and_mints_exactly_the_requested_tokens() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
 
     let handle = registry
         .install(
             &mut monitor,
             &root,
-            manifest_with_web_search(),
+            manifest_with_web_search(&keystore),
             TrustDepth::D2,
             true,
             1_000,
+            &keystore.verifying_key(),
         )
         .unwrap();
 
@@ -63,14 +71,16 @@ fn a_manifest_requiring_deeper_trust_than_available_is_rejected() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
 
     let result = registry.install(
         &mut monitor,
         &root,
-        manifest_with_web_search(),
+        manifest_with_web_search(&keystore),
         TrustDepth::D0,
         true,
         1_000,
+        &keystore.verifying_key(),
     );
     assert!(matches!(result, Err(PluginError::InsufficientTrustDepth)));
 }
@@ -80,14 +90,16 @@ fn installation_without_consent_is_rejected() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
 
     let result = registry.install(
         &mut monitor,
         &root,
-        manifest_with_web_search(),
+        manifest_with_web_search(&keystore),
         TrustDepth::D2,
         false,
         1_000,
+        &keystore.verifying_key(),
     );
     assert!(matches!(result, Err(PluginError::ConsentDeclined)));
     assert!(
@@ -101,15 +113,17 @@ fn uninstalling_a_plugin_revokes_every_token_it_was_minted() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
 
     let handle = registry
         .install(
             &mut monitor,
             &root,
-            manifest_with_web_search(),
+            manifest_with_web_search(&keystore),
             TrustDepth::D2,
             true,
             1_000,
+            &keystore.verifying_key(),
         )
         .unwrap();
     registry

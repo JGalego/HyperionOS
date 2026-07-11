@@ -1,28 +1,45 @@
 use std::collections::HashMap;
 
+use hyperion_crypto::{Keystore, Signature, VerifyingKey};
+
 use crate::runtime::InferenceBackend;
 use crate::types::{InferenceRequest, ModelDescriptor};
 
-/// A non-cryptographic checksum over a model's variant footprints — a
-/// stand-in for the real signature docs/22 §Security Considerations
-/// requires; see this crate's doc comment. Public because a caller
-/// populating [`ModelDescriptor::checksum`] before
-/// [`crate::LocalAiRuntime::register_model`] needs a way to compute the
-/// value that will verify, exactly as a real signer would need the
-/// artifact's real signature.
-pub fn checksum(descriptor: &ModelDescriptor) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    let mut mix = |value: u64| {
-        hash ^= value;
-        hash = hash.wrapping_mul(0x100000001b3);
-    };
-    mix(descriptor.model_id);
-    mix(descriptor.class as u64);
+/// The exact fields a real signature is produced/verified over — the same fields the
+/// non-cryptographic checksum stand-in this replaces already chose to cover (not `signature`
+/// itself, and not anything about the real model weights, which live outside this descriptor
+/// entirely), now signed instead of folded into a hash any forger could reproduce without a key.
+fn canonical_bytes(descriptor: &ModelDescriptor) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&descriptor.model_id.to_le_bytes());
+    bytes.extend_from_slice(&(descriptor.class as u64).to_le_bytes());
     for variant in &descriptor.variants {
-        mix(variant.footprint_mb as u64);
-        mix(variant.precision as u64);
+        bytes.extend_from_slice(&(variant.footprint_mb as u64).to_le_bytes());
+        bytes.extend_from_slice(&(variant.precision as u64).to_le_bytes());
     }
-    hash
+    bytes
+}
+
+/// A real Ed25519 signature over `descriptor`'s own canonical bytes (PRODUCTION_BOOT_PROMPT.md
+/// M9) — the value a caller populates [`ModelDescriptor::signature`] with before
+/// [`crate::runtime::LocalAiRuntime::register_model`], exactly as a real signer would produce a
+/// real artifact's real signature.
+pub fn sign(descriptor: &ModelDescriptor, keystore: &Keystore) -> Signature {
+    keystore.sign(&canonical_bytes(descriptor))
+}
+
+/// `true` only if `descriptor.signature` is a genuine, real signature over exactly this
+/// descriptor's own canonical bytes, produced by the private key matching `verifying_key` — a
+/// tampered field (or a `None` signature) is rejected, not silently accepted. Public: both
+/// [`crate::runtime::LocalAiRuntime::register_model`] and `hyperion-security`'s own model-
+/// integrity gate (docs/17 T8) need to check the same real signature the same way.
+pub fn verify(descriptor: &ModelDescriptor, verifying_key: &VerifyingKey) -> bool {
+    match &descriptor.signature {
+        Some(signature) => {
+            hyperion_crypto::verify(&canonical_bytes(descriptor), signature, verifying_key)
+        }
+        None => false,
+    }
 }
 
 /// A deterministic, non-ML stand-in for a real forward pass — see this

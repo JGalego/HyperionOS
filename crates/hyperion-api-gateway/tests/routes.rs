@@ -13,15 +13,22 @@ use hyperion_api_gateway::{
 };
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_context::ContextEngine;
+use hyperion_crypto::Keystore;
 use hyperion_explainability::ExplanationStore;
 use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::{GraphQuery, KnowledgeGraph};
 use hyperion_memory::MemoryEngine;
 use hyperion_model_router::ModelRouter;
 use hyperion_plugin_framework::{
-    signature, CapabilityManifest, Contribution, ImplementationKind, PluginManifest,
-    PluginRegistry, SemanticContract, SideEffect, TrustDepth,
+    sign, CapabilityManifest, Contribution, ImplementationKind, PluginManifest, PluginRegistry,
+    SemanticContract, SideEffect, TrustDepth,
 };
+
+fn keystore() -> (tempfile::TempDir, Keystore) {
+    let dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    (dir, keystore)
+}
 
 /// Returns the same `Arc<LocalAiRuntime>` `ModelRouter` was built with, not a second,
 /// disconnected instance -- `ApiGateway::new`'s own doc comment on why `context` works the same
@@ -199,6 +206,7 @@ fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation
     let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
+    let (_key_dir, keystore) = keystore();
     let explainability = Arc::new(ExplanationStore::new());
     let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
@@ -216,7 +224,7 @@ fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation
     let mut manifest = PluginManifest {
         plugin_id: 1,
         publisher: "acme-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "web.search".to_string(),
@@ -232,9 +240,17 @@ fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
     };
-    manifest.signature = signature(&manifest);
+    manifest.signature = Some(sign(&manifest, &keystore));
     registry
-        .install(&mut monitor, &root, manifest, TrustDepth::D2, true, 1_000)
+        .install(
+            &mut monitor,
+            &root,
+            manifest,
+            TrustDepth::D2,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
         .unwrap();
 
     let response = gateway
@@ -271,6 +287,7 @@ fn invoke_capability_appends_a_real_model_routing_audit_entry() {
     let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
+    let (_key_dir, keystore) = keystore();
     let explainability = Arc::new(ExplanationStore::new());
     let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
@@ -288,7 +305,7 @@ fn invoke_capability_appends_a_real_model_routing_audit_entry() {
     let mut manifest = PluginManifest {
         plugin_id: 1,
         publisher: "acme-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "web.search".to_string(),
@@ -304,9 +321,17 @@ fn invoke_capability_appends_a_real_model_routing_audit_entry() {
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
     };
-    manifest.signature = signature(&manifest);
+    manifest.signature = Some(sign(&manifest, &keystore));
     registry
-        .install(&mut monitor, &root, manifest, TrustDepth::D2, true, 1_000)
+        .install(
+            &mut monitor,
+            &root,
+            manifest,
+            TrustDepth::D2,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
         .unwrap();
 
     gateway
@@ -351,6 +376,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
     let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
+    let (_key_dir, keystore) = keystore();
     let explainability = Arc::new(ExplanationStore::new());
     let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
@@ -377,7 +403,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
     let mut circuit_open_plugin = PluginManifest {
         plugin_id: 1,
         publisher: "acme-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "web.search".to_string(),
@@ -389,7 +415,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
     };
-    circuit_open_plugin.signature = signature(&circuit_open_plugin);
+    circuit_open_plugin.signature = Some(sign(&circuit_open_plugin, &keystore));
     registry
         .install(
             &mut monitor,
@@ -398,6 +424,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
             TrustDepth::D2,
             true,
             1_000,
+            &keystore.verifying_key(),
         )
         .unwrap();
 
@@ -405,7 +432,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
     let mut healthy_plugin = PluginManifest {
         plugin_id: 2,
         publisher: "globex-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "web.search".to_string(),
@@ -417,7 +444,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
     };
-    healthy_plugin.signature = signature(&healthy_plugin);
+    healthy_plugin.signature = Some(sign(&healthy_plugin, &keystore));
     registry
         .install(
             &mut monitor,
@@ -426,6 +453,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
             TrustDepth::D2,
             true,
             1_001,
+            &keystore.verifying_key(),
         )
         .unwrap();
 
@@ -466,6 +494,7 @@ fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
     let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
+    let (_key_dir, keystore) = keystore();
     let explainability = Arc::new(ExplanationStore::new());
     let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
@@ -489,7 +518,7 @@ fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
     let mut low = PluginManifest {
         plugin_id: 1,
         publisher: "acme-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "web.search".to_string(),
@@ -501,15 +530,23 @@ fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
     };
-    low.signature = signature(&low);
+    low.signature = Some(sign(&low, &keystore));
     registry
-        .install(&mut monitor, &root, low, TrustDepth::D2, true, 1_000)
+        .install(
+            &mut monitor,
+            &root,
+            low,
+            TrustDepth::D2,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
         .unwrap();
 
     let mut high = PluginManifest {
         plugin_id: 2,
         publisher: "globex-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "web.search".to_string(),
@@ -521,9 +558,17 @@ fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
     };
-    high.signature = signature(&high);
+    high.signature = Some(sign(&high, &keystore));
     registry
-        .install(&mut monitor, &root, high, TrustDepth::D2, true, 1_001)
+        .install(
+            &mut monitor,
+            &root,
+            high,
+            TrustDepth::D2,
+            true,
+            1_001,
+            &keystore.verifying_key(),
+        )
         .unwrap();
 
     let response = gateway
@@ -576,6 +621,7 @@ fn a_risky_action_is_rejected_without_confirmation() {
     let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
+    let (_key_dir, keystore) = keystore();
     let explainability = Arc::new(ExplanationStore::new());
     let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
@@ -593,7 +639,7 @@ fn a_risky_action_is_rejected_without_confirmation() {
     let mut manifest = PluginManifest {
         plugin_id: 1,
         publisher: "acme-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "web.search".to_string(),
@@ -609,9 +655,17 @@ fn a_risky_action_is_rejected_without_confirmation() {
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
     };
-    manifest.signature = signature(&manifest);
+    manifest.signature = Some(sign(&manifest, &keystore));
     registry
-        .install(&mut monitor, &root, manifest, TrustDepth::D2, true, 1_000)
+        .install(
+            &mut monitor,
+            &root,
+            manifest,
+            TrustDepth::D2,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
         .unwrap();
 
     let result = gateway.invoke_capability(
@@ -646,6 +700,7 @@ fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as
     let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
+    let (_key_dir, keystore) = keystore();
     let explainability = Arc::new(ExplanationStore::new());
     let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
@@ -663,7 +718,7 @@ fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as
     let mut manifest = PluginManifest {
         plugin_id: 1,
         publisher: "acme-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "web.search".to_string(),
@@ -679,9 +734,17 @@ fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
     };
-    manifest.signature = signature(&manifest);
+    manifest.signature = Some(sign(&manifest, &keystore));
     registry
-        .install(&mut monitor, &root, manifest, TrustDepth::D2, true, 1_000)
+        .install(
+            &mut monitor,
+            &root,
+            manifest,
+            TrustDepth::D2,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
         .unwrap();
 
     let response = gateway
@@ -721,6 +784,7 @@ fn the_routing_decision_produces_a_real_confidence_score_and_a_real_alternative(
     let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
+    let (_key_dir, keystore) = keystore();
     let explainability = Arc::new(ExplanationStore::new());
     let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
@@ -744,7 +808,7 @@ fn the_routing_decision_produces_a_real_confidence_score_and_a_real_alternative(
     let mut low = PluginManifest {
         plugin_id: 1,
         publisher: "acme-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "web.search".to_string(),
@@ -756,15 +820,23 @@ fn the_routing_decision_produces_a_real_confidence_score_and_a_real_alternative(
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
     };
-    low.signature = signature(&low);
+    low.signature = Some(sign(&low, &keystore));
     registry
-        .install(&mut monitor, &root, low, TrustDepth::D2, true, 1_000)
+        .install(
+            &mut monitor,
+            &root,
+            low,
+            TrustDepth::D2,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
         .unwrap();
 
     let mut high = PluginManifest {
         plugin_id: 2,
         publisher: "globex-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "web.search".to_string(),
@@ -776,9 +848,17 @@ fn the_routing_decision_produces_a_real_confidence_score_and_a_real_alternative(
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
     };
-    high.signature = signature(&high);
+    high.signature = Some(sign(&high, &keystore));
     registry
-        .install(&mut monitor, &root, high, TrustDepth::D2, true, 1_001)
+        .install(
+            &mut monitor,
+            &root,
+            high,
+            TrustDepth::D2,
+            true,
+            1_001,
+            &keystore.verifying_key(),
+        )
         .unwrap();
 
     let response = gateway

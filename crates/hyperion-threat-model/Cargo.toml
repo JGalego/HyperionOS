@@ -11,6 +11,7 @@ repository.workspace = true
 hyperion-agent-runtime = { workspace = true }
 hyperion-ai-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
+hyperion-crypto = { workspace = true }
 hyperion-device = { workspace = true }
 hyperion-explainability = { workspace = true }
 hyperion-federation = { workspace = true }

@@ -3,8 +3,9 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_crypto::VerifyingKey;
 
-use crate::registry::{checksum, ModelRegistry};
+use crate::registry::{verify, ModelRegistry};
 use crate::residency::ResidencyManager;
 use crate::types::{
     CapabilityContract, InferenceRequest, InferenceResult, ModelClass, ModelDescriptor, PowerMode,
@@ -61,12 +62,18 @@ impl LocalAiRuntime {
         }
     }
 
-    /// Registers a model artifact after checking its checksum — docs/22
-    /// §Security Considerations: "every model artifact is signature-
-    /// verified... before load." Rejects (rather than silently accepting) a
-    /// tampered descriptor.
-    pub fn register_model(&self, descriptor: ModelDescriptor) -> Result<(), RuntimeError> {
-        if checksum(&descriptor) != descriptor.checksum {
+    /// Registers a model artifact after checking its real Ed25519 signature — docs/22
+    /// §Security Considerations: "every model artifact is signature-verified... before load."
+    /// Rejects (rather than silently accepting) a tampered, unsigned, or forged descriptor.
+    /// `verifying_key` is the real public key the caller trusts to have signed this descriptor —
+    /// see [`hyperion_crypto::Keystore`]'s own doc comment on this workspace's single-device-
+    /// identity model.
+    pub fn register_model(
+        &self,
+        descriptor: ModelDescriptor,
+        verifying_key: &VerifyingKey,
+    ) -> Result<(), RuntimeError> {
+        if !verify(&descriptor, verifying_key) {
             return Err(RuntimeError::IntegrityFailure);
         }
         self.registry.lock().unwrap().insert(descriptor);

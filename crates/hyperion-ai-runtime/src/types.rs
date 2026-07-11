@@ -28,8 +28,10 @@ pub struct QuantizedVariant {
     pub expected_tokens_per_sec: f32,
 }
 
-/// docs/22 §Data Structures' `ModelDescriptor`. `checksum` stands in for a
-/// real signature — see this crate's doc comment.
+/// docs/22 §Data Structures' `ModelDescriptor`. `signature` (PRODUCTION_BOOT_PROMPT.md M9) is a
+/// real Ed25519 signature over [`crate::sign`]'s canonical bytes — see this crate's doc comment.
+/// `None` until a caller signs it via [`crate::sign`]; [`crate::runtime::LocalAiRuntime::register_model`]
+/// always rejects a `None` or invalid signature, never treats "unsigned" as "trust it anyway."
 #[derive(Debug, Clone)]
 pub struct ModelDescriptor {
     pub model_id: u64,
@@ -37,7 +39,7 @@ pub struct ModelDescriptor {
     /// Best-quality first — [`crate::runtime::LocalAiRuntime::select_variant`]
     /// walks this in order per docs/22 §5.1.
     pub variants: Vec<QuantizedVariant>,
-    pub checksum: u64,
+    pub signature: Option<hyperion_crypto::Signature>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

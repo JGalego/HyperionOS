@@ -487,9 +487,10 @@ mod tests {
 
     use super::*;
     use hyperion_ai_runtime::{
-        MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
+        sign, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
     };
     use hyperion_capability::RightsMask;
+    use hyperion_crypto::Keystore;
     use hyperion_model_router::{
         CostModel, ImplId, ImplementationDescriptor, PrivacyTier, RolloutStage,
     };
@@ -511,6 +512,9 @@ mod tests {
         let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
         let model_router = Arc::new(ModelRouter::new(ai_runtime.clone()));
 
+        let key_dir = tempfile::tempdir().unwrap();
+        let keystore = Keystore::open_or_create(&key_dir.path().join("device.key")).unwrap();
+
         let mut model_descriptor = ModelDescriptor {
             model_id: 1,
             class: ModelClass::Slm,
@@ -519,10 +523,12 @@ mod tests {
                 footprint_mb: 500,
                 expected_tokens_per_sec: 40.0,
             }],
-            checksum: 0,
+            signature: None,
         };
-        model_descriptor.checksum = hyperion_ai_runtime::checksum(&model_descriptor);
-        ai_runtime.register_model(model_descriptor).unwrap();
+        model_descriptor.signature = Some(sign(&model_descriptor, &keystore));
+        ai_runtime
+            .register_model(model_descriptor, &keystore.verifying_key())
+            .unwrap();
 
         let impl_id = ImplId(1);
         model_router

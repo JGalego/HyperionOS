@@ -11,10 +11,11 @@
 #![cfg(feature = "candle")]
 
 use hyperion_ai_runtime::{
-    checksum, CandleBackend, CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass,
+    sign, CandleBackend, CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass,
     ModelDescriptor, Precision, QuantizedVariant,
 };
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 
 #[test]
 fn a_real_candle_backend_runs_real_inference_through_a_real_downloaded_model() {
@@ -22,6 +23,9 @@ fn a_real_candle_backend_runs_real_inference_through_a_real_downloaded_model() {
         "download (or reuse a cached) real stories15M.bin + tokenizer.json and load real weights",
     );
     let runtime = LocalAiRuntime::new(Box::new(backend), 8_000);
+
+    let key_dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&key_dir.path().join("device.key")).unwrap();
 
     let mut descriptor = ModelDescriptor {
         model_id: 1,
@@ -33,12 +37,12 @@ fn a_real_candle_backend_runs_real_inference_through_a_real_downloaded_model() {
             footprint_mb: 100,
             expected_tokens_per_sec: 10.0,
         }],
-        checksum: 0,
+        signature: None,
     };
-    descriptor.checksum = checksum(&descriptor);
+    descriptor.signature = Some(sign(&descriptor, &keystore));
     runtime
-        .register_model(descriptor)
-        .expect("register the real model descriptor");
+        .register_model(descriptor, &keystore.verifying_key())
+        .expect("register the real, really-signed model descriptor");
 
     let mut monitor = CapabilityMonitor::new();
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);

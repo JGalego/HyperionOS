@@ -87,15 +87,14 @@ pub enum Contribution {
     Capability(CapabilityManifest),
 }
 
-/// docs/24 §4's `PluginManifest`. `signature` is this crate's usual non-
-/// cryptographic-checksum stand-in (the same pattern as
-/// `hyperion-ai-runtime`'s `checksum`/`hyperion-security`'s model
-/// integrity check).
+/// docs/24 §4's `PluginManifest`. `signature` (PRODUCTION_BOOT_PROMPT.md M9) is a real Ed25519
+/// signature over [`crate::review::sign`]'s canonical bytes — see that function's own doc
+/// comment on this workspace's single-device-identity model. `None` until a caller signs it.
 #[derive(Debug, Clone)]
 pub struct PluginManifest {
     pub plugin_id: PluginId,
     pub publisher: String,
-    pub signature: u64,
+    pub signature: Option<hyperion_crypto::Signature>,
     pub sdk_version: u32,
     pub contributions: Vec<Contribution>,
     pub requested_permissions: Vec<CapabilityGrantRequest>,

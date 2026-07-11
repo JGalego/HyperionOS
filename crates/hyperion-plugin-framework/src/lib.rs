@@ -46,10 +46,14 @@
 //!   `hyperion-model-router::register_implementation` call. Adding a
 //!   separate `Contribution::Model` variant would duplicate that shape,
 //!   not close a real gap.
-//! - **Real publisher-key signature verification.** [`review::signature`]
-//!   is the same non-cryptographic-checksum stand-in this workspace uses
-//!   throughout (`hyperion-ai-runtime::checksum`, `hyperion-security`'s
-//!   model integrity check) — not real cryptography.
+//! - ~~**Real publisher-key signature verification.**~~ — now real
+//!   (PRODUCTION_BOOT_PROMPT.md M9): [`registry::PluginRegistry::install`] checks a real Ed25519
+//!   signature (via [`hyperion_crypto`]) over [`review::sign`]'s canonical bytes, not a
+//!   non-cryptographic checksum a forger could reproduce. Still deferred: docs/24's own
+//!   "verify against publisher's registered key" implies a multi-publisher trust store; no such
+//!   registry exists anywhere in this workspace, so this verifies against one real, trusted
+//!   device identity instead — see [`hyperion_crypto`]'s own doc comment on why that's a
+//!   deliberate, named scope boundary, not an oversight.
 //! - **The Consent/Permission-Diff UI.** [`registry::PluginRegistry::install`]
 //!   takes a plain `consented: bool` — the same "caller supplies the
 //!   confirmation, no real prompt UI" pattern `hyperion-device`'s
@@ -81,7 +85,7 @@ mod review;
 mod types;
 
 pub use registry::PluginRegistry;
-pub use review::{signature, validate_manifest};
+pub use review::{sign, validate_manifest};
 pub use types::{
     CapabilityGrantRequest, CapabilityId, CapabilityManifest, Contribution,
     ImplementationDescriptor, ImplementationKind, InstallState, Operation, PluginError,

@@ -60,9 +60,22 @@
 //!   `hyperion-recovery`'s bounded, per-object snapshot needs — this
 //!   crate has no separate migration-plan representation or "run the
 //!   declared inverse" step; reverting is entirely `restore_to`'s job.
-//! - **Real signature/PKI, anti-rollback monotonic counters.**
-//!   [`orchestrator::signature`] is the same non-cryptographic-checksum
-//!   stand-in this workspace uses throughout.
+//! - ~~**Real signature.**~~ — now real (PRODUCTION_BOOT_PROMPT.md M9):
+//!   [`orchestrator::UpdateOrchestrator::apply_update`] checks a real Ed25519 signature (via
+//!   [`hyperion_crypto`]) over [`orchestrator::sign`]'s canonical bytes, not the `DefaultHasher`
+//!   (SipHash) stand-in this crate used before — that stand-in was doubly non-cryptographic:
+//!   neither a real signature *nor* even the same non-cryptographic-checksum convention
+//!   (`hyperion-ai-runtime::checksum`'s FNV1a) this workspace otherwise used consistently. Real
+//!   publisher PKI is still deferred, for the same reason named in `hyperion-plugin-framework`'s
+//!   own doc comment: no multi-publisher trust store exists anywhere in this workspace, so this
+//!   verifies against one real, trusted device identity instead.
+//! - **Real PKI beyond one device identity, anti-rollback monotonic counters.** docs/32's own
+//!   "signed monotonic version counter" anti-downgrade mechanism does not exist here at all, in
+//!   any form — `apply_update`'s `compatibility_check` only compares `from_version` against the
+//!   currently active version, which rejects an update built against a *stale* base but not a
+//!   deliberate downgrade to an older, still-validly-signed manifest. A real fix needs a
+//!   monotonic counter this crate has nowhere to persist yet (no keystore/state store concept for
+//!   it) — named here rather than silently left implied by the signature fix above.
 //! - **Real bootloader A/B hardware.** [`system_image::SystemImageController`]
 //!   simulates the slot/boot-attempt state machine in-process; nothing
 //!   here writes to a real partition table or invokes a real bootloader.
@@ -72,7 +85,7 @@ mod system_image;
 mod telemetry;
 mod types;
 
-pub use orchestrator::{signature, UpdateOrchestrator};
+pub use orchestrator::{sign, UpdateOrchestrator};
 pub use system_image::SystemImageController;
 pub use telemetry::cohort_health_from_telemetry;
 pub use types::{

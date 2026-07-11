@@ -1,9 +1,8 @@
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::sync::Mutex;
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_crypto::{Keystore, Signature, VerifyingKey};
 use hyperion_recovery::{RecoveryPointId, RecoveryService, Trigger};
 
 use crate::types::{
@@ -11,16 +10,41 @@ use crate::types::{
     UpdateSubject, Version,
 };
 
-/// A deterministic stand-in for a real publisher signature — the same
-/// non-cryptographic-checksum pattern this workspace uses throughout
-/// (`hyperion-ai-runtime::checksum`, `hyperion-plugin-framework::signature`).
-pub fn signature(manifest_without_signature: &UpdateManifest) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    format!("{:?}", manifest_without_signature.subject).hash(&mut hasher);
-    manifest_without_signature.from_version.hash(&mut hasher);
-    manifest_without_signature.to_version.hash(&mut hasher);
-    manifest_without_signature.touched_objects.hash(&mut hasher);
-    hasher.finish()
+/// The exact fields a real signature is produced/verified over — the same fields the
+/// non-cryptographic-checksum stand-in this replaces already chose to cover (`subject` via its
+/// `Debug` string, since `UpdateSubject` has no other stable byte form; `from_version`/
+/// `to_version`/`touched_objects` directly), now signed instead of hashed with `DefaultHasher`
+/// (SipHash, explicitly not cryptographic and not stable across Rust releases — never suitable
+/// for this even as a stand-in's *hashing* choice, let alone a signature's).
+fn canonical_bytes(manifest_without_signature: &UpdateManifest) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(format!("{:?}", manifest_without_signature.subject).as_bytes());
+    bytes.extend_from_slice(&manifest_without_signature.from_version.to_le_bytes());
+    bytes.extend_from_slice(&manifest_without_signature.to_version.to_le_bytes());
+    for node_id in &manifest_without_signature.touched_objects {
+        bytes.extend_from_slice(&node_id.0.to_le_bytes());
+    }
+    bytes
+}
+
+/// A real Ed25519 signature over `manifest_without_signature`'s own canonical bytes
+/// (PRODUCTION_BOOT_PROMPT.md M9) — the value a caller populates [`UpdateManifest::signature`]
+/// with before [`UpdateOrchestrator::apply_update`]. See [`hyperion_crypto`]'s own doc comment on
+/// why this workspace verifies against one real, trusted device identity rather than a
+/// multi-publisher trust store docs/32's own "verified per 15" framing would otherwise imply.
+pub fn sign(manifest_without_signature: &UpdateManifest, keystore: &Keystore) -> Signature {
+    keystore.sign(&canonical_bytes(manifest_without_signature))
+}
+
+fn verify_signature(manifest: &UpdateManifest, verifying_key: &VerifyingKey) -> bool {
+    let mut unsigned = manifest.clone();
+    unsigned.signature = None;
+    match &manifest.signature {
+        Some(signature) => {
+            hyperion_crypto::verify(&canonical_bytes(&unsigned), signature, verifying_key)
+        }
+        None => false,
+    }
 }
 
 /// docs/32 — the Update System's System-Image/Capability/Model tracks.
@@ -91,6 +115,7 @@ impl UpdateOrchestrator {
     /// caller supplies `health_for_stage` since this crate has no real
     /// fleet telemetry to poll (see this crate's doc comment); it is
     /// called once per stage with that stage's `percent`.
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_update(
         &self,
         monitor: &CapabilityMonitor,
@@ -99,12 +124,11 @@ impl UpdateOrchestrator {
         hardware_compatible: bool,
         now: u64,
         mut health_for_stage: impl FnMut(u8) -> crate::types::CohortHealth,
+        verifying_key: &VerifyingKey,
     ) -> Result<Version, UpdateError> {
         self.require(monitor, token, RightsMask::WRITE)?;
 
-        let mut unsigned = manifest.clone();
-        unsigned.signature = 0;
-        if signature(&unsigned) != manifest.signature {
+        if !verify_signature(manifest, verifying_key) {
             return Err(UpdateError::SignatureInvalid);
         }
 

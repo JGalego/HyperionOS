@@ -100,7 +100,7 @@ below assume UEFI.
 | M6 — Real persistent storage | done |
 | M7 — Real console UI, then real display | done (stage 1: text console); stage 2 (real display/compositor) explicitly deferred as its own project |
 | M8 — Real local AI runtime | done (real Candle backend + real Intent→Agent→inference wiring on the actually-booted console path; production-scale model size, a plugin-framework bridge gap, and boot-time model pre-baking remain named, not solved — see completion note) |
-| M9 — Real cryptography | pending |
+| M9 — Real cryptography | done (real Ed25519 signing + BLAKE3 hashing via a new `hyperion-crypto` crate and a real software keystore, replacing all 5 named non-cryptographic stand-ins; TPM-backed sealing confirmed unavailable on this sandbox, named as a real-hardware stretch goal — see completion note) |
 | M10 — Real networking | pending |
 | M11 — Second reference platform (aarch64) | pending |
 | M12 — Boot benchmarking against docs/36 | pending |
@@ -549,6 +549,78 @@ separate work from proving the inference mechanism itself. Full gate confirmed g
 `cargo fmt/clippy/build/test --workspace` (default features, network-free, all pass) and
 `cargo clippy --features candle` for both `hyperion-ai-runtime` and `hyperion-console` (also
 clean) -- the `candle` feature stays fully opt-in on both crates, exactly as designed.
+
+**M9 completion note (2026-07-11):** new crate `hyperion-crypto` is the real primitive every one
+of the five named non-cryptographic checksum/hash stand-ins now depends on: real Ed25519
+signing/verification (`ed25519-dalek`), real BLAKE3 content hashing (this workspace's own
+already-stated preference, per docs/28's content-defined chunking spec), and a real, minimal,
+file-backed software `Keystore` -- generates a real key via the OS CSPRNG on first use, persists
+the raw seed with owner-only (`0o600`) permissions, loads the same key on every subsequent open.
+Confirmed directly, not assumed: this sandbox has no TPM (`/dev/tpm*` does not exist, `/sys/class/tpm`
+is empty), so hardware-backed sealing is named as a real, hardware-dependent stretch goal, exactly
+the same shape of hand-off as M1's real-hardware USB boot. Every domain verifies against **one**
+real device identity rather than a multi-publisher trust store -- docs/24's "verify against
+publisher's registered key" implies a registry of many trusted keys that does not exist anywhere
+in this workspace; building one is a separate, real PKI feature, not a "checksum → real crypto"
+swap, and a single device key already satisfies the milestone's actual exit criterion
+(unforgeable without the private key) without inventing an undocumented design.
+
+All five named stand-ins replaced for real: `hyperion-ai-runtime::ModelDescriptor.signature`,
+`hyperion-plugin-framework::PluginManifest.signature`, and `hyperion-update::UpdateManifest.signature`
+are now real `Option<Signature>` fields, verified by each crate's own registration/install/apply
+path (`register_model`/`install`/`apply_update` each gained a `&VerifyingKey` parameter -- not a
+constructor change, to keep the blast radius to exactly the functions that verify, not every
+caller that merely holds the surrounding struct); `hyperion-security`'s model-integrity gate calls
+`hyperion-ai-runtime`'s own now-real `verify` directly (it never had its own algorithm). Worth
+noting: `hyperion-update`'s old stand-in used `std::collections::hash_map::DefaultHasher`
+(SipHash) -- not even the same FNV1a-style pattern the other stand-ins shared, and explicitly
+documented upstream as unsuitable for anything beyond in-process `HashMap` bucketing, unstable
+release to release. `hyperion-observability`'s audit-ledger hash chain is now real BLAKE3 (via
+`hyperion_crypto::hash`) instead of the same non-cryptographic `DefaultHasher` -- sufficient on
+its own to satisfy this milestone's exit criterion, which accepts "a real signature *or*
+hash-chain check"; docs/34's fuller design (a periodic Ed25519-signed Merkle anchor over segments
+of the chain, `device_key.sign(merkle_root(segment))` every `ANCHOR_INTERVAL` entries) is real,
+separate, additive work this milestone does not build, named in `hyperion-observability`'s own
+doc comment rather than silently implied done.
+
+The mechanical refactor this required was, by design, smaller than M8's: putting the verifying
+key on the *verifying function* rather than threading a keystore through every constructor kept
+each crate's blast radius to its own `register_model`/`install`/`apply_update` call sites (6, 10,
+and 3 files respectively) instead of every caller of the containing struct. `hyperion-console`'s
+real device key is a real `Keystore` persisted under the same `data_dir` M6's dedicated partition
+already gives the Knowledge Graph, so it survives reboots rather than regenerating every restart.
+
+Verified non-vacuous throughout, and more strongly than the old stand-ins ever could be: every
+existing "tampered X is rejected" test was preserved (content tampered post-signing still fails,
+exactly as before), and a new test was added at all four signing sites proving a specifically
+*forged* artifact -- signed by a real, different keypair, not just checksummed wrong -- is also
+rejected; a non-cryptographic checksum could never have caught that case, since a forger can
+always recompute a checksum, but never produce a valid signature without the real private key.
+`hyperion-observability`'s `VerificationReport::Corrupt` path had no test anywhere in the
+workspace before this milestone (a real gap the research pass surfaced); added two, inside a new
+`#[cfg(test)] mod tests` within `ledger.rs` itself (the public API has no way to tamper an
+already-appended entry from outside the crate -- `append` is deliberately the only write path).
+The first attempt at the second test asserted the wrong `at_seq`: tracing through `verify_chain`'s
+actual order of checks showed that directly corrupting an entry's own `entry_hash` fails that
+entry's *own* self-consistency check before ever reaching the link check on the entry after it --
+corrected to a scenario that isolates the link-check path specifically (a spliced entry whose own
+hash still recomputes fine, but whose `prev_hash` points at a different chain). Full workspace
+gate green throughout, including `cargo clippy --features candle` for the two `candle`-gated
+crates -- 465 tests passing, up from 461 before this milestone.
+
+Named gaps left open, deliberately: (1) a multi-publisher trust store/PKI, everywhere a single
+device identity now stands in for it (see above); (2) `hyperion-update`'s anti-rollback monotonic
+version counter -- docs/32 asks for one, none exists in any form, a pre-existing gap this
+milestone's signature fix does not touch; (3) `hyperion-observability`'s periodic signed
+Merkle-anchor over the hash chain (see above). Also identified but explicitly left untouched, since
+none is named in this milestone's own exit criteria (a tampered plugin manifest, update package,
+or audit-ledger entry): `hyperion-context`'s own envelope-integrity checksum (the same FNV1a-style
+pattern, explicitly cited by `hyperion-ai-runtime`'s own former doc comment as sharing it);
+`hyperion-capability::wire::WireToken`, which has no signature/MAC at all today and whose own doc
+comment explicitly forward-references this exact milestone by name; `hyperion-sdk`'s
+`PublishSubmission::package_hash` (hardcoded `0`); `hyperion-device`'s manifests, "trusted as
+given" with no verification attempted. Each is a real, separate extension of this same new
+`hyperion-crypto` primitive for a later pass, not silently assumed closed by this one.
 
 ## 4. Milestones
 

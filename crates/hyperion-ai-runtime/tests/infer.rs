@@ -3,12 +3,19 @@
 //! locally signal when nothing fits.
 
 use hyperion_ai_runtime::{
-    CapabilityContract, InferenceRequest, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor,
-    PowerMode, Precision, QuantizedVariant, RuntimeError,
+    sign, CapabilityContract, InferenceRequest, LocalAiRuntime, MockBackend, ModelClass,
+    ModelDescriptor, PowerMode, Precision, QuantizedVariant, RuntimeError,
 };
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 
-fn descriptor_with_two_tiers() -> ModelDescriptor {
+fn keystore() -> (tempfile::TempDir, Keystore) {
+    let dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    (dir, keystore)
+}
+
+fn descriptor_with_two_tiers(keystore: &Keystore) -> ModelDescriptor {
     let mut d = ModelDescriptor {
         model_id: 1,
         class: ModelClass::Slm,
@@ -24,9 +31,9 @@ fn descriptor_with_two_tiers() -> ModelDescriptor {
                 expected_tokens_per_sec: 60.0,
             },
         ],
-        checksum: 0,
+        signature: None,
     };
-    d.checksum = hyperion_ai_runtime::checksum(&d);
+    d.signature = Some(sign(&d, keystore));
     d
 }
 
@@ -38,8 +45,14 @@ fn infer_requires_exec_rights() {
         .cap_derive(&root, RightsMask::READ, None, TrustBoundaryId(2))
         .unwrap();
 
+    let (_dir, keystore) = keystore();
     let runtime = LocalAiRuntime::new(Box::new(MockBackend), 8_000);
-    runtime.register_model(descriptor_with_two_tiers()).unwrap();
+    runtime
+        .register_model(
+            descriptor_with_two_tiers(&keystore),
+            &keystore.verifying_key(),
+        )
+        .unwrap();
 
     let contract = CapabilityContract {
         latency_budget_ms: 5_000,
@@ -61,8 +74,14 @@ fn infer_requires_exec_rights() {
 fn infer_returns_a_deterministic_mock_response() {
     let mut monitor = CapabilityMonitor::new();
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let (_dir, keystore) = keystore();
     let runtime = LocalAiRuntime::new(Box::new(MockBackend), 8_000);
-    runtime.register_model(descriptor_with_two_tiers()).unwrap();
+    runtime
+        .register_model(
+            descriptor_with_two_tiers(&keystore),
+            &keystore.verifying_key(),
+        )
+        .unwrap();
 
     let contract = CapabilityContract {
         latency_budget_ms: 5_000,
@@ -87,8 +106,14 @@ fn infer_returns_a_deterministic_mock_response() {
 fn battery_saver_mode_forces_the_smallest_variant_even_if_the_best_one_fits() {
     let mut monitor = CapabilityMonitor::new();
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let (_dir, keystore) = keystore();
     let runtime = LocalAiRuntime::new(Box::new(MockBackend), 8_000);
-    runtime.register_model(descriptor_with_two_tiers()).unwrap();
+    runtime
+        .register_model(
+            descriptor_with_two_tiers(&keystore),
+            &keystore.verifying_key(),
+        )
+        .unwrap();
     runtime.set_power_mode(PowerMode::BatterySaver);
 
     let contract = CapabilityContract {

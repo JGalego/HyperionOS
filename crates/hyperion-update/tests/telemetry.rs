@@ -7,13 +7,20 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use hyperion_knowledge_graph::KnowledgeGraph;
 use hyperion_observability::{MetricSample, TelemetryCollector};
 use hyperion_recovery::RecoveryService;
 use hyperion_update::{
-    cohort_health_from_telemetry, signature, HealthThresholds, RolloutPolicy, RolloutState,
-    UpdateError, UpdateManifest, UpdateOrchestrator, UpdateSubject,
+    cohort_health_from_telemetry, sign, HealthThresholds, RolloutPolicy, RolloutState, UpdateError,
+    UpdateManifest, UpdateOrchestrator, UpdateSubject,
 };
+
+fn keystore() -> (tempfile::TempDir, Keystore) {
+    let dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    (dir, keystore)
+}
 
 fn record(telemetry: &TelemetryCollector, name: &str, value: f64, timestamp: u64) {
     telemetry.record_metric(MetricSample {
@@ -53,21 +60,21 @@ fn cohort_health_from_telemetry_reads_the_most_recent_sample() {
     assert_eq!(health.latency_p99_ms, 40);
 }
 
-fn manifest(touched: Vec<hyperion_storage::ObjectId>) -> UpdateManifest {
+fn manifest(touched: Vec<hyperion_storage::ObjectId>, keystore: &Keystore) -> UpdateManifest {
     let mut m = UpdateManifest {
         subject: UpdateSubject::Capability {
             id: "document.draft".to_string(),
         },
         from_version: 0,
         to_version: 1,
-        signature: 0,
+        signature: None,
         touched_objects: touched,
         rollout_policy: RolloutPolicy::default_schedule(HealthThresholds {
             max_crash_rate: 0.01,
             max_latency_p99_ms: 500,
         }),
     };
-    m.signature = signature(&m);
+    m.signature = Some(sign(&m, keystore));
     m
 }
 
@@ -83,12 +90,21 @@ fn a_real_telemetry_backed_health_reading_drives_the_rollout_to_completion() {
     record(&telemetry, "crash_rate", 0.0, 1_000);
     record(&telemetry, "latency_p99_ms", 50.0, 1_000);
 
-    let m = manifest(vec![]);
+    let (_dir, keystore) = keystore();
+    let m = manifest(vec![], &keystore);
     let version = orchestrator
-        .apply_update(&monitor, &root, &m, true, 1_000, |_percent| {
-            cohort_health_from_telemetry(&telemetry, "crash_rate", "latency_p99_ms")
-                .expect("both metrics were recorded before the rollout started")
-        })
+        .apply_update(
+            &monitor,
+            &root,
+            &m,
+            true,
+            1_000,
+            |_percent| {
+                cohort_health_from_telemetry(&telemetry, "crash_rate", "latency_p99_ms")
+                    .expect("both metrics were recorded before the rollout started")
+            },
+            &keystore.verifying_key(),
+        )
         .unwrap();
 
     assert_eq!(version, 1);
@@ -110,11 +126,20 @@ fn a_real_telemetry_backed_crash_spike_triggers_automatic_rollback() {
     record(&telemetry, "crash_rate", 0.5, 1_000); // breaches max_crash_rate: 0.01
     record(&telemetry, "latency_p99_ms", 50.0, 1_000);
 
-    let m = manifest(vec![]);
-    let result = orchestrator.apply_update(&monitor, &root, &m, true, 1_000, |_percent| {
-        cohort_health_from_telemetry(&telemetry, "crash_rate", "latency_p99_ms")
-            .expect("both metrics were recorded before the rollout started")
-    });
+    let (_dir, keystore) = keystore();
+    let m = manifest(vec![], &keystore);
+    let result = orchestrator.apply_update(
+        &monitor,
+        &root,
+        &m,
+        true,
+        1_000,
+        |_percent| {
+            cohort_health_from_telemetry(&telemetry, "crash_rate", "latency_p99_ms")
+                .expect("both metrics were recorded before the rollout started")
+        },
+        &keystore.verifying_key(),
+    );
 
     assert!(matches!(result, Err(UpdateError::RolloutHealthBreach)));
     assert_eq!(

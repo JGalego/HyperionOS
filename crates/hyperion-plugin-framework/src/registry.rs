@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
+use hyperion_crypto::VerifyingKey;
 
 use crate::review::validate_manifest;
 use crate::types::{
@@ -55,6 +56,7 @@ impl PluginRegistry {
     /// superset) under a fresh Trust Boundary → register every
     /// Capability contribution. Any failure before the mint step leaves
     /// no trace — a rejected manifest never partially installs.
+    #[allow(clippy::too_many_arguments)]
     pub fn install(
         &self,
         monitor: &mut CapabilityMonitor,
@@ -63,11 +65,12 @@ impl PluginRegistry {
         available_depth: TrustDepth,
         consented: bool,
         _now: u64,
+        verifying_key: &VerifyingKey,
     ) -> Result<PluginHandle, PluginError> {
         monitor
             .check_rights_ok_result(admin_token, RightsMask::GRANT)
             .map_err(|_| PluginError::Unauthorized)?;
-        validate_manifest(&manifest)?;
+        validate_manifest(&manifest, verifying_key)?;
 
         if manifest.min_trust_depth > available_depth {
             return Err(PluginError::InsufficientTrustDepth);

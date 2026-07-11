@@ -2,16 +2,23 @@
 //! gated, re-checked live against the monitor.
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use hyperion_plugin_framework::{
-    signature, CapabilityManifest, Contribution, ImplementationKind, PluginError, PluginManifest,
+    sign, CapabilityManifest, Contribution, ImplementationKind, PluginError, PluginManifest,
     PluginRegistry, SemanticContract, SideEffect, TrustDepth,
 };
 
-fn manifest() -> PluginManifest {
+fn keystore() -> (tempfile::TempDir, Keystore) {
+    let dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    (dir, keystore)
+}
+
+fn manifest(keystore: &Keystore) -> PluginManifest {
     let mut m = PluginManifest {
         plugin_id: 1,
         publisher: "acme-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "document.summarize".to_string(),
@@ -27,7 +34,7 @@ fn manifest() -> PluginManifest {
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
     };
-    m.signature = signature(&m);
+    m.signature = Some(sign(&m, keystore));
     m
 }
 
@@ -44,14 +51,16 @@ fn install_requires_grant_rights() {
         )
         .unwrap();
     let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
 
     let result = registry.install(
         &mut monitor,
         &no_grant,
-        manifest(),
+        manifest(&keystore),
         TrustDepth::D0,
         true,
         1_000,
+        &keystore.verifying_key(),
     );
     assert!(matches!(result, Err(PluginError::Unauthorized)));
 }
@@ -61,8 +70,17 @@ fn uninstall_requires_revoke_rights() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
     let handle = registry
-        .install(&mut monitor, &root, manifest(), TrustDepth::D0, true, 1_000)
+        .install(
+            &mut monitor,
+            &root,
+            manifest(&keystore),
+            TrustDepth::D0,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
         .unwrap();
 
     let no_revoke = monitor
@@ -85,25 +103,35 @@ fn revoking_the_admin_token_blocks_further_installs_re_checked_live() {
         .cap_derive(&root, RightsMask::all(), None, TrustBoundaryId(2))
         .unwrap();
     let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
 
     assert!(registry
         .install(
             &mut monitor,
             &delegate,
-            manifest(),
+            manifest(&keystore),
             TrustDepth::D0,
             true,
-            1_000
+            1_000,
+            &keystore.verifying_key(),
         )
         .is_ok());
 
     monitor.cap_revoke(&delegate);
 
-    let mut second = manifest();
+    let mut second = manifest(&keystore);
     second.plugin_id = 2;
-    second.signature = signature(&second);
+    second.signature = Some(sign(&second, &keystore));
     assert!(matches!(
-        registry.install(&mut monitor, &delegate, second, TrustDepth::D0, true, 1_001),
+        registry.install(
+            &mut monitor,
+            &delegate,
+            second,
+            TrustDepth::D0,
+            true,
+            1_001,
+            &keystore.verifying_key(),
+        ),
         Err(PluginError::Unauthorized)
     ));
 }

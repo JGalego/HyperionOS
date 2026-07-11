@@ -23,4 +23,5 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+hyperion-crypto = { workspace = true }
 tempfile = { workspace = true }

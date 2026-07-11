@@ -5,11 +5,12 @@
 use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use hyperion_knowledge_graph::KnowledgeGraph;
 use hyperion_recovery::RecoveryService;
 use hyperion_update::{
-    signature, CohortHealth, HealthThresholds, RolloutPolicy, RolloutState, UpdateError,
-    UpdateManifest, UpdateOrchestrator, UpdateSubject,
+    sign, CohortHealth, HealthThresholds, RolloutPolicy, RolloutState, UpdateError, UpdateManifest,
+    UpdateOrchestrator, UpdateSubject,
 };
 
 fn setup() -> (
@@ -27,6 +28,12 @@ fn setup() -> (
     (monitor, root, orchestrator, graph)
 }
 
+fn keystore() -> (tempfile::TempDir, Keystore) {
+    let dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    (dir, keystore)
+}
+
 fn healthy() -> HealthThresholds {
     HealthThresholds {
         max_crash_rate: 0.01,
@@ -34,31 +41,40 @@ fn healthy() -> HealthThresholds {
     }
 }
 
-fn manifest(touched: Vec<hyperion_storage::ObjectId>) -> UpdateManifest {
+fn manifest(touched: Vec<hyperion_storage::ObjectId>, keystore: &Keystore) -> UpdateManifest {
     let mut m = UpdateManifest {
         subject: UpdateSubject::Capability {
             id: "document.draft".to_string(),
         },
         from_version: 0,
         to_version: 1,
-        signature: 0,
+        signature: None,
         touched_objects: touched,
         rollout_policy: RolloutPolicy::default_schedule(healthy()),
     };
-    m.signature = signature(&m);
+    m.signature = Some(sign(&m, keystore));
     m
 }
 
 #[test]
 fn a_healthy_rollout_advances_through_every_stage_and_commits() {
     let (monitor, root, orchestrator, _graph) = setup();
-    let m = manifest(vec![]);
+    let (_dir, keystore) = keystore();
+    let m = manifest(vec![], &keystore);
 
     let version = orchestrator
-        .apply_update(&monitor, &root, &m, true, 1_000, |_percent| CohortHealth {
-            crash_rate: 0.0,
-            latency_p99_ms: 50,
-        })
+        .apply_update(
+            &monitor,
+            &root,
+            &m,
+            true,
+            1_000,
+            |_percent| CohortHealth {
+                crash_rate: 0.0,
+                latency_p99_ms: 50,
+            },
+            &keystore.verifying_key(),
+        )
         .unwrap();
 
     assert_eq!(version, 1);
@@ -79,6 +95,7 @@ fn default_schedule_is_1_10_50_100() {
 #[test]
 fn a_health_breach_triggers_automatic_rollback_and_restores_touched_objects() {
     let (monitor, root, orchestrator, graph) = setup();
+    let (_dir, keystore) = keystore();
     let node = graph
         .put_node(
             &monitor,
@@ -89,37 +106,45 @@ fn a_health_breach_triggers_automatic_rollback_and_restores_touched_objects() {
             serde_json::json!({"flag": "old"}),
         )
         .unwrap();
-    let m = manifest(vec![node]);
+    let m = manifest(vec![node], &keystore);
 
     // The recovery point is taken before any stage runs, capturing
     // "old". This crate has no real Capability execution, so the first
     // (healthy) stage's health check is where the test simulates the
     // update's own effect landing, before the second stage breaches.
     let mut calls = 0;
-    let result = orchestrator.apply_update(&monitor, &root, &m, true, 1_000, |_percent| {
-        calls += 1;
-        if calls == 1 {
-            graph
-                .put_node(
-                    &monitor,
-                    &root,
-                    Some(node),
-                    "Config",
-                    None,
-                    serde_json::json!({"flag": "new"}),
-                )
-                .unwrap();
-            CohortHealth {
-                crash_rate: 0.0,
-                latency_p99_ms: 50,
+    let result = orchestrator.apply_update(
+        &monitor,
+        &root,
+        &m,
+        true,
+        1_000,
+        |_percent| {
+            calls += 1;
+            if calls == 1 {
+                graph
+                    .put_node(
+                        &monitor,
+                        &root,
+                        Some(node),
+                        "Config",
+                        None,
+                        serde_json::json!({"flag": "new"}),
+                    )
+                    .unwrap();
+                CohortHealth {
+                    crash_rate: 0.0,
+                    latency_p99_ms: 50,
+                }
+            } else {
+                CohortHealth {
+                    crash_rate: 0.5,
+                    latency_p99_ms: 5_000,
+                } // breach on the second stage
             }
-        } else {
-            CohortHealth {
-                crash_rate: 0.5,
-                latency_p99_ms: 5_000,
-            } // breach on the second stage
-        }
-    });
+        },
+        &keystore.verifying_key(),
+    );
 
     assert!(matches!(result, Err(UpdateError::RolloutHealthBreach)));
     assert_eq!(
@@ -139,6 +164,7 @@ fn a_health_breach_triggers_automatic_rollback_and_restores_touched_objects() {
 #[test]
 fn a_health_breach_without_auto_rollback_leaves_data_untouched() {
     let (monitor, root, orchestrator, graph) = setup();
+    let (_dir, keystore) = keystore();
     let node = graph
         .put_node(
             &monitor,
@@ -149,9 +175,9 @@ fn a_health_breach_without_auto_rollback_leaves_data_untouched() {
             serde_json::json!({"flag": "old"}),
         )
         .unwrap();
-    let mut m = manifest(vec![node]);
+    let mut m = manifest(vec![node], &keystore);
     m.rollout_policy.auto_rollback_on_breach = false;
-    m.signature = signature(&m);
+    m.signature = Some(sign(&m, &keystore));
 
     graph
         .put_node(
@@ -164,11 +190,18 @@ fn a_health_breach_without_auto_rollback_leaves_data_untouched() {
         )
         .unwrap();
 
-    let result =
-        orchestrator.apply_update(&monitor, &root, &m, true, 1_000, |_percent| CohortHealth {
+    let result = orchestrator.apply_update(
+        &monitor,
+        &root,
+        &m,
+        true,
+        1_000,
+        |_percent| CohortHealth {
             crash_rate: 1.0,
             latency_p99_ms: 9_999,
-        });
+        },
+        &keystore.verifying_key(),
+    );
 
     assert!(matches!(result, Err(UpdateError::RolloutHealthBreach)));
     let current = graph.get(&monitor, &root, node).unwrap();
@@ -182,34 +215,59 @@ fn a_health_breach_without_auto_rollback_leaves_data_untouched() {
 #[test]
 fn a_manifest_with_a_stale_from_version_is_incompatible() {
     let (monitor, root, orchestrator, _graph) = setup();
-    let first = manifest(vec![]);
+    let (_dir, keystore) = keystore();
+    let first = manifest(vec![], &keystore);
     orchestrator
-        .apply_update(&monitor, &root, &first, true, 1_000, |_| CohortHealth {
-            crash_rate: 0.0,
-            latency_p99_ms: 50,
-        })
+        .apply_update(
+            &monitor,
+            &root,
+            &first,
+            true,
+            1_000,
+            |_| CohortHealth {
+                crash_rate: 0.0,
+                latency_p99_ms: 50,
+            },
+            &keystore.verifying_key(),
+        )
         .unwrap();
 
     // A second manifest still claiming from_version=0, even though the
     // subject is already at version 1.
-    let stale = manifest(vec![]);
-    let result =
-        orchestrator.apply_update(&monitor, &root, &stale, true, 1_010, |_| CohortHealth {
+    let stale = manifest(vec![], &keystore);
+    let result = orchestrator.apply_update(
+        &monitor,
+        &root,
+        &stale,
+        true,
+        1_010,
+        |_| CohortHealth {
             crash_rate: 0.0,
             latency_p99_ms: 50,
-        });
+        },
+        &keystore.verifying_key(),
+    );
     assert!(matches!(result, Err(UpdateError::Incompatible)));
 }
 
 #[test]
 fn a_hardware_incompatible_manifest_is_rejected_before_any_recovery_point_is_taken() {
     let (monitor, root, orchestrator, _graph) = setup();
-    let m = manifest(vec![]);
+    let (_dir, keystore) = keystore();
+    let m = manifest(vec![], &keystore);
 
-    let result = orchestrator.apply_update(&monitor, &root, &m, false, 1_000, |_| CohortHealth {
-        crash_rate: 0.0,
-        latency_p99_ms: 50,
-    });
+    let result = orchestrator.apply_update(
+        &monitor,
+        &root,
+        &m,
+        false,
+        1_000,
+        |_| CohortHealth {
+            crash_rate: 0.0,
+            latency_p99_ms: 50,
+        },
+        &keystore.verifying_key(),
+    );
     assert!(matches!(result, Err(UpdateError::Incompatible)));
     assert_eq!(
         orchestrator.rollout_state(&m.subject),
@@ -221,19 +279,55 @@ fn a_hardware_incompatible_manifest_is_rejected_before_any_recovery_point_is_tak
 #[test]
 fn a_tampered_manifest_fails_signature_verification() {
     let (monitor, root, orchestrator, _graph) = setup();
-    let mut m = manifest(vec![]);
+    let (_dir, keystore) = keystore();
+    let mut m = manifest(vec![], &keystore);
     m.to_version = 2; // tampered after signing
 
-    let result = orchestrator.apply_update(&monitor, &root, &m, true, 1_000, |_| CohortHealth {
-        crash_rate: 0.0,
-        latency_p99_ms: 50,
-    });
+    let result = orchestrator.apply_update(
+        &monitor,
+        &root,
+        &m,
+        true,
+        1_000,
+        |_| CohortHealth {
+            crash_rate: 0.0,
+            latency_p99_ms: 50,
+        },
+        &keystore.verifying_key(),
+    );
     assert!(matches!(result, Err(UpdateError::SignatureInvalid)));
+}
+
+#[test]
+fn a_manifest_signed_by_an_untrusted_key_fails_verification() {
+    let (monitor, root, orchestrator, _graph) = setup();
+    let (_dir, real_signer) = keystore();
+    let (_dir2, forger) = keystore();
+    let m = manifest(vec![], &forger);
+
+    let result = orchestrator.apply_update(
+        &monitor,
+        &root,
+        &m,
+        true,
+        1_000,
+        |_| CohortHealth {
+            crash_rate: 0.0,
+            latency_p99_ms: 50,
+        },
+        &real_signer.verifying_key(),
+    );
+    assert!(
+        matches!(result, Err(UpdateError::SignatureInvalid)),
+        "an update package signed by any real keypair other than the trusted device key must be \
+         rejected -- unlike the old DefaultHasher stand-in, which a forger could always recompute"
+    );
 }
 
 #[test]
 fn a_post_hoc_rollback_after_a_full_rollout_restores_data_and_the_version_pointer() {
     let (monitor, root, orchestrator, graph) = setup();
+    let (_dir, keystore) = keystore();
     let node = graph
         .put_node(
             &monitor,
@@ -244,13 +338,21 @@ fn a_post_hoc_rollback_after_a_full_rollout_restores_data_and_the_version_pointe
             serde_json::json!({"flag": "old"}),
         )
         .unwrap();
-    let m = manifest(vec![node]);
+    let m = manifest(vec![node], &keystore);
 
     orchestrator
-        .apply_update(&monitor, &root, &m, true, 1_000, |_| CohortHealth {
-            crash_rate: 0.0,
-            latency_p99_ms: 50,
-        })
+        .apply_update(
+            &monitor,
+            &root,
+            &m,
+            true,
+            1_000,
+            |_| CohortHealth {
+                crash_rate: 0.0,
+                latency_p99_ms: 50,
+            },
+            &keystore.verifying_key(),
+        )
         .unwrap();
     // The rolled-out version subsequently wrote something operators now
     // want to revert.

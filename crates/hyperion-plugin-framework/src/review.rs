@@ -1,32 +1,45 @@
+use hyperion_crypto::{Keystore, Signature, VerifyingKey};
+
 use crate::types::{
     Contribution, Operation, PluginError, PluginManifest, SemanticContract, SideEffect,
 };
 
-/// A deterministic stand-in for a real publisher-key signature — the same
-/// non-cryptographic-checksum pattern this workspace already uses in
-/// `hyperion-ai-runtime::checksum` and `hyperion-security`'s model
-/// integrity check. Exposed so a caller populating
-/// [`PluginManifest::signature`] before install has a way to compute the
-/// value that will verify.
-pub fn signature(manifest_without_signature: &PluginManifest) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    let mut mix = |value: u64| {
-        hash ^= value;
-        hash = hash.wrapping_mul(0x100000001b3);
-    };
-    mix(manifest_without_signature.plugin_id);
-    for byte in manifest_without_signature.publisher.bytes() {
-        mix(byte as u64);
-    }
-    mix(manifest_without_signature.sdk_version as u64);
+/// The exact fields a real signature is produced/verified over — the same fields the
+/// non-cryptographic-checksum stand-in this replaces already chose to cover, now signed instead
+/// of folded into a hash any forger could reproduce without a key. Real publisher-key PKI (a
+/// registry of many trusted publishers' public keys, per docs/24's own "verify against
+/// publisher's registered key" framing) does not exist anywhere in this workspace yet -- see
+/// [`hyperion_crypto`]'s own doc comment on why this crate instead verifies against one real,
+/// trusted device identity rather than inventing an undocumented multi-key trust store.
+fn canonical_bytes(manifest_without_signature: &PluginManifest) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&manifest_without_signature.plugin_id.to_le_bytes());
+    bytes.extend_from_slice(manifest_without_signature.publisher.as_bytes());
+    bytes.extend_from_slice(&manifest_without_signature.sdk_version.to_le_bytes());
     for contribution in &manifest_without_signature.contributions {
         let Contribution::Capability(cm) = contribution;
-        for byte in cm.capability_id.bytes() {
-            mix(byte as u64);
-        }
-        mix(cm.version as u64);
+        bytes.extend_from_slice(cm.capability_id.as_bytes());
+        bytes.extend_from_slice(&cm.version.to_le_bytes());
     }
-    hash
+    bytes
+}
+
+/// A real Ed25519 signature over `manifest_without_signature`'s own canonical bytes
+/// (PRODUCTION_BOOT_PROMPT.md M9) — the value a caller populates [`PluginManifest::signature`]
+/// with before [`crate::registry::PluginRegistry::install`].
+pub fn sign(manifest_without_signature: &PluginManifest, keystore: &Keystore) -> Signature {
+    keystore.sign(&canonical_bytes(manifest_without_signature))
+}
+
+fn verify_signature(manifest: &PluginManifest, verifying_key: &VerifyingKey) -> bool {
+    let mut unsigned = manifest.clone();
+    unsigned.signature = None;
+    match &manifest.signature {
+        Some(signature) => {
+            hyperion_crypto::verify(&canonical_bytes(&unsigned), signature, verifying_key)
+        }
+        None => false,
+    }
 }
 
 /// docs/24 §5's over-request check: a requested permission must be
@@ -53,10 +66,11 @@ pub(crate) fn contract_requires(contract: &SemanticContract, op: Operation) -> b
 /// [`crate::registry::PluginRegistry::install`] since they need caller-
 /// supplied context (the installing environment's available depth, and
 /// the consent decision itself) this pure function doesn't have.
-pub fn validate_manifest(manifest: &PluginManifest) -> Result<(), PluginError> {
-    let mut unsigned = manifest.clone();
-    unsigned.signature = 0;
-    if signature(&unsigned) != manifest.signature {
+pub fn validate_manifest(
+    manifest: &PluginManifest,
+    verifying_key: &VerifyingKey,
+) -> Result<(), PluginError> {
+    if !verify_signature(manifest, verifying_key) {
         return Err(PluginError::SignatureInvalid);
     }
 

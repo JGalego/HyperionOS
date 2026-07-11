@@ -1,25 +1,25 @@
-use hyperion_ai_runtime::{checksum, ModelDescriptor};
+use hyperion_ai_runtime::ModelDescriptor;
+use hyperion_crypto::VerifyingKey;
 
 use crate::types::{CanaryResult, ModelIntegrityRecord, PromotionStatus};
 
-/// docs/17 T8's mitigation: content-addressed + signature-verified model
-/// artifacts (here, `hyperion-ai-runtime`'s existing non-cryptographic
-/// checksum standing in for a real signature — see this crate's doc
-/// comment) and a canary differential test blocking promotion on score
-/// drift, both gates evaluated *before* a candidate model can replace the
-/// baseline the Risk Assessment Engine's own judgment ultimately runs on
-/// top of.
+/// docs/17 T8's mitigation: content-addressed + signature-verified model artifacts (here, a real
+/// Ed25519 signature check via `hyperion-ai-runtime`'s own `verify`, PRODUCTION_BOOT_PROMPT.md
+/// M9) and a canary differential test blocking promotion on score drift, both gates evaluated
+/// *before* a candidate model can replace the baseline the Risk Assessment Engine's own judgment
+/// ultimately runs on top of.
 pub fn canary_gate_model_promotion(
     candidate: &ModelDescriptor,
     candidate_score: f32,
     baseline_score: f32,
     max_drift: f32,
+    verifying_key: &VerifyingKey,
 ) -> ModelIntegrityRecord {
-    let checksum_verified = checksum(candidate) == candidate.checksum;
-    if !checksum_verified {
+    let signature_verified = hyperion_ai_runtime::verify(candidate, verifying_key);
+    if !signature_verified {
         return ModelIntegrityRecord {
             model_id: candidate.model_id,
-            checksum_verified,
+            signature_verified,
             canary_result: CanaryResult::IntegrityMismatch,
             promotion_status: PromotionStatus::Blocked,
         };
@@ -41,7 +41,7 @@ pub fn canary_gate_model_promotion(
 
     ModelIntegrityRecord {
         model_id: candidate.model_id,
-        checksum_verified,
+        signature_verified,
         canary_result,
         promotion_status,
     }

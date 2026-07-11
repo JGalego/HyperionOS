@@ -40,12 +40,12 @@
 //!   here is a single synchronous call, not a cancellable stream — there is
 //!   no real generation loop to interrupt yet. `runtime.cancel` exists in
 //!   the API surface but is a no-op stub, noted at its call site.
-//! - **Real model-artifact signing** (§Security Considerations) — model
-//!   registration checks a non-cryptographic checksum (the same
-//!   fnv1a64-style stand-in `hyperion-context` already uses for envelope
-//!   integrity), not a real signature; both wait on
-//!   [15 — Security Architecture](../15-security-architecture.md) (Phase 8)
-//!   for real key material.
+//! - ~~**Real model-artifact signing** (§Security Considerations)~~ — now real
+//!   (PRODUCTION_BOOT_PROMPT.md M9): [`LocalAiRuntime::register_model`] checks a real Ed25519
+//!   signature (via [`hyperion_crypto`]) over [`sign`]'s canonical bytes, not a non-cryptographic
+//!   checksum a forger could reproduce without the real signing key. `hyperion-context`'s own
+//!   envelope-integrity checksum is a separate, not-yet-touched stand-in of the same shape —
+//!   named, not silently implied fixed by this crate's own upgrade.
 
 #[cfg(feature = "candle")]
 pub mod candle_backend;
@@ -56,7 +56,7 @@ mod types;
 
 #[cfg(feature = "candle")]
 pub use candle_backend::{CandleBackend, CandleBackendError};
-pub use registry::{checksum, MockBackend};
+pub use registry::{sign, verify, MockBackend};
 pub use runtime::{InferenceBackend, LocalAiRuntime, RuntimeError};
 pub use types::{
     CapabilityContract, InferenceRequest, InferenceResult, ModelClass, ModelDescriptor, PowerMode,

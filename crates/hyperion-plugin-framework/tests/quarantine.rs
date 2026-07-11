@@ -3,16 +3,23 @@
 //! never again returned as an eligible candidate.
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use hyperion_plugin_framework::{
-    signature, CapabilityManifest, Contribution, ImplementationKind, PluginError, PluginManifest,
+    sign, CapabilityManifest, Contribution, ImplementationKind, PluginError, PluginManifest,
     PluginRegistry, QuarantineReason, SemanticContract, SideEffect, TrustDepth,
 };
 
-fn manifest() -> PluginManifest {
+fn keystore() -> (tempfile::TempDir, Keystore) {
+    let dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    (dir, keystore)
+}
+
+fn manifest(keystore: &Keystore) -> PluginManifest {
     let mut m = PluginManifest {
         plugin_id: 1,
         publisher: "acme-plugins".to_string(),
-        signature: 0,
+        signature: None,
         sdk_version: 1,
         contributions: vec![Contribution::Capability(CapabilityManifest {
             capability_id: "document.summarize".to_string(),
@@ -28,7 +35,7 @@ fn manifest() -> PluginManifest {
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
     };
-    m.signature = signature(&m);
+    m.signature = Some(sign(&m, keystore));
     m
 }
 
@@ -37,9 +44,18 @@ fn a_quarantined_plugins_capability_is_no_longer_returned_by_query() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
 
     let handle = registry
-        .install(&mut monitor, &root, manifest(), TrustDepth::D0, true, 1_000)
+        .install(
+            &mut monitor,
+            &root,
+            manifest(&keystore),
+            TrustDepth::D0,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
         .unwrap();
     assert!(registry.query("document.summarize").is_some());
 

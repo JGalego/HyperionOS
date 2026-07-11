@@ -15,11 +15,12 @@ use std::sync::Arc;
 
 use hyperion_agent_runtime::{AgentRuntime, InvokeOutcome};
 use hyperion_ai_runtime::{
-    checksum, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
+    sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
 };
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
 use hyperion_context::{Budget, ContextBundle, ExpertiseEstimate, ExpertiseLevel, Scope};
 use hyperion_coordination::CoordinationSession;
+use hyperion_crypto::Keystore;
 use hyperion_intent::{HandleOutcome, IntentEngine};
 use hyperion_knowledge_graph::{GraphError, KnowledgeGraph, NodeId};
 use hyperion_workspace::{
@@ -59,7 +60,7 @@ impl ConsoleSession {
         let graph = Arc::new(KnowledgeGraph::open(&kg_path)?);
         let context = Arc::new(hyperion_context::ContextEngine::new(graph.clone()));
         let intent_engine = IntentEngine::new(graph, context.clone());
-        let ai_runtime = Arc::new(Self::build_ai_runtime());
+        let ai_runtime = Arc::new(Self::build_ai_runtime(data_dir.as_ref()));
         let agent_runtime = Arc::new(AgentRuntime::new(ai_runtime));
         let coordination = CoordinationSession::new(agent_runtime.clone());
 
@@ -92,7 +93,12 @@ impl ConsoleSession {
     /// reason (including that network gap), this falls back to [`MockBackend`] rather than
     /// panicking the whole console -- degrading, never crashing on a missing model, exactly the
     /// posture docs/02 §4 invariant 5 already asks this system to take everywhere else.
-    fn build_ai_runtime() -> LocalAiRuntime {
+    ///
+    /// PRODUCTION_BOOT_PROMPT.md M9: the registered descriptor is really Ed25519-signed, not a
+    /// checksum stand-in -- by this session's own real device identity, a [`Keystore`] persisted
+    /// under `data_dir` (the same real, dedicated partition M6 already gives the Knowledge Graph),
+    /// so it's stable across reboots rather than a fresh, unverifiable identity every restart.
+    fn build_ai_runtime(data_dir: &Path) -> LocalAiRuntime {
         #[cfg(feature = "candle")]
         let backend: Box<dyn hyperion_ai_runtime::InferenceBackend> =
             match hyperion_ai_runtime::CandleBackend::load() {
@@ -109,6 +115,8 @@ impl ConsoleSession {
         let backend: Box<dyn hyperion_ai_runtime::InferenceBackend> = Box::new(MockBackend);
 
         let runtime = LocalAiRuntime::new(backend, 8_000);
+        let keystore = Keystore::open_or_create(&data_dir.join("device.key"))
+            .expect("open or create this session's real device signing key");
         let mut descriptor = ModelDescriptor {
             model_id: 1,
             class: ModelClass::Slm,
@@ -120,12 +128,12 @@ impl ConsoleSession {
                 footprint_mb: 100,
                 expected_tokens_per_sec: 10.0,
             }],
-            checksum: 0,
+            signature: None,
         };
-        descriptor.checksum = checksum(&descriptor);
+        descriptor.signature = Some(sign(&descriptor, &keystore));
         runtime
-            .register_model(descriptor)
-            .expect("a freshly computed checksum always verifies");
+            .register_model(descriptor, &keystore.verifying_key())
+            .expect("a descriptor this session just really signed always verifies");
         runtime
     }
 

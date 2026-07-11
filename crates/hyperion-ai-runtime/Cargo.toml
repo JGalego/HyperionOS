@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 hyperion-capability = { workspace = true }
+hyperion-crypto = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { version = "1", optional = true }
 candle-core = { version = "0.11", optional = true }
@@ -17,6 +18,7 @@ tokenizers = { version = "0.23", optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+tempfile = { workspace = true }
 
 [features]
 # Real, feature-gated on-device inference (PRODUCTION_BOOT_PROMPT.md M8) -- see

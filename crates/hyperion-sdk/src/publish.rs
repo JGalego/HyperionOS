@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
+use hyperion_crypto::Keystore;
 use hyperion_plugin_framework::{
     CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind, PluginHandle,
     PluginManifest, PluginRegistry, SemanticContract, TrustDepth,
@@ -42,6 +43,7 @@ fn to_capability_manifest(
 /// docs/24's `PluginManifest` a published (Contract, Implementation)
 /// pair compiles down to — the seam docs/25 §3 names but doesn't itself
 /// define ("25 explicitly states it does not own the registry (24)").
+#[allow(clippy::too_many_arguments)]
 pub fn to_plugin_manifest(
     contract: &Contract,
     implementation: &Implementation,
@@ -49,6 +51,7 @@ pub fn to_plugin_manifest(
     plugin_id: u64,
     publisher: &str,
     sdk_version: u32,
+    keystore: &Keystore,
 ) -> PluginManifest {
     let requested_permissions = contract
         .permissions_requested
@@ -63,7 +66,7 @@ pub fn to_plugin_manifest(
     let mut manifest = PluginManifest {
         plugin_id,
         publisher: publisher.to_string(),
-        signature: 0,
+        signature: None,
         sdk_version,
         contributions: vec![Contribution::Capability(to_capability_manifest(
             contract,
@@ -73,7 +76,7 @@ pub fn to_plugin_manifest(
         requested_permissions,
         min_trust_depth: contract.trust_level.min_depth(),
     };
-    manifest.signature = hyperion_plugin_framework::signature(&manifest);
+    manifest.signature = Some(hyperion_plugin_framework::sign(&manifest, keystore));
     manifest
 }
 
@@ -138,6 +141,7 @@ pub fn publish(
     human_approved: bool,
     available_depth: TrustDepth,
     now: u64,
+    keystore: &Keystore,
 ) -> Result<PluginHandle, SdkError> {
     let approved = match submission.review_status {
         ReviewStatus::Rejected => return Err(SdkError::SubmissionRejected),
@@ -155,8 +159,17 @@ pub fn publish(
         plugin_id,
         publisher,
         sdk_version,
+        keystore,
     );
     registry
-        .install(monitor, admin_token, manifest, available_depth, true, now)
+        .install(
+            monitor,
+            admin_token,
+            manifest,
+            available_depth,
+            true,
+            now,
+            &keystore.verifying_key(),
+        )
         .map_err(SdkError::from)
 }
