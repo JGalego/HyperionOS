@@ -93,7 +93,7 @@ below assume UEFI.
 |---|---|
 | M0 — Toolchain, decision record, QEMU harness | done |
 | M1 — Bootable "Hello Hyperion" image (the literal ask) | done (QEMU); real-hardware USB boot needs the user |
-| M2 — Real capability/Trust-Boundary enforcement | pending |
+| M2 — Real capability/Trust-Boundary enforcement | done |
 | M3 — Real IPC transport | pending |
 | M4 — Real scheduler enforcement (cgroups v2) | pending |
 | M5 — Real init & supervision tree | pending |
@@ -116,6 +116,47 @@ real, not assumed: `qemu-system-x86_64 -bios OVMF... -drive file=disk.img,format
 runtime, not just compiled in. Caveat this dev sandbox has, which real hardware/CI won't: no
 `/dev/kvm` access here, so this was QEMU-verified under TCG software emulation, not
 KVM-accelerated — an iteration-speed limitation, not a correctness gap in what's being tested.
+
+**M2 completion note (2026-07-11):** new crate `crates/hyperion-trust-boundary` rehosts
+`hyperion-capability`'s token/revocation algorithm (reused verbatim, unmodified) with real Linux
+enforcement: `spawn()` forks, applies a real Landlock ruleset (scoped to exactly the
+`RightsMask`-derived rights on exactly the granted path, plus a separate always-present
+read+execute grant on the target program's own path -- a real, non-obvious bug caught mid-build:
+handling `ReadFile` as a category denies it *everywhere* a rule doesn't cover, including the
+kernel's own read of the boundary's ELF during `execve()`) and a real default-deny seccomp-bpf
+filter, then execs the target; `SpawnedBoundary::revoke()` sends real `SIGKILL` and reaps the
+process, then revokes the token in `CapabilityMonitor` so the algorithm and the OS agree.
+
+Verified for real by two integration tests exercising two real, separate Linux processes, not
+mocked: `sandbox_enforces_scoped_filesystem_and_denies_unlisted_syscalls` mints a READ|WRITE
+token, spawns a real process under it, and confirms (via a results file the sandboxed process
+itself writes) that it can read/write inside its granted directory, gets a real permission error
+reading outside it, and gets a real syscall denial calling `socket()` (not in the seccomp
+allowlist) -- exactly "a syscall it can no longer make, a file it can no longer open" from M2's
+exit criteria. `revoking_a_token_kills_the_real_process` spawns a long-lived process, confirms
+it's alive, revokes its token, and confirms a raw `kill(pid, 0)` now returns `ESRCH`: the process
+doesn't just look inaccessible, it no longer exists.
+
+Getting the real test green surfaced three genuine, non-obvious bugs along the way (not
+foreseeable from reading the Landlock/seccomp docs alone; all found via strace, not guessed, and
+now documented at their exact call site so the next person doesn't rediscover them the hard way):
+`AccessFs::from_read()` bundles in `Execute` (fixed by building the rights mapping field-by-field
+instead of via that helper); handling `ReadFile` denies it everywhere except explicit grants,
+including the boundary's own executable path (fixed by always granting the program its own
+path); and a denied `poll()` (used by Rust's runtime at startup) cascades into a denied
+self-`SIGABRT` via `tkill`, crashing the sandboxed process with an unrelated-looking `SIGSEGV`
+unless both are allowlisted.
+
+Two deliberate adaptations from the roadmap's exact wording, both explained in the crate's own
+docs, not silent: (1) "privileged root-owned Capability Monitor daemon" is implemented as an
+*unprivileged* process using its own fresh user namespace instead -- namespaces, seccomp, and
+Landlock are all unprivileged-capable mechanisms, this sandbox has no root to test the
+root-owned variant with anyway, and a smaller trust base is arguably the better design regardless.
+(2) `TrustDepth::Container` unshares mount/net/uts/ipc namespaces but deliberately not PID:
+`unshare(CLONE_NEWPID)` only takes effect for children forked *after* the call, so making the
+spawned program actually land inside a fresh PID namespace needs a second fork with something
+acting as that namespace's PID 1 -- exactly the supervisor M5 builds for real, so a one-off reaper
+here would duplicate work ahead of it existing.
 
 **M1 completion note (2026-07-11):** `crates/hyperion-init` (a real Rust binary, cross-compiled
 static `x86_64-unknown-linux-musl`) now boots as PID 1 via `init=/hyperion-init` on the kernel
