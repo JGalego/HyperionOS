@@ -15,11 +15,11 @@ use hyperion_memory::MemoryEngine;
 use hyperion_model_router::ModelRouter;
 use hyperion_plugin_framework::PluginRegistry;
 
-fn model_router() -> Arc<ModelRouter> {
-    Arc::new(ModelRouter::new(Arc::new(LocalAiRuntime::new(
-        Box::new(MockBackend),
-        4_096,
-    ))))
+/// Returns the same `Arc<LocalAiRuntime>` `ModelRouter` was built with -- see
+/// `ApiGateway::new`'s own doc comment on why a second, disconnected instance would be wrong.
+fn model_router_and_ai_runtime() -> (Arc<ModelRouter>, Arc<LocalAiRuntime>) {
+    let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 4_096));
+    (Arc::new(ModelRouter::new(ai_runtime.clone())), ai_runtime)
 }
 
 fn setup() -> (
@@ -36,14 +36,16 @@ fn setup() -> (
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
         intent,
         memory,
         graph,
         registry,
         explainability,
-        model_router(),
+        router,
         context,
+        ai_runtime,
     );
     (monitor, root, gateway)
 }
@@ -90,14 +92,16 @@ fn revoking_the_token_blocks_further_access_re_checked_live() {
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
         intent,
         memory,
         graph,
         registry,
         explainability,
-        model_router(),
+        router,
         context,
+        ai_runtime,
     );
 
     gateway

@@ -25,7 +25,9 @@ fn session_with_root() -> (
     );
     let context = Arc::new(hyperion_context::ContextEngine::new(graph.clone()));
     let intent_engine = hyperion_intent::IntentEngine::new(graph, context);
-    let coordination = CoordinationSession::new(Arc::new(AgentRuntime::new()));
+    let coordination = CoordinationSession::new(Arc::new(AgentRuntime::new(Arc::new(
+        hyperion_ai_runtime::LocalAiRuntime::new(Box::new(hyperion_ai_runtime::MockBackend), 8_000),
+    ))));
 
     let root = match intent_engine
         .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")

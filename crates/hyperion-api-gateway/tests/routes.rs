@@ -23,11 +23,14 @@ use hyperion_plugin_framework::{
     PluginRegistry, SemanticContract, SideEffect, TrustDepth,
 };
 
-fn model_router() -> Arc<ModelRouter> {
-    Arc::new(ModelRouter::new(Arc::new(LocalAiRuntime::new(
-        Box::new(MockBackend),
-        4_096,
-    ))))
+/// Returns the same `Arc<LocalAiRuntime>` `ModelRouter` was built with, not a second,
+/// disconnected instance -- `ApiGateway::new`'s own doc comment on why `context` works the same
+/// way applies identically here: a caller that built its own separate `LocalAiRuntime` for
+/// `ApiGateway` would silently diverge from whatever `ModelRouter`'s own `estimate()` calls
+/// consult.
+fn model_router_and_ai_runtime() -> (Arc<ModelRouter>, Arc<LocalAiRuntime>) {
+    let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 4_096));
+    (Arc::new(ModelRouter::new(ai_runtime.clone())), ai_runtime)
 }
 
 fn setup() -> (
@@ -44,14 +47,16 @@ fn setup() -> (
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
         intent,
         memory,
         graph,
         registry,
         explainability,
-        model_router(),
+        router,
         context,
+        ai_runtime,
     );
     (monitor, root, gateway)
 }
@@ -195,14 +200,16 @@ fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
         intent,
         memory,
         graph,
         registry.clone(),
         explainability.clone(),
-        model_router(),
+        router,
         context,
+        ai_runtime,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 
@@ -265,14 +272,16 @@ fn invoke_capability_appends_a_real_model_routing_audit_entry() {
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
         intent,
         memory,
         graph,
         registry.clone(),
         explainability,
-        model_router(),
+        router,
         context,
+        ai_runtime,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 
@@ -343,7 +352,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
-    let router = model_router();
+    let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
         intent,
         memory,
@@ -352,6 +361,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
         explainability,
         router.clone(),
         context,
+        ai_runtime,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 
@@ -457,14 +467,16 @@ fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
         intent,
         memory,
         graph,
         registry.clone(),
         explainability,
-        model_router(),
+        router,
         context,
+        ai_runtime,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 
@@ -565,14 +577,16 @@ fn a_risky_action_is_rejected_without_confirmation() {
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
         intent,
         memory,
         graph,
         registry.clone(),
         explainability,
-        model_router(),
+        router,
         context,
+        ai_runtime,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 
@@ -633,14 +647,16 @@ fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
         intent,
         memory,
         graph,
         registry.clone(),
         explainability.clone(),
-        model_router(),
+        router,
         context,
+        ai_runtime,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 
@@ -706,14 +722,16 @@ fn the_routing_decision_produces_a_real_confidence_score_and_a_real_alternative(
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
     let registry = Arc::new(PluginRegistry::new());
     let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
     let gateway = ApiGateway::new(
         intent,
         memory,
         graph,
         registry.clone(),
         explainability.clone(),
-        model_router(),
+        router,
         context,
+        ai_runtime,
     );
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
 

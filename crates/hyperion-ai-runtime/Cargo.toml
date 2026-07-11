@@ -8,6 +8,26 @@ repository.workspace = true
 [dependencies]
 hyperion-capability = { workspace = true }
 thiserror = { workspace = true }
+anyhow = { version = "1", optional = true }
+candle-core = { version = "0.11", optional = true }
+candle-nn = { version = "0.11", optional = true }
+candle-transformers = { version = "0.11", optional = true }
+hf-hub = { version = "1.0", optional = true, features = ["blocking"] }
+tokenizers = { version = "0.23", optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+
+[features]
+# Real, feature-gated on-device inference (PRODUCTION_BOOT_PROMPT.md M8) -- see
+# src/candle_backend.rs's own doc comment for why this stays off the default build: Candle's
+# real dependency chain is heavy, and MockBackend remains the zero-network, zero-extra-dependency
+# default every existing test already relies on.
+candle = [
+    "dep:anyhow",
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:hf-hub",
+    "dep:tokenizers",
+]

@@ -57,11 +57,17 @@ fn an_unmatched_utterance_still_produces_a_real_agent_invocation_as_text() {
         !lines.is_empty(),
         "an utterance with no matching HTN template must still render real text, not nothing"
     );
-    // This is the undecomposed-goal path: a real web.search Agent invocation against the raw
-    // utterance, whose real stub result embeds the query verbatim (hyperion-agent-runtime's own
-    // stub dispatch: `format!("stub finding for query '{query}'")`) -- proving this rendered
-    // text really came from a real Agent invocation carrying this specific utterance, not a
-    // canned string unrelated to what was actually typed.
+    // This is the undecomposed-goal path: a real `assistant.respond` Agent invocation (M8)
+    // against the raw utterance, dispatched through this session's own real `LocalAiRuntime`
+    // (`MockBackend` by default -- see `ConsoleSession::build_ai_runtime`), whose real generated
+    // result embeds the prompt verbatim (`MockBackend::generate`: `format!("[mock model {id}]
+    // echo: {prompt}")`) -- proving this rendered text really came from a real Agent invocation
+    // carrying this specific utterance through to a real inference call, not a canned string
+    // unrelated to what was actually typed. A real `CandleBackend` would not echo the prompt
+    // (its own test asserts the opposite -- real generation produces genuinely new text); this
+    // assertion is specifically about `MockBackend`'s deterministic echo, the same
+    // exact-match-appropriate testing convention every other mock-backed test in this workspace
+    // already uses.
     assert!(
         joined.contains("what is the weather like today"),
         "expected the real Agent invocation's own result to echo the utterance it was given, \

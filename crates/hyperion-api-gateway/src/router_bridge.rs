@@ -44,6 +44,15 @@ pub(crate) fn to_router_descriptor(
         impl_id: ImplId(descriptor.plugin_id),
         capability_id: capability_id.to_string(),
         kind: to_router_kind(descriptor.implementation_kind),
+        // `hyperion-plugin-framework::ImplementationDescriptor` has no `ModelClass`-equivalent
+        // field at all (just `plugin_id`/`implementation_kind`/`quality_score`/`version`), so
+        // even a plugin manifest declaring `ImplementationKind::LocalSmallModel` bridges here
+        // with no real model class to run — M8's real `ai_runtime.infer()` wiring in
+        // `ApiGateway::dispatch_one` only ever fires for a candidate with `Some(class)`, so a
+        // plugin-bridged local-model candidate still falls back to the stub dispatch today.
+        // Giving the Plugin Framework's own manifest a real `ModelClass` field is a separate,
+        // larger change to that crate's manifest/signature shape, not attempted here — the same
+        // scoping this function's own `privacy_tier` gap below already documents.
         model_class: None,
         // docs/16's real per-implementation privacy tier isn't carried by
         // `hyperion-plugin-framework`'s manifest yet — every bridged

@@ -15,8 +15,15 @@ pub fn required_capabilities_for(predicate: &str) -> Vec<String> {
 }
 
 /// The small, first-party specialization roster this phase needs — docs/11
-/// §4's built-in table, narrowed to the two specializations whose baseline
-/// Capabilities actually match [`required_capabilities_for`]'s output.
+/// §4's built-in table, narrowed to the specializations whose baseline
+/// Capabilities actually match [`required_capabilities_for`]'s output, plus
+/// `"assistant"` (PRODUCTION_BOOT_PROMPT.md M8): the one specialization
+/// whose baseline Capability (`assistant.respond`,
+/// `hyperion-agent-runtime`'s own real-inference dispatch) is never a
+/// target of [`required_capabilities_for`] — no HTN leaf predicate maps to
+/// it — because it exists for `hyperion-console`'s *undecomposed*-goal
+/// fallback (no template, no leaves, nothing for that function to be
+/// asked about), not for a template's own leaves.
 pub fn default_manifests() -> Vec<AgentManifest> {
     vec![
         AgentManifest {
@@ -28,6 +35,12 @@ pub fn default_manifests() -> Vec<AgentManifest> {
         AgentManifest {
             specialization: "writer".to_string(),
             baseline_capabilities: vec!["document.draft".to_string()],
+            requestable_capabilities: Vec::new(),
+            trust_tier: TrustTier::System,
+        },
+        AgentManifest {
+            specialization: "assistant".to_string(),
+            baseline_capabilities: vec!["assistant.respond".to_string()],
             requestable_capabilities: Vec::new(),
             trust_tier: TrustTier::System,
         },

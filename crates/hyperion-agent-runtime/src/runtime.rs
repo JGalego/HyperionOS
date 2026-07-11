@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_scheduler::{
     AgentId, IntentId, ResourceDimension, ResourceLedger, ResourceVector, SchedClass, Scheduler,
@@ -15,6 +16,12 @@ use crate::types::{
     AgentCheckpoint, AgentInstance, AgentManifest, AuditEntry, CapabilityGrant, InvokeOutcome,
     LifecycleState, QuotaState,
 };
+
+/// The one Capability this crate dispatches to a real backend instead of [`stubs::dispatch`] --
+/// see [`AgentRuntime::dispatch_assistant_respond`]'s own doc comment for why this is a
+/// genuinely new Capability rather than a third stub, and PRODUCTION_BOOT_PROMPT.md's M8 note
+/// for why the fallback path needed a real one at all.
+const ASSISTANT_RESPOND_CAPABILITY: &str = "assistant.respond";
 
 fn now() -> u64 {
     SystemTime::now()
@@ -49,16 +56,18 @@ pub struct AgentRuntime {
     /// here instead of `QuotaState`'s own private counter.
     scheduler: Mutex<Scheduler>,
     next_task_id: AtomicU64,
-}
-
-impl Default for AgentRuntime {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// Real backend for [`ASSISTANT_RESPOND_CAPABILITY`] — see
+    /// [`Self::dispatch_assistant_respond`]. Caller-supplied (not built
+    /// internally) so the caller controls which [`hyperion_ai_runtime::InferenceBackend`]
+    /// and which registered [`hyperion_ai_runtime::ModelDescriptor`]s back it: a real
+    /// `CandleBackend` on a booted image, `MockBackend` in every host-side test, the same
+    /// "swap the backend, not the call site" principle `hyperion-ai-runtime` and
+    /// `hyperion-api-gateway` already established for M8.
+    ai_runtime: Arc<LocalAiRuntime>,
 }
 
 impl AgentRuntime {
-    pub fn new() -> Self {
+    pub fn new(ai_runtime: Arc<LocalAiRuntime>) -> Self {
         let mut scheduler = Scheduler::new();
         // One nominal dimension stands in for "a Capability invocation's
         // resource footprint" — `DEFAULT_QUOTA` reused as the ledger's
@@ -76,6 +85,7 @@ impl AgentRuntime {
             next_id: AtomicU64::new(1),
             scheduler: Mutex::new(scheduler),
             next_task_id: AtomicU64::new(1),
+            ai_runtime,
         }
     }
 
@@ -232,7 +242,11 @@ impl AgentRuntime {
         instance.state = LifecycleState::Executing;
         instance.quota.calls_used_this_window += 1;
 
-        let dispatch_result = stubs::dispatch(capability_ref, &args);
+        let dispatch_result = if capability_ref == ASSISTANT_RESPOND_CAPABILITY {
+            self.dispatch_assistant_respond(monitor, token, &args)
+        } else {
+            stubs::dispatch(capability_ref, &args)
+        };
         let _ = self.scheduler.lock().unwrap().complete(ticket);
 
         match dispatch_result {
@@ -255,6 +269,50 @@ impl AgentRuntime {
                 Ok(InvokeOutcome::Failed(reason))
             }
         }
+    }
+
+    /// The one Capability [`Self::invoke`] dispatches to a real backend rather than
+    /// [`stubs::dispatch`]'s hand-written stand-ins -- PRODUCTION_BOOT_PROMPT.md M8's exit
+    /// criterion made real on the path the actually-booted console exercises, not only in
+    /// `hyperion-api-gateway`/`hyperion-model-router` (which the booted console's own real
+    /// call path -- `hyperion-console` -> [`Self::invoke`] -- never reaches; see this crate's
+    /// doc comment). Deliberately its own named Capability rather than a new case inside
+    /// `web.search`/`document.draft`: those two remain what docs/41 Phase 4 always meant them
+    /// to be -- stand-ins for a future *real network fetch* / *real document generation*
+    /// (M10's and a later Capability's job respectively) -- while this one already *is* the
+    /// real thing it names, gated only by whichever `InferenceBackend` the caller's
+    /// `LocalAiRuntime` was constructed with.
+    ///
+    /// Every other real mechanism in [`Self::invoke`] (Broker grant, quota, circuit breaker)
+    /// applies identically before this is ever reached -- only the dispatch step itself
+    /// branches, exactly as `hyperion-api-gateway::ApiGateway::dispatch_one` does for the same
+    /// reason.
+    fn dispatch_assistant_respond(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let prompt = args
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let contract = CapabilityContract {
+            // `hyperion_ai_runtime::LocalAiRuntime::estimate`'s own feasibility check assumes a
+            // ~100-token response (see its `meets_latency_budget`); a real tiny CPU-only model
+            // (`hyperion-console`'s own registered `expected_tokens_per_sec: 10.0` -- see
+            // `ConsoleSession::build_ai_runtime`) needs this budget comfortably above the
+            // resulting ~10s estimate, or every real call would be rejected as infeasible before
+            // ever reaching the backend.
+            latency_budget_ms: 15_000,
+            always_on: false,
+        };
+        let request = InferenceRequest { prompt };
+        self.ai_runtime
+            .infer(monitor, token, ModelClass::Slm, &contract, &request)
+            .map(|result| serde_json::json!({ "text": result.text }))
+            .map_err(|e| e.to_string())
     }
 
     /// docs/11 §6.1: the consent round trip's resolution — see this

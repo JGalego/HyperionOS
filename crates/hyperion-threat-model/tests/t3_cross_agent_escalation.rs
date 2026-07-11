@@ -1,7 +1,10 @@
 //! docs/17 T3: cross-Agent privilege escalation — a receiving Agent must
 //! never launder authority by trusting a sender's claimed risk level.
 
+use std::sync::Arc;
+
 use hyperion_agent_runtime::{AgentManifest, AgentRuntime, TrustTier};
+use hyperion_ai_runtime::{LocalAiRuntime, MockBackend};
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_security::{
     assess, cross_agent_delegation_verify, InterventionLevel, PendingAction, SensitivityHint,
@@ -11,7 +14,8 @@ use hyperion_security::{
 fn t3_a_delegating_agent_cannot_launder_a_high_risk_action_through_a_low_risk_claim() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
-    let runtime = AgentRuntime::new();
+    let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+    let runtime = AgentRuntime::new(ai_runtime);
     let manifest = AgentManifest {
         specialization: "delegator".to_string(),
         baseline_capabilities: vec!["coordination.delegate".to_string()],

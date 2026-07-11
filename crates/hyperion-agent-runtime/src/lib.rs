@@ -31,6 +31,18 @@
 //! (`web.search`, `document.draft`) rather than a real Plugin Framework
 //! registry — see [`stubs`] and this crate's deferred-scope list below.
 //!
+//! PRODUCTION_BOOT_PROMPT.md M8 adds exactly one more, real, Capability alongside those two
+//! stubs: `assistant.respond` dispatches through a real, caller-supplied
+//! [`hyperion_ai_runtime::LocalAiRuntime`] (see [`AgentRuntime::new`]) rather than a stub —
+//! real inference behind the exact same Broker/quota/circuit-breaker gate every other
+//! Capability call already goes through. This is the one Capability `hyperion-console`'s real
+//! undecomposed-goal fallback now calls, closing M8's exit criterion on the path the actually-
+//! booted console exercises (`hyperion-console` calls this crate directly; it does not go
+//! through `hyperion-api-gateway`/`hyperion-model-router` at all today, which is a separate,
+//! already-real wiring path M8 also closed but that the currently-booted console never
+//! reaches). See [`runtime::AgentRuntime::dispatch_assistant_respond`]'s own doc comment for
+//! why this is a new Capability, not a third case inside an existing stub.
+//!
 //! Deliberately deferred, and why:
 //!
 //! - **Real sandboxed processes.** There is no `sandbox_class`/container/
@@ -40,8 +52,10 @@
 //!   workspace already uses for a Trust Boundary.
 //! - **Real Capability dispatch / Plugin Framework** ([24 — Plugin
 //!   Framework](../24-plugin-framework.md), Phase 9) — `invoke()` dispatches
-//!   to [`stubs::dispatch`]'s two hand-written stub capabilities, not a real
-//!   registry. A capability call can be made to *fail* deterministically
+//!   `web.search`/`document.draft` to [`stubs::dispatch`]'s two hand-written
+//!   stand-ins, not a real registry (`assistant.respond` is the one exception — see the M8
+//!   note above — and even it is a single fixed Capability this crate special-cases, not a
+//!   registry entry). A capability call can be made to *fail* deterministically
 //!   (pass `{"force_fail": true}` in `args`) specifically so the circuit
 //!   breaker and `hyperion-coordination`'s failure-containment logic (next
 //!   in this phase) have something real to react to without needing a real
@@ -56,9 +70,10 @@
 //!   still tracked for observability; `consecutive_failures`/the circuit
 //!   breaker are unrelated and untouched by this integration.
 //! - **Watchdog heartbeats, real serialized reasoning state.** Checkpoints
-//!   serialize the manifest and bound Intent reference only — there is no
-//!   real reasoning trace to serialize yet (no real model is driving any
-//!   Agent's "next step" — see `hyperion-ai-runtime`'s own mock backend).
+//!   serialize the manifest and bound Intent reference only — there is still no real
+//!   multi-step reasoning *trace* to serialize: `assistant.respond` (M8, above) is one real
+//!   inference call in, one real generated string out, not an Agent that reasons over several
+//!   of its own turns and would need that turn history checkpointed.
 //! - **User consent UI** ([13 — Dynamic UI Runtime](../13-dynamic-ui-runtime.md),
 //!   Phase 5) — [`AgentRuntime::resolve_consent`] is a direct, caller-driven
 //!   API standing in for a real consent prompt round-trip.

@@ -1,7 +1,10 @@
 //! Mirrors every other crate in this workspace: every call is capability-
 //! gated, re-checked live against the monitor, never cached.
 
+use std::sync::Arc;
+
 use hyperion_agent_runtime::{AgentError, AgentManifest, AgentRuntime, TrustTier};
+use hyperion_ai_runtime::{LocalAiRuntime, MockBackend};
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use serde_json::json;
 
@@ -14,6 +17,10 @@ fn manifest() -> AgentManifest {
     }
 }
 
+fn new_runtime() -> AgentRuntime {
+    AgentRuntime::new(Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000)))
+}
+
 #[test]
 fn spawn_requires_write_rights() {
     let mut monitor = CapabilityMonitor::new();
@@ -22,7 +29,7 @@ fn spawn_requires_write_rights() {
         .cap_derive(&root, RightsMask::READ, None, TrustBoundaryId(2))
         .unwrap();
 
-    let runtime = AgentRuntime::new();
+    let runtime = new_runtime();
     let result = runtime.spawn(&monitor, &read_only, manifest(), None);
     assert!(matches!(result, Err(AgentError::Unauthorized)));
 }
@@ -35,7 +42,7 @@ fn invoke_requires_exec_rights() {
         .cap_derive(&root, RightsMask::WRITE, None, TrustBoundaryId(2))
         .unwrap();
 
-    let runtime = AgentRuntime::new();
+    let runtime = new_runtime();
     let id = runtime.spawn(&monitor, &root, manifest(), None).unwrap();
     let result = runtime.invoke(&monitor, &write_only, id, "web.search", json!({}));
     assert!(matches!(result, Err(AgentError::Unauthorized)));
@@ -54,7 +61,7 @@ fn revoking_a_token_blocks_further_access_re_checked_live() {
         )
         .unwrap();
 
-    let runtime = AgentRuntime::new();
+    let runtime = new_runtime();
     let id = runtime
         .spawn(&monitor, &delegate, manifest(), None)
         .unwrap();

@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hyperion_agent_runtime::{AgentRuntime, InvokeOutcome};
+use hyperion_ai_runtime::{
+    checksum, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
+};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
 use hyperion_context::{Budget, ContextBundle, ExpertiseEstimate, ExpertiseLevel, Scope};
 use hyperion_coordination::CoordinationSession;
@@ -56,7 +59,8 @@ impl ConsoleSession {
         let graph = Arc::new(KnowledgeGraph::open(&kg_path)?);
         let context = Arc::new(hyperion_context::ContextEngine::new(graph.clone()));
         let intent_engine = IntentEngine::new(graph, context.clone());
-        let agent_runtime = Arc::new(AgentRuntime::new());
+        let ai_runtime = Arc::new(Self::build_ai_runtime());
+        let agent_runtime = Arc::new(AgentRuntime::new(ai_runtime));
         let coordination = CoordinationSession::new(agent_runtime.clone());
 
         Ok(ConsoleSession {
@@ -69,6 +73,60 @@ impl ConsoleSession {
             workspace: WorkspaceCompiler::new(),
             next_turn_id: 1,
         })
+    }
+
+    /// Real model selection for this session's own `assistant.respond` calls (see
+    /// [`Self::run_undecomposed_goal`]) -- a real, small, CPU-only [`hyperion_ai_runtime::CandleBackend`]
+    /// when this binary is built with `--features candle`, [`MockBackend`] otherwise, the exact
+    /// "swap the backend, not the call site" principle `hyperion-ai-runtime`'s own doc comment
+    /// already names. Off by default for the same reason that feature is off by default in
+    /// `hyperion-ai-runtime` itself: a real release image opts in explicitly; every host-side
+    /// dev/test build of this console stays fast and network-free.
+    ///
+    /// A real gap this does *not* solve, named rather than silently assumed: a `candle` build's
+    /// first `CandleBackend::load()` call really does hit the network (Hugging Face Hub) unless
+    /// `hf-hub`'s on-disk cache is already populated -- fine for a dev loop, not for a real boot
+    /// with no network yet up. A real release image needs the model file pre-baked into its
+    /// rootfs at build time (a Buildroot post-build step populating that same cache directory),
+    /// which is separate work from this milestone. If a `candle` build's real load fails for any
+    /// reason (including that network gap), this falls back to [`MockBackend`] rather than
+    /// panicking the whole console -- degrading, never crashing on a missing model, exactly the
+    /// posture docs/02 §4 invariant 5 already asks this system to take everywhere else.
+    fn build_ai_runtime() -> LocalAiRuntime {
+        #[cfg(feature = "candle")]
+        let backend: Box<dyn hyperion_ai_runtime::InferenceBackend> =
+            match hyperion_ai_runtime::CandleBackend::load() {
+                Ok(backend) => Box::new(backend),
+                Err(e) => {
+                    eprintln!(
+                        "warning: real Candle model load failed ({e}); falling back to the \
+                         mock inference backend for this session"
+                    );
+                    Box::new(MockBackend)
+                }
+            };
+        #[cfg(not(feature = "candle"))]
+        let backend: Box<dyn hyperion_ai_runtime::InferenceBackend> = Box::new(MockBackend);
+
+        let runtime = LocalAiRuntime::new(backend, 8_000);
+        let mut descriptor = ModelDescriptor {
+            model_id: 1,
+            class: ModelClass::Slm,
+            variants: vec![QuantizedVariant {
+                precision: Precision::Fp16,
+                // Generously above stories15M.bin's real ~61 MB on disk so real-model
+                // residency/fit logic never has a reason to reject it (matches
+                // hyperion-ai-runtime's own candle_inference.rs test's same choice).
+                footprint_mb: 100,
+                expected_tokens_per_sec: 10.0,
+            }],
+            checksum: 0,
+        };
+        descriptor.checksum = checksum(&descriptor);
+        runtime
+            .register_model(descriptor)
+            .expect("a freshly computed checksum always verifies");
+        runtime
     }
 
     /// Real utterance in, real rendered text lines out -- M7 stage 1's exit criterion, this
@@ -126,9 +184,20 @@ impl ConsoleSession {
     /// none would have nothing to ever allocate. Rather than silently do nothing for the common
     /// case, this still drives one real Agent invocation directly against the root goal itself,
     /// via the same real `AgentRuntime::spawn`/`invoke` mechanism `hyperion-coordination` uses
-    /// internally -- a real Agent invocation regardless of which path a given utterance takes,
-    /// using the "research" specialization's real `web.search` capability as a reasonable
-    /// default action for a goal with no more specific plan.
+    /// internally -- a real Agent invocation regardless of which path a given utterance takes.
+    ///
+    /// PRODUCTION_BOOT_PROMPT.md M8: this default action is the "assistant" specialization's
+    /// real `assistant.respond` capability -- a real generated response from this session's own
+    /// [`Self::build_ai_runtime`], not `web.search`'s canned stub string. This is *not*
+    /// `hyperion-intent`'s own deferred "generative decomposition" (docs/05 §2's fallback that
+    /// would produce a real multi-leaf plan from a model) -- the root Intent here still has no
+    /// children, same as before; only the one leaf action taken *about* it is now really
+    /// model-driven instead of a stub. Producing a genuine structured decomposition from a goal
+    /// shape with no template remains exactly as deferred as `hyperion-intent`'s own doc comment
+    /// already says, and deliberately so: the tiny (real, but non-instruction-tuned) model this
+    /// session runs by default cannot reliably follow a "decompose this into steps" instruction,
+    /// and fabricating leaf tasks from output it can't actually produce reliably would be the
+    /// "pretend" that crate's own doc comment already rules out.
     fn run_undecomposed_goal(
         &mut self,
         root: NodeId,
@@ -136,8 +205,8 @@ impl ConsoleSession {
     ) -> (String, Vec<TaskOutcome>) {
         let manifest = hyperion_coordination::default_manifests()
             .into_iter()
-            .find(|m| m.specialization == "research")
-            .expect("default_manifests always includes the research specialization");
+            .find(|m| m.specialization == "assistant")
+            .expect("default_manifests always includes the assistant specialization");
 
         let detail =
             match self
@@ -145,15 +214,18 @@ impl ConsoleSession {
                 .spawn(&self.monitor, &self.token, manifest, Some(root.0))
             {
                 Ok(instance_id) => {
-                    let args = serde_json::json!({ "query": utterance });
+                    let args = serde_json::json!({ "prompt": utterance });
                     match self.agent_runtime.invoke(
                         &self.monitor,
                         &self.token,
                         instance_id,
-                        "web.search",
+                        "assistant.respond",
                         args,
                     ) {
-                        Ok(InvokeOutcome::Result(value)) => format!("done -- {value}"),
+                        Ok(InvokeOutcome::Result(value)) => {
+                            let text = value.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                            format!("done -- {text}")
+                        }
                         Ok(InvokeOutcome::Denied) => "denied".to_string(),
                         Ok(InvokeOutcome::PendingConsent) => "needs your consent first".to_string(),
                         Ok(InvokeOutcome::QuotaExceeded) => "over quota right now".to_string(),

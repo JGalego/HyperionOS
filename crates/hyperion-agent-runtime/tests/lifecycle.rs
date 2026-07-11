@@ -2,9 +2,12 @@
 //! Broker's three-way grant resolution, the circuit breaker, and
 //! checkpoint/resume revoking open grants.
 
+use std::sync::Arc;
+
 use hyperion_agent_runtime::{
     AgentManifest, AgentRuntime, InvokeOutcome, LifecycleState, TrustTier,
 };
+use hyperion_ai_runtime::{LocalAiRuntime, MockBackend};
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use serde_json::json;
 
@@ -24,7 +27,8 @@ fn setup() -> (
 ) {
     let mut monitor = CapabilityMonitor::new();
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
-    (monitor, token, AgentRuntime::new())
+    let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+    (monitor, token, AgentRuntime::new(ai_runtime))
 }
 
 #[test]

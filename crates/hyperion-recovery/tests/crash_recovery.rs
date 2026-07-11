@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use hyperion_agent_runtime::{AgentManifest, AgentRuntime, LifecycleState, TrustTier};
+use hyperion_ai_runtime::{LocalAiRuntime, MockBackend};
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_knowledge_graph::KnowledgeGraph;
 use hyperion_recovery::{ActionStatus, RecoveryService, Trigger};
@@ -20,7 +21,8 @@ fn setup() -> (
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let recovery = RecoveryService::new(graph.clone());
-    let agent_runtime = AgentRuntime::new();
+    let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+    let agent_runtime = AgentRuntime::new(ai_runtime);
     (monitor, root, recovery, graph, agent_runtime)
 }
 

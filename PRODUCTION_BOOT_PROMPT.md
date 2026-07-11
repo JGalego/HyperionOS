@@ -99,7 +99,7 @@ below assume UEFI.
 | M5 — Real init & supervision tree | done |
 | M6 — Real persistent storage | done |
 | M7 — Real console UI, then real display | done (stage 1: text console); stage 2 (real display/compositor) explicitly deferred as its own project |
-| M8 — Real local AI runtime | pending |
+| M8 — Real local AI runtime | done (real Candle backend + real Intent→Agent→inference wiring on the actually-booted console path; production-scale model size, a plugin-framework bridge gap, and boot-time model pre-baking remain named, not solved — see completion note) |
 | M9 — Real cryptography | pending |
 | M10 — Real networking | pending |
 | M11 — Second reference platform (aarch64) | pending |
@@ -459,6 +459,96 @@ asks: "treat this as its own large sub-project; do not block M7's console stage 
 inference (real or mock) is called anywhere in this pipeline either -- `hyperion-intent`'s HTN
 matching is permanently, deliberately deterministic (not something M8 replaces), and wiring a real
 model call into a future Agent capability is separate, later work M8 is what motivates for real.
+
+**M8 completion note (2026-07-11):** `hyperion-ai-runtime` gains a new, feature-gated (`candle`,
+off by default) `CandleBackend` (`src/candle_backend.rs`) implementing the crate's own
+pre-existing `InferenceBackend` trait for real: real weights, real tokenizer, a real
+autoregressive forward-pass-plus-sampling loop via `candle-core`/`candle-nn`/
+`candle-transformers`. It loads Andrej Karpathy's real `stories15M.bin` (a genuine 15M-parameter
+Llama-architecture checkpoint, ~61 MB, from `karpathy/tinyllamas` on the Hugging Face Hub, via
+`hf-hub` 1.0's blocking client) rather than docs/36's 1-3B-parameter production "small resident"
+tier -- a deliberate, named gap: this sandbox has no GPU/NPU, and real CPU-only inference at that
+scale would be minutes-per-token, not the seconds this milestone's own proof needs. The mechanism
+(a real forward pass through real weights) is identical regardless of parameter count; reaching
+docs/36's actual latency/throughput target is a real-reference-hardware question this sandbox
+cannot answer, the same shape of hand-off M1's USB-boot criterion and M4's real-time-scheduling
+criterion already left explicit rather than silently claiming met. Verified non-vacuous the
+standard way: temporarily made `generate` echo the prompt verbatim, confirmed the integration
+test's `assert_ne!(result.text, request.prompt)` catches it, restored, reconfirmed a clean pass
+(26-31s including first download; cached by `hf-hub` after).
+
+Two real wiring gaps had to be found and closed for that backend to matter anywhere, not just in
+its own test. First: `hyperion-api-gateway::gateway.rs`'s `invoke_capability` dispatch loop
+unconditionally called `hyperion_agent_runtime::dispatch_stub_capability`, completely ignoring
+`hyperion-model-router`'s own `ImplKind`/`ModelClass` decision -- fixed via a new `dispatch_one`
+method that branches to a real `ai_runtime.infer(...)` call when the routed impl is
+`LocalSmallModel`/`LocalLargeModel` with a registered `ModelClass`, falling through to the
+existing stub otherwise (proven via a new `#[cfg(test)] mod tests` inside `gateway.rs` itself,
+needed because a separate, pre-existing gap -- `hyperion-plugin-framework::ImplementationDescriptor`
+has no `ModelClass`-equivalent field at all, so `router_bridge.rs::to_router_descriptor` can never
+produce `model_class: Some(...)`, and `invoke_capability` re-derives and overwrites every
+candidate's descriptor from the plugin registry on every call -- means that branch is structurally
+unreachable through the real plugin-registration path today; documented in place, not silently
+worked around, since fixing the plugin manifest shape is a separate, larger change).
+
+Second, and more consequential: `hyperion-api-gateway`/`hyperion-model-router` turned out to be
+wired into *no* real caller at all -- `hyperion-console` (M7's actual booted entry point) calls
+`hyperion-agent-runtime::AgentRuntime::invoke` directly, never through the gateway. Fixing
+`dispatch_one` alone would have satisfied the exit criteria's letter while leaving the actually-
+booted console exactly as mock as before. So `hyperion-agent-runtime` gained a third, real
+Capability alongside its two stubs (`web.search`, `document.draft`): `assistant.respond`,
+dispatched via a new `dispatch_assistant_respond` method to a real, caller-supplied
+`Arc<LocalAiRuntime>` (`AgentRuntime::new`'s signature change -- mechanically propagated across
+all 13 real call sites in 6 crates: `hyperion-agent-runtime`'s own tests, `hyperion-recovery`,
+`hyperion-federation::hub.rs`'s real per-device construction, `hyperion-threat-model`,
+`hyperion-coordination`'s four test files, and `hyperion-console` itself), gated behind the exact
+same Broker/quota/circuit-breaker checks every other Capability call already goes through --only
+the dispatch step branches, mirroring `dispatch_one`'s own shape. `hyperion-coordination`'s
+`default_manifests()` gained a new `"assistant"` specialization (baseline capability
+`assistant.respond` only -- no HTN leaf predicate ever maps to it, since it exists for the
+*undecomposed*-goal fallback, not a template's leaves) and `hyperion-console::session.rs`'s
+`run_undecomposed_goal` now spawns that specialization and calls `assistant.respond` with the raw
+utterance as `prompt`, instead of `web.search`'s canned stub string. `ConsoleSession` gained a new
+`build_ai_runtime` constructing a real `LocalAiRuntime` -- `MockBackend` by default, a real
+`CandleBackend` behind a new `candle` feature on `hyperion-console` itself (falling back to
+`MockBackend`, not panicking, if a real load fails -- docs/02 §4 invariant 5's "degrade, never
+fail closed" applied to a missing model exactly like everywhere else in this system).
+
+Proven for real, not just asserted: built `hyperion-console` with `--features candle` and piped a
+real, unmatched utterance ("what is the weather like today") into the real compiled binary.
+Real output: `status: generic_goal: done -- . A big red bus comes and drives to help people. The
+bus drives very fast. People get to stay in the bus and stay safe. One day, the weather is very
+harsh...` -- genuinely new, coherent TinyStories-style text, not an echo, not a stub, produced by
+a real forward pass through the real downloaded model, reached via the exact real
+Intent→Agent→inference path the booted console exercises. Verified non-vacuous the same way as
+every prior milestone: temporarily disabled the `assistant.respond` branch in
+`AgentRuntime::invoke`, confirmed `hyperion-console`'s own existing integration test
+(`an_unmatched_utterance_still_produces_a_real_agent_invocation_as_text`) fails against the stub's
+different JSON shape, restored, reconfirmed a clean pass; that test's own comment was also
+corrected in place (it had described the now-replaced `web.search`-stub behavior).
+
+`hyperion-intent`'s own HTN decomposition and its "generative decomposition" fallback (docs/05 §2
+-- an utterance matching no template, calling a real planning model to produce a real multi-leaf
+plan) were deliberately **not** touched. HTN template matching remains permanently deterministic,
+exactly as this document's own M7 note already said M8 would not replace. Generative decomposition
+specifically was considered and rejected for this milestone: `stories15M.bin` is a real but
+non-instruction-tuned children's-story completion model with no ability to reliably follow a
+"decompose this goal into steps" instruction, and fabricating leaf tasks from output it cannot
+actually produce reliably would be exactly the "pretend" `hyperion-intent`'s own doc comment
+already rules out for this fallback ("degrade, never fail closed, but also never pretend"). What's
+real instead is narrower and honest: the one *action* taken about an undecomposed goal is now
+really model-driven; the goal itself still has no children, same as before M8.
+
+Named gaps left open, deliberately, not silently: (1) the plugin-framework `ModelClass` bridge
+above -- a real, separate manifest-shape change; (2) `runtime.rs::infer`'s pre-existing
+`tokens_generated: 0` stub, backend-independent, unrelated to this milestone's scope; (3) a real
+release image's first `CandleBackend::load()` call genuinely hits the network (Hugging Face Hub)
+unless `hf-hub`'s cache is pre-populated -- fine for this dev loop, not for a real boot with no
+network yet up; a real image needs the model file baked into its rootfs at Buildroot build time,
+separate work from proving the inference mechanism itself. Full gate confirmed green throughout:
+`cargo fmt/clippy/build/test --workspace` (default features, network-free, all pass) and
+`cargo clippy --features candle` for both `hyperion-ai-runtime` and `hyperion-console` (also
+clean) -- the `candle` feature stays fully opt-in on both crates, exactly as designed.
 
 ## 4. Milestones
 

@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use hyperion_agent_runtime::{AgentManifest, AgentRuntime, InvokeOutcome};
+use hyperion_ai_runtime::{LocalAiRuntime, MockBackend};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_explainability::{
     ControlState, ExplanationId, ExplanationRecord, ExplanationStore, ReasoningStep,
@@ -137,7 +138,11 @@ impl FederationHub {
 
     /// docs/21 §Algorithms' "Federation join and trust": an ordinary
     /// capability grant, one distinct Trust Boundary — a real, separate
-    /// `AgentRuntime` instance — per device.
+    /// `AgentRuntime` instance — per device, each with its own
+    /// `MockBackend`-fronted `LocalAiRuntime` (no capability this crate
+    /// dispatches ever calls `assistant.respond` today, so a real,
+    /// per-device backend choice is a real caller's decision to make when
+    /// one first does — see `hyperion-agent-runtime`'s own doc comment).
     pub fn join_device(
         &self,
         monitor: &CapabilityMonitor,
@@ -146,10 +151,11 @@ impl FederationHub {
         trust_tier: FederationTrustTier,
     ) -> Result<(), FederationError> {
         self.require(monitor, token, RightsMask::WRITE)?;
+        let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
         self.devices
             .lock()
             .unwrap()
-            .insert(device_id, Arc::new(AgentRuntime::new()));
+            .insert(device_id, Arc::new(AgentRuntime::new(ai_runtime)));
         self.trust_tiers
             .lock()
             .unwrap()

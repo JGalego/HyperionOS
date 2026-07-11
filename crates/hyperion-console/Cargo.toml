@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 hyperion-agent-runtime = { workspace = true }
+hyperion-ai-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
 hyperion-context = { workspace = true }
 hyperion-coordination = { workspace = true }
@@ -21,3 +22,11 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+[features]
+# Real, feature-gated on-device inference for this console's own real
+# `assistant.respond` Capability call (PRODUCTION_BOOT_PROMPT.md M8) -- off by default for
+# the exact same reason `hyperion-ai-runtime`'s own `candle` feature is: a real boot/release
+# image build opts in explicitly; every host-side dev/test build stays fast and network-free
+# on `MockBackend`.
+candle = ["hyperion-ai-runtime/candle"]

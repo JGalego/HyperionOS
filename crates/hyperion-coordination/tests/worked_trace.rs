@@ -27,7 +27,9 @@ fn setup() -> (
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
     let intent_engine = IntentEngine::new(graph, context);
-    let coordination = CoordinationSession::new(Arc::new(AgentRuntime::new()));
+    let coordination = CoordinationSession::new(Arc::new(AgentRuntime::new(Arc::new(
+        hyperion_ai_runtime::LocalAiRuntime::new(Box::new(hyperion_ai_runtime::MockBackend), 8_000),
+    ))));
     (dir, monitor, token, intent_engine, coordination)
 }
 

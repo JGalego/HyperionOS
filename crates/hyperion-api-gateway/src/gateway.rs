@@ -2,13 +2,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, TokenId};
 use hyperion_context::{Budget, ContextBundle, ContextEngine, Scope};
 use hyperion_explainability::{ControlState, ExplanationStore, ReasoningStep};
 use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::{GraphQuery, KnowledgeGraph, NodeId, QueryHit};
 use hyperion_memory::{ErasureReceipt, MemoryEngine, MemoryFilter};
-use hyperion_model_router::ModelRouter;
+use hyperion_model_router::{ImplKind, ModelRouter};
 use hyperion_observability::{AuditAction, AuditLedger, AuditPayload, PrincipalRef};
 use hyperion_plugin_framework::PluginRegistry;
 use hyperion_recovery::RecoveryService;
@@ -35,6 +36,12 @@ pub struct ApiGateway {
     model_router: Arc<ModelRouter>,
     recovery: Arc<RecoveryService>,
     context: Arc<ContextEngine>,
+    /// The same `LocalAiRuntime` instance `model_router` was itself built with (see this
+    /// struct's own `new` doc comment on why a second, disconnected instance would be wrong) --
+    /// `model_router.route()` only ever *decides* which candidate to use; this is what actually
+    /// runs real inference (M8) once `invoke_capability` dispatches to a `LocalSmallModel`/
+    /// `LocalLargeModel` candidate.
+    ai_runtime: Arc<LocalAiRuntime>,
     /// Backs the real routing-decision audit trail `invoke_capability`
     /// now writes — see this crate's doc comment.
     audit: Arc<AuditLedger>,
@@ -49,6 +56,8 @@ impl ApiGateway {
     /// and a second, disconnected instance would silently diverge (its
     /// own working-set hysteresis, its own bundle history) rather than
     /// sharing state with the one Intent grounding actually uses.
+    /// `ai_runtime` is the same instance already threaded into
+    /// `model_router`'s own construction, for the identical reason.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         intent: Arc<IntentEngine>,
@@ -58,6 +67,7 @@ impl ApiGateway {
         explainability: Arc<ExplanationStore>,
         model_router: Arc<ModelRouter>,
         context: Arc<ContextEngine>,
+        ai_runtime: Arc<LocalAiRuntime>,
     ) -> Self {
         let recovery = Arc::new(RecoveryService::new(graph.clone()));
         let audit = Arc::new(AuditLedger::new());
@@ -70,6 +80,7 @@ impl ApiGateway {
             model_router,
             recovery,
             context,
+            ai_runtime,
             audit,
             scope_grants: Mutex::new(HashMap::new()),
             next_action_id: AtomicU64::new(1),
@@ -385,10 +396,7 @@ impl ApiGateway {
             .transition(monitor, token, explanation_id, ControlState::Executing)?;
 
         for impl_id in &decision.fallback_chain {
-            match hyperion_agent_runtime::dispatch_stub_capability(
-                &request.contract_id,
-                &request.inputs,
-            ) {
+            match self.dispatch_one(monitor, token, *impl_id, &request) {
                 Ok(outputs) => {
                     self.model_router.report_outcome(*impl_id, true);
                     self.explainability.transition(
@@ -412,5 +420,193 @@ impl ApiGateway {
         self.explainability
             .transition(monitor, token, explanation_id, ControlState::RolledBack)?;
         Err(ApiError::NoEligibleImplementation)
+    }
+
+    /// M8's real router-to-execution wiring: a candidate the Model Router itself registered as
+    /// `LocalSmallModel`/`LocalLargeModel` now really runs through `self.ai_runtime.infer(...)`
+    /// (a real Candle backend when one is configured -- see `hyperion-ai-runtime`'s own docs on
+    /// [`hyperion_ai_runtime::MockBackend`] vs. a real [`hyperion_ai_runtime::InferenceBackend`]
+    /// impl) instead of the stub dispatch every other candidate kind still uses. Without this,
+    /// `model_router.route()` choosing a local-model candidate would never actually be
+    /// distinguishable from any other kind: nothing before M8 ever called `ai_runtime.infer` from
+    /// any production code path (only this crate's own unit tests did).
+    fn dispatch_one(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        impl_id: hyperion_model_router::ImplId,
+        request: &InvokeRequest,
+    ) -> Result<serde_json::Value, String> {
+        let local_model_class = self
+            .model_router
+            .descriptor(impl_id)
+            .and_then(|descriptor| {
+                let is_local_model = matches!(
+                    descriptor.kind,
+                    ImplKind::LocalSmallModel | ImplKind::LocalLargeModel
+                );
+                is_local_model.then_some(descriptor.model_class).flatten()
+            });
+
+        let Some(class) = local_model_class else {
+            return hyperion_agent_runtime::dispatch_stub_capability(
+                &request.contract_id,
+                &request.inputs,
+            );
+        };
+
+        // No existing spec pins an exact latency budget or prompt-construction convention for
+        // this call site; a generous fixed budget avoids `infer`'s battery/latency-driven variant
+        // downgrade firing for a reason unrelated to this specific call, and folding the contract
+        // id into the prompt at least tells the model what it's being asked to do.
+        let contract = CapabilityContract {
+            latency_budget_ms: 5_000,
+            always_on: false,
+        };
+        let inference_request = InferenceRequest {
+            prompt: format!("{}: {}", request.contract_id, request.inputs),
+        };
+        self.ai_runtime
+            .infer(monitor, token, class, &contract, &inference_request)
+            .map(|result| serde_json::json!({ "text": result.text }))
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! `dispatch_one`'s real-inference branch is tested here, directly against this module's
+    //! private field, rather than through `invoke_capability` (this crate's other tests'
+    //! convention) -- `invoke_capability` always re-derives every candidate's
+    //! `ImplementationDescriptor` from the Plugin Framework registry via
+    //! [`crate::router_bridge::to_router_descriptor`], which cannot produce a `Some(ModelClass)`
+    //! today (see that function's own doc comment: the Plugin Framework's manifest shape has no
+    //! `ModelClass`-equivalent field to derive one from). That is a real, separate, documented gap
+    //! this milestone doesn't close; testing `dispatch_one` directly proves the wiring this
+    //! milestone *does* add is real and correct, independent of it.
+
+    use super::*;
+    use hyperion_ai_runtime::{
+        MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
+    };
+    use hyperion_capability::RightsMask;
+    use hyperion_model_router::{
+        CostModel, ImplId, ImplementationDescriptor, PrivacyTier, RolloutStage,
+    };
+
+    fn gateway_with_registered_slm() -> (CapabilityMonitor, CapabilityToken, ApiGateway, ImplId) {
+        let mut monitor = CapabilityMonitor::new();
+        let token = monitor.mint_root(
+            RightsMask::all(),
+            hyperion_capability::TrustBoundaryId(1),
+            None,
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+        let context = Arc::new(ContextEngine::new(graph.clone()));
+        let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
+        let memory = Arc::new(MemoryEngine::new(graph.clone()));
+        let registry = Arc::new(PluginRegistry::new());
+        let explainability = Arc::new(ExplanationStore::new());
+        let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+        let model_router = Arc::new(ModelRouter::new(ai_runtime.clone()));
+
+        let mut model_descriptor = ModelDescriptor {
+            model_id: 1,
+            class: ModelClass::Slm,
+            variants: vec![QuantizedVariant {
+                precision: Precision::Fp16,
+                footprint_mb: 500,
+                expected_tokens_per_sec: 40.0,
+            }],
+            checksum: 0,
+        };
+        model_descriptor.checksum = hyperion_ai_runtime::checksum(&model_descriptor);
+        ai_runtime.register_model(model_descriptor).unwrap();
+
+        let impl_id = ImplId(1);
+        model_router
+            .register_implementation(
+                &monitor,
+                &token,
+                ImplementationDescriptor {
+                    impl_id,
+                    capability_id: "intent.parse".to_string(),
+                    kind: ImplKind::LocalSmallModel,
+                    model_class: Some(ModelClass::Slm),
+                    privacy_tier: PrivacyTier::Local,
+                    cost_model: CostModel::Free,
+                    quality_profile: std::collections::HashMap::new(),
+                    declared_latency_ms: 100,
+                    rollout_stage: RolloutStage::Ga,
+                },
+            )
+            .unwrap();
+
+        let gateway = ApiGateway::new(
+            intent,
+            memory,
+            graph,
+            registry,
+            explainability,
+            model_router,
+            context,
+            ai_runtime,
+        );
+        (monitor, token, gateway, impl_id)
+    }
+
+    #[test]
+    fn a_local_small_model_candidate_really_dispatches_through_real_inference_not_the_stub() {
+        let (monitor, token, gateway, impl_id) = gateway_with_registered_slm();
+        let request = InvokeRequest {
+            contract_id: "intent.parse".to_string(),
+            inputs: serde_json::json!({"utterance": "launch my startup"}),
+            agent_id: 1,
+            intent_id: 1,
+            risk: crate::types::RiskHints::default(),
+            confirmed: false,
+        };
+
+        let outputs = gateway
+            .dispatch_one(&monitor, &token, impl_id, &request)
+            .expect("a registered, resident Slm model must really dispatch");
+
+        // MockBackend's real, distinctive echo shape -- if this ever fell through to the stub
+        // dispatch instead, `outputs` would carry `{"results": [...]}`
+        // (`hyperion_agent_runtime::stubs::dispatch`'s own shape for an unknown capability_id),
+        // never this text.
+        let text = outputs
+            .get("text")
+            .and_then(|v| v.as_str())
+            .expect("real inference must produce a real text field");
+        assert!(
+            text.contains("mock model") && text.contains("intent.parse"),
+            "expected MockBackend's real echo of the real prompt, got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn a_cloud_api_candidate_still_dispatches_through_the_real_stub_unchanged() {
+        let (monitor, token, gateway, _impl_id) = gateway_with_registered_slm();
+        // No model_router registration at all for this impl_id -- `descriptor(..)` returns
+        // `None`, so `dispatch_one` must fall back to the stub path exactly as it always has.
+        let unregistered = ImplId(999);
+        let request = InvokeRequest {
+            contract_id: "web.search".to_string(),
+            inputs: serde_json::json!({"query": "hyperion os"}),
+            agent_id: 1,
+            intent_id: 1,
+            risk: crate::types::RiskHints::default(),
+            confirmed: false,
+        };
+
+        let outputs = gateway
+            .dispatch_one(&monitor, &token, unregistered, &request)
+            .expect("the real stub capability must still handle a non-local-model candidate");
+        assert!(
+            outputs.get("results").is_some(),
+            "expected the real web.search stub's own shape, got: {outputs:?}"
+        );
     }
 }
