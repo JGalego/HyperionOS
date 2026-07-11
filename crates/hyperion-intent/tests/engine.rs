@@ -88,6 +88,57 @@ fn launch_my_startup_decomposes_into_the_dependency_chain_with_one_ready_leaf() 
 }
 
 #[test]
+fn decomposition_opens_a_real_explanation_record_correlated_by_the_real_intent_id() {
+    let (_dir, monitor, token, engine, _graph) = setup();
+    let root = match engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "session-1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+
+    let records = engine.trace_intent(root.0);
+    assert_eq!(
+        records.len(),
+        1,
+        "one decomposition action opened one explanation record"
+    );
+    let record = &records[0];
+    assert_eq!(
+        record.control_state,
+        hyperion_explainability::ControlState::Completed
+    );
+    assert_eq!(
+        record.reasoning_chain.len(),
+        4,
+        "one reasoning step per real leaf produced"
+    );
+    let graph = engine.get_graph(&monitor, &token, root).unwrap();
+    let leaf_ids: std::collections::HashSet<_> = graph
+        .iter()
+        .filter(|i| i.id != root)
+        .map(|i| i.id)
+        .collect();
+    for step in &record.reasoning_chain {
+        let output = step
+            .output_ref
+            .expect("every decomposition step names its leaf");
+        assert!(
+            leaf_ids.contains(&output),
+            "step output must be a real leaf this decomposition actually produced"
+        );
+    }
+
+    // This engine's very first Explanation Record, minted with id 1.
+    let by_id = engine.explanation(1).unwrap();
+    assert_eq!(
+        by_id.triggering_intent_id, root.0,
+        "the record's triggering_intent_id must be the real root Intent id, not a sentinel"
+    );
+}
+
+#[test]
 fn unrecognized_goal_becomes_a_single_undecomposed_proposed_intent() {
     let (_dir, monitor, token, engine, _graph) = setup();
     let root = match engine

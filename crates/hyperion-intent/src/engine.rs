@@ -1,9 +1,13 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
 use hyperion_context::{ContextEngine, ContextError, EntityResolution};
+use hyperion_explainability::{
+    ControlState, ExplanationId, ExplanationRecord, ExplanationStore, ReasoningStep,
+};
 use hyperion_knowledge_graph::{
     EdgeOrigin, ExplainRef, GraphError, KnowledgeGraph, NodeId, ProvenanceChain,
 };
@@ -35,6 +39,8 @@ pub enum IntentError {
     NotFound,
     #[error("that mutation would introduce a dependency cycle")]
     CyclicDependency,
+    #[error("explainability error: {0}")]
+    Explainability(#[from] hyperion_explainability::ExplainabilityError),
 }
 
 /// docs/08 §4's own working-memory sizing is caller-defined; ten recent
@@ -57,6 +63,11 @@ pub struct IntentEngine {
     /// comment on what's still deferred (using these turns as a real
     /// grounding signal, not just recording them).
     working_memories: Mutex<HashMap<String, WorkingMemory>>,
+    /// docs/18's Explanation Record store for this engine's own real
+    /// decision point — HTN decomposition (see [`Self::handle_utterance`])
+    /// — see [`Self::explanation`]/[`Self::trace_intent`].
+    explanations: ExplanationStore,
+    next_action_id: AtomicU64,
 }
 
 impl IntentEngine {
@@ -66,7 +77,23 @@ impl IntentEngine {
             context,
             active_graphs: Mutex::new(HashMap::new()),
             working_memories: Mutex::new(HashMap::new()),
+            explanations: ExplanationStore::new(),
+            next_action_id: AtomicU64::new(1),
         }
+    }
+
+    /// docs/18's "queryable Explanation Record" surface for this engine's
+    /// own decomposition dispatches — see [`Self::handle_utterance`].
+    pub fn explanation(&self, id: ExplanationId) -> Option<ExplanationRecord> {
+        self.explanations.get(id)
+    }
+
+    /// Every record this engine has opened for real Intent `intent_id` —
+    /// unlike `hyperion-coordination`/`hyperion-federation`'s own stores,
+    /// this engine mints the real Intent id itself, so this is a real
+    /// correlation, not a sentinel.
+    pub fn trace_intent(&self, intent_id: u64) -> Vec<ExplanationRecord> {
+        self.explanations.trace_intent(intent_id)
     }
 
     /// The real `hyperion-memory` turn buffer for `session_id`, if this
@@ -206,7 +233,42 @@ impl IntentEngine {
         let root = self.put_intent(monitor, token, None, &root_intent)?;
 
         if let Some(t) = template {
+            let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
+            let explanation_id = self.explanations.begin(
+                monitor,
+                token,
+                action_id,
+                root.0,
+                0,
+                &root_intent.predicate,
+                vec![],
+                now_ts,
+            )?;
+
             let children = self.decompose(monitor, token, root, t, urgent, now_ts)?;
+
+            for (i, (&leaf_id, leaf)) in children.iter().zip(t.leaves.iter()).enumerate() {
+                self.explanations.append_step(
+                    monitor,
+                    token,
+                    explanation_id,
+                    ReasoningStep {
+                        step_index: i as u32,
+                        description: format!("decomposed into '{}'", leaf.predicate),
+                        capability_ref: Some(leaf.predicate.to_string()),
+                        inputs_ref: vec![root],
+                        output_ref: Some(leaf_id),
+                    },
+                    Vec::new(),
+                )?;
+            }
+            self.explanations.transition(
+                monitor,
+                token,
+                explanation_id,
+                ControlState::Completed,
+            )?;
+
             root_intent.id = root;
             root_intent.children = children;
             self.put_intent(monitor, token, Some(root), &root_intent)?;

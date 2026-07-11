@@ -55,6 +55,17 @@
 //!   requires a real [`ExecutionTicket`] from [`IntentEngine::submit`] as
 //!   its input, not a bare `NodeId` a caller could produce without ever
 //!   calling `submit`.
+//! - ~~Instrumenting decomposition with `hyperion-explainability`~~ — now
+//!   real: [`engine::IntentEngine::handle_utterance`] opens a real
+//!   Explanation Record around HTN decomposition, correlated by this
+//!   engine's own real Intent `NodeId` — unlike `hyperion-coordination`/
+//!   `hyperion-federation`'s stores, which record under a sentinel
+//!   `triggering_intent_id` because neither owns a real Intent id source,
+//!   this engine mints that id itself, so [`engine::IntentEngine::trace_intent`]
+//!   is a genuine correlation. `hyperion-explainability`'s own doc named
+//!   this crate's decomposition as one of its still-uninstrumented
+//!   examples; that example is now closed (its own gap — retrofitting
+//!   every other Phase 3-7 crate's decision points — remains open).
 
 mod engine;
 mod templates;

@@ -30,14 +30,20 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **Wiring Phases 3-7's actual call sites.** This crate is the store
-//!   and query API; it does not itself instrument
-//!   `hyperion-agent-runtime`'s `invoke`, `hyperion-intent`'s
-//!   decomposition, or any other already-shipped crate's decision points
-//!   to call `begin`/`append_step`/`transition`. Retrofitting every prior
-//!   phase's crate to emit records is real, separate integration work
-//!   this slice scopes out — the store and its invariants are what Phase
-//!   8's exit criterion needs proven first.
+//! - **Wiring Phases 3-7's remaining call sites.** This crate is the
+//!   store and query API; it does not itself instrument every already-
+//!   shipped crate's decision points to call
+//!   `begin`/`append_step`/`transition`. `hyperion-coordination`'s
+//!   `allocate`, `hyperion-federation`'s `dispatch_offload`/`invoke_agent`,
+//!   and `hyperion-intent`'s HTN decomposition are now wired (each holds
+//!   its own private `ExplanationStore` — see those crates' own doc
+//!   comments); `hyperion-agent-runtime`'s `invoke` is not and cannot be
+//!   the same way — a real Cargo dependency cycle
+//!   (`hyperion-explainability` → `hyperion-recovery` →
+//!   `hyperion-agent-runtime`) rules out a direct dependency, so that call
+//!   site needs a different composition (a layer above both, the way
+//!   `hyperion-federation` sits above `hyperion-agent-runtime`), not
+//!   attempted here.
 //! - **Real NLG / natural-language explanation text.**
 //!   [`render::resolve_why`]'s headline is a deterministic template
 //!   (`format!`), not a model call — docs/18 §6's `render_at_complexity_level`
