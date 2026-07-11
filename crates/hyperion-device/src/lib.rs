@@ -21,7 +21,11 @@
 //! [`DeviceRegistry::register`] also persists every `DeviceObject` as a
 //! real `hyperion-knowledge-graph` node (doc §4: "a Semantic Object
 //! subtype") — [`DeviceRegistry::kg_node_for`] resolves a `device_id` to
-//! the real node it created.
+//! the real node it created. `tests/context_device_anchor.rs`
+//! (dev-dependency-only) proves that real node composes as a real
+//! `hyperion-context` anchor with no code change on either side — docs/06
+//! §Architecture's "device/session state" signal collector, which
+//! `hyperion-context`'s own doc named as blocked on exactly this.
 //!
 //! Deliberately deferred, and why:
 //!

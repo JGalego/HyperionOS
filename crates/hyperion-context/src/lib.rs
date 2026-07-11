@@ -30,14 +30,17 @@
 //! Deliberately deferred, matching this workspace's scoping convention (see
 //! `hyperion-knowledge-graph`'s crate doc for the same pattern):
 //!
-//! - **Device/session state, calendar/comms signals** (docs/06
-//!   §Architecture's other three signal collectors). Device/session state
-//!   needs `hyperion-device` to persist its `DeviceObject`s as real
-//!   Knowledge Graph nodes first (that crate's own doc names this as its
-//!   own deferred item) — once it does, the same `intent_id`-as-anchor
-//!   pattern above extends naturally. Calendar/comms need consent-gated
-//!   connectors ([16 — Privacy Architecture](../16-privacy-architecture.md))
-//!   that don't exist yet.
+//! - **Calendar/comms signals** (docs/06 §Architecture's other signal
+//!   collectors) — these need consent-gated connectors
+//!   ([16 — Privacy Architecture](../16-privacy-architecture.md)) that
+//!   don't exist yet. Device/session state, by contrast, is no longer
+//!   blocked: `hyperion-device`'s `DeviceRegistry::register` now persists
+//!   every `DeviceObject` as a real Knowledge Graph node, and
+//!   `hyperion-device`'s own `tests/context_device_anchor.rs` proves that
+//!   node composes as a real anchor here via the already-generic
+//!   [`types::Scope::anchors`] — no dedicated `device_id`-as-anchor
+//!   special case was needed the way [`types::Scope::intent_id`] required
+//!   one, since `anchors` was never an inert field to begin with.
 //! - **Adaptive Complexity / `ExpertiseEstimate`** (docs/06 §5.4) is a read
 //!   over vocabulary complexity and error-recovery behavior this crate has
 //!   no source for yet (needs Phase 3's Intent Engine and Phase 4's Agent
