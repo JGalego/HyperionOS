@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::TokenId;
+use crate::types::{ObjectId, RightsMask, TokenId};
 
 /// One node in the revocation graph: every derived token is a child of the
 /// token it was attenuated from, so revoking a parent revokes the whole
@@ -12,6 +12,20 @@ use crate::types::TokenId;
 /// found by ID (`cap_revoke` is handed a token, not a path from the root) —
 /// same edges, same O(k)-in-outstanding-delegations cascading walk, no
 /// change in the structure the spec describes.
+///
+/// `object_id`/`rights` record exactly what this node was minted or derived
+/// with, so a presented `CapabilityToken` claiming *different* rights or a
+/// different object for this same `token_id` can be caught, not just a
+/// stale generation. In-process, this was previously unreachable in
+/// practice: `CapabilityToken`'s constructors are `pub(crate)`, so Rust's
+/// own module privacy was the only thing standing between "a token" and "an
+/// arbitrary forged struct claiming any rights it likes" — sufficient as
+/// long as every token value in existence really did come from this
+/// monitor. That stops being true the moment a token's fields cross a real
+/// process boundary as data (`hyperion-ipc`'s real transport, M3): the
+/// bytes on a socket carry no Rust-level guarantee at all, so the check on
+/// the receiving end must verify the claim against this record explicitly
+/// rather than trust the presented struct.
 #[derive(Debug)]
 pub(crate) struct RevocationNode {
     pub(crate) parent: Option<TokenId>,
@@ -21,6 +35,8 @@ pub(crate) struct RevocationNode {
     /// (i.e. per delegation, not per `ObjectId`) — see the design-gap note
     /// on [`crate::types::TokenId`].
     pub(crate) live_generation: u64,
+    pub(crate) object_id: ObjectId,
+    pub(crate) rights: RightsMask,
 }
 
 #[derive(Debug, Default)]
@@ -39,18 +55,26 @@ pub struct RevocationReceipt {
 }
 
 impl RevocationGraph {
-    pub(crate) fn insert_root(&mut self, id: TokenId) {
+    pub(crate) fn insert_root(&mut self, id: TokenId, object_id: ObjectId, rights: RightsMask) {
         self.nodes.insert(
             id,
             RevocationNode {
                 parent: None,
                 children: Vec::new(),
                 live_generation: 0,
+                object_id,
+                rights,
             },
         );
     }
 
-    pub(crate) fn insert_child(&mut self, parent: TokenId, child: TokenId) {
+    pub(crate) fn insert_child(
+        &mut self,
+        parent: TokenId,
+        child: TokenId,
+        object_id: ObjectId,
+        rights: RightsMask,
+    ) {
         self.nodes
             .entry(parent)
             .and_modify(|n| n.children.push(child));
@@ -60,12 +84,28 @@ impl RevocationGraph {
                 parent: Some(parent),
                 children: Vec::new(),
                 live_generation: 0,
+                object_id,
+                rights,
             },
         );
     }
 
     pub(crate) fn live_generation(&self, id: TokenId) -> Option<u64> {
         self.nodes.get(&id).map(|n| n.live_generation)
+    }
+
+    /// True iff `id` exists and was actually minted/derived with exactly
+    /// `object_id`/`rights` — see [`RevocationNode`]'s docs for why this
+    /// check exists alongside the generation check, not instead of it.
+    pub(crate) fn matches_record(
+        &self,
+        id: TokenId,
+        object_id: ObjectId,
+        rights: RightsMask,
+    ) -> bool {
+        self.nodes
+            .get(&id)
+            .is_some_and(|n| n.object_id == object_id && n.rights == rights)
     }
 
     /// Which token `id` was derived from, if any — the delegation lineage an

@@ -41,7 +41,13 @@ impl TokenId {
 bitflags! {
     /// Rights mask carried by a [`CapabilityToken`]. Attenuation (`cap_derive`)
     /// may only narrow this set, never widen it.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    ///
+    /// Serializable (via bitflags's `serde` feature) so it can appear in
+    /// [`crate::WireToken`] -- carrying *claimed* rights across a real IPC
+    /// transport (`hyperion-ipc`, M3). This does not make a whole
+    /// `CapabilityToken` serializable; see `WireToken`'s docs for why that
+    /// distinction matters.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
     pub struct RightsMask: u32 {
         const READ   = 0b0000_0001;
         const WRITE  = 0b0000_0010;
@@ -57,12 +63,22 @@ bitflags! {
 /// object (IPC endpoint, scheduler resource, ...), not by the capability core
 /// itself — see the crate-level docs for why `cap_invoke` is a check, not a
 /// dispatcher, in this crate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Serializable so it can travel in an IPC frame over a real transport
+/// (`hyperion-ipc`, M3) — an operation code carries no secret, so unlike
+/// `CapabilityToken` there is no forgeability concern in letting it cross
+/// the wire as plain data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Operation(pub u32);
 
 /// Everything that can go wrong presenting a capability, per
-/// docs/03-kernel-architecture.md's Interfaces/APIs section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+/// docs/03-kernel-architecture.md's Interfaces/APIs section. Serializable for
+/// the same reason as [`Operation`]: an `ERROR`-flagged IPC reply frame
+/// carries one of these over a real transport (M3), and a fault variant is
+/// not sensitive data.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, serde::Serialize, serde::Deserialize,
+)]
 pub enum Fault {
     #[error("no such capability")]
     NoSuchCapability,

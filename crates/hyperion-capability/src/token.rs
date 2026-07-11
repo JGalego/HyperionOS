@@ -21,6 +21,30 @@ pub struct CapabilityToken {
 }
 
 impl CapabilityToken {
+    /// Reconstructs a token from its raw parts — `pub(crate)`, not `pub`: the only caller is
+    /// [`crate::wire::CapabilityMonitor::authenticate_wire_token`] (same crate, so it can see
+    /// this), which validates the result against the monitor's own record before ever handing
+    /// it back. No code outside this crate can reach this constructor, so "the only place a
+    /// `CapabilityToken` can come into existence is `CapabilityMonitor`" still holds — a
+    /// `WireToken` alone is not enough to get one.
+    pub(crate) fn from_wire_parts(
+        token_id: TokenId,
+        object_id: ObjectId,
+        rights: RightsMask,
+        generation: u64,
+        origin: TrustBoundaryId,
+        expiry: Option<Instant>,
+    ) -> Self {
+        CapabilityToken {
+            token_id,
+            object_id,
+            rights,
+            generation,
+            origin,
+            expiry,
+        }
+    }
+
     /// Identity of this specific delegation-graph node. Not part of the
     /// upstream spec's struct; added so revocation can be scoped per-node
     /// rather than per-`ObjectId` (see [`crate::types::TokenId`]'s docs).

@@ -38,7 +38,7 @@ impl CapabilityMonitor {
     ) -> CapabilityToken {
         let object_id = self.new_object();
         let token_id = TokenId::next();
-        self.graph.insert_root(token_id);
+        self.graph.insert_root(token_id, object_id, rights);
         CapabilityToken {
             token_id,
             object_id,
@@ -67,7 +67,8 @@ impl CapabilityMonitor {
         }
 
         let child_id = TokenId::next();
-        self.graph.insert_child(parent.token_id, child_id);
+        self.graph
+            .insert_child(parent.token_id, child_id, parent.object_id, rights);
 
         let requested_expiry = ttl.map(|d| Instant::now() + d);
         Ok(CapabilityToken {
@@ -99,10 +100,29 @@ impl CapabilityMonitor {
     /// generation (i.e. neither it nor any ancestor has been revoked since
     /// it was minted/derived) and it has not expired.
     pub fn is_live(&self, token: &CapabilityToken) -> bool {
-        self.graph.live_generation(token.token_id) == Some(token.generation) && !token.is_expired()
+        self.graph
+            .matches_record(token.token_id, token.object_id, token.rights)
+            && self.graph.live_generation(token.token_id) == Some(token.generation)
+            && !token.is_expired()
     }
 
-    fn check_live(&self, token: &CapabilityToken) -> Result<(), Fault> {
+    /// Beyond the generation/expiry checks, also verifies `token`'s claimed
+    /// `object_id`/`rights` match what this monitor actually recorded for
+    /// `token.token_id` at mint/derive time — see [`crate::revocation::RevocationNode`]'s
+    /// docs for why this matters once a token's fields can arrive as
+    /// untrusted data (e.g. over `hyperion-ipc`'s real transport) rather
+    /// than only ever existing as a value this process's own type system
+    /// already guaranteed was genuine.
+    ///
+    /// `pub(crate)`, not `pub`: [`crate::wire`]'s `authenticate_wire_token` is the one other
+    /// caller (same crate), reusing this exact check rather than a parallel copy of it.
+    pub(crate) fn check_live(&self, token: &CapabilityToken) -> Result<(), Fault> {
+        if !self
+            .graph
+            .matches_record(token.token_id, token.object_id, token.rights)
+        {
+            return Err(Fault::NoSuchCapability);
+        }
         match self.graph.live_generation(token.token_id) {
             None => Err(Fault::NoSuchCapability),
             Some(live) if live != token.generation => Err(Fault::Revoked),
@@ -165,5 +185,93 @@ impl CapabilityMonitor {
     ) -> Result<T, Fault> {
         let token = self.check(table, slot, required)?;
         Ok(dispatch(&token))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unlike this crate's other tests (all in `tests/`, exercising only the public API),
+    //! this module needs `CapabilityToken`'s private fields to construct a deliberately-forged
+    //! token — the one thing the public API can never do by design, so it's the one thing that
+    //! can only be tested from inside the crate.
+
+    use super::*;
+
+    #[test]
+    fn forged_rights_on_an_otherwise_valid_token_id_are_rejected() {
+        let mut m = CapabilityMonitor::new();
+        let root = m.mint_root(RightsMask::READ, TrustBoundaryId(1), None);
+
+        // Same token_id, object_id, and generation as the genuine token -- indistinguishable
+        // from it in every way except the rights it claims. This is exactly the shape of data
+        // that arrives over hyperion-ipc's real transport (M3): bytes on a socket carry no
+        // Rust-level guarantee that they came from this monitor's own mint_root/cap_derive.
+        let forged = CapabilityToken {
+            rights: RightsMask::all(),
+            ..root.clone()
+        };
+
+        assert_ne!(
+            forged.rights(),
+            root.rights(),
+            "sanity: the forged token really does claim different rights"
+        );
+        assert!(
+            !m.is_live(&forged),
+            "a token whose claimed rights don't match this monitor's record must not be live"
+        );
+        assert_eq!(
+            m.check_rights_ok_result(&forged, RightsMask::READ),
+            Err(Fault::NoSuchCapability),
+            "escalated-but-otherwise-genuine-looking token must be rejected, not merely \
+             downgraded to its real rights"
+        );
+
+        // The real token, meanwhile, is completely unaffected -- forging a sibling doesn't
+        // invalidate the genuine article.
+        assert!(m.is_live(&root));
+        assert!(m.check_rights_ok(&root, RightsMask::READ));
+    }
+
+    #[test]
+    fn forged_object_id_on_an_otherwise_valid_token_id_is_rejected() {
+        let mut m = CapabilityMonitor::new();
+        let root = m.mint_root(RightsMask::READ, TrustBoundaryId(1), None);
+        let unrelated_object = m.new_object();
+
+        let forged = CapabilityToken {
+            object_id: unrelated_object,
+            ..root.clone()
+        };
+
+        assert!(!m.is_live(&forged));
+        assert_eq!(
+            m.check_rights_ok_result(&forged, RightsMask::READ),
+            Err(Fault::NoSuchCapability)
+        );
+    }
+
+    #[test]
+    fn derived_child_rights_are_recorded_and_enforced_independent_of_the_parent() {
+        let mut m = CapabilityMonitor::new();
+        let root = m.mint_root(
+            RightsMask::READ | RightsMask::WRITE,
+            TrustBoundaryId(1),
+            None,
+        );
+        let child = m
+            .cap_derive(&root, RightsMask::READ, None, TrustBoundaryId(2))
+            .unwrap();
+
+        // Claiming the parent's broader rights on the child's token_id must be rejected: the
+        // graph recorded READ only for this specific derived node.
+        let forged_child = CapabilityToken {
+            rights: RightsMask::READ | RightsMask::WRITE,
+            ..child.clone()
+        };
+        assert!(!m.is_live(&forged_child));
+
+        // The real child, at its real (narrower) rights, remains valid.
+        assert!(m.is_live(&child));
     }
 }

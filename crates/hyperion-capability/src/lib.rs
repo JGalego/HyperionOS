@@ -12,15 +12,24 @@
 //! node (via [`TokenId`]) rather than per raw `ObjectId`, a correction to a
 //! design gap in the original pseudocode; see [`TokenId`]'s docs and the
 //! matching fix in docs/03-kernel-architecture.md.
+//!
+//! [`CapabilityToken`] itself never crosses a real process boundary — its
+//! constructors are `pub(crate)` and it has no `Serialize`/`Deserialize` impl,
+//! deliberately: see [`WireToken`]'s docs for what real IPC (`hyperion-ipc`,
+//! M3) carries instead, and why a naively serializable token would have
+//! broken the "unforgeable" half of "unforgeable, scoped, revocable,
+//! attenuable" above the moment it left this process.
 
 mod monitor;
 mod revocation;
 mod table;
 mod token;
 mod types;
+mod wire;
 
 pub use monitor::CapabilityMonitor;
 pub use revocation::RevocationReceipt;
 pub use table::{CapabilityTable, SlotIndex};
 pub use token::CapabilityToken;
 pub use types::{Fault, ObjectId, Operation, RightsMask, TokenId, TrustBoundaryId};
+pub use wire::WireToken;

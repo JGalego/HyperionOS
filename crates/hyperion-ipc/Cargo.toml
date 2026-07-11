@@ -7,8 +7,11 @@ description = "Hyperion L1 IPC framework: capability-scoped message passing (doc
 
 [dependencies]
 hyperion-capability = { workspace = true }
-bitflags = { workspace = true }
+bitflags = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+tempfile = { workspace = true }

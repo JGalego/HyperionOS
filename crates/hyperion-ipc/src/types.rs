@@ -3,7 +3,7 @@ use bitflags::bitflags;
 /// Which wire schema a [`crate::Channel`] speaks — a compiled contract id in
 /// the real system (26-apis.md), an opaque tag here since Phase 1 has no
 /// Capability contract compiler yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SchemaId(pub u32);
 
 /// What a [`crate::Channel`] is for, per docs/30-ipc-framework.md §Data
@@ -30,7 +30,7 @@ pub enum Route {
 }
 
 bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     pub struct FrameFlags: u8 {
         const CALL       = 0b0000_0001;
         const REPLY      = 0b0000_0010;

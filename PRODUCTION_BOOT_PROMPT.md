@@ -94,7 +94,7 @@ below assume UEFI.
 | M0 — Toolchain, decision record, QEMU harness | done |
 | M1 — Bootable "Hello Hyperion" image (the literal ask) | done (QEMU); real-hardware USB boot needs the user |
 | M2 — Real capability/Trust-Boundary enforcement | done |
-| M3 — Real IPC transport | pending |
+| M3 — Real IPC transport | done |
 | M4 — Real scheduler enforcement (cgroups v2) | pending |
 | M5 — Real init & supervision tree | pending |
 | M6 — Real persistent storage | pending |
@@ -176,6 +176,52 @@ can perform or verify — no physical hardware or USB drive is reachable from he
 safety warning are in `boot/README.md`. This is a genuine handoff to the user, not a gap glossed
 over: someone needs to run that command against real hardware and confirm the same banner/shell
 appears before M1 can be marked fully, unconditionally done.
+
+**M3 completion note (2026-07-11):** `hyperion-ipc` gains a real transport (`Endpoint`, in a new
+`transport` module) alongside the existing in-process `IpcBus` simulator, reusing `Frame`,
+`Channel`, `Request`/`Response`/`Notification`, and the call/notify semantics as-is per the reuse
+map — only what actually carries a frame between two real, separate Linux processes (real Unix
+domain datagram sockets) is new. `FrameBody::Region` has no wire form yet (a shared-memory region
+needs real shared memory, not JSON bytes on a socket — an explicitly out-of-scope follow-on, not
+silently broken: sending one over the real transport fails clearly with `IpcFault::SchemaMismatch`).
+
+Getting this far surfaced a real security question, not just a plumbing one: `CapabilityToken`'s
+fields are `pub(crate)`-only by design, so naively deriving `Serialize` on it (the obvious way to
+put it on a wire) would have made it constructible from arbitrary bytes anyone could send over a
+socket — any process could forge a token claiming any rights over any object it liked. Worse, this
+would have been silently exploitable: the *existing* revocation graph only ever tracked a
+token's generation, never its rights/object, because in-process the only thing standing between
+"a token" and "an arbitrary forged struct" was Rust's own module privacy — sufficient until a
+token's fields could arrive as data from outside the process at all. Fixed at the root, in
+`hyperion-capability` (not routed around in `hyperion-ipc`): the revocation graph now records the
+`object_id`/`rights` each token was actually minted or derived with, and every liveness check
+verifies a presented token's claims against that record, not just its generation. A new
+`WireToken` type (plain, serializable, carries only a *claim*) and
+`CapabilityMonitor::authenticate_wire_token` (the only path from wire bytes to a real, usable
+`CapabilityToken`, and only after independently validating the claim) are what `hyperion-ipc`
+actually puts on the socket — `CapabilityToken` itself still has no `Serialize` impl at all, on
+purpose. Three new unit tests in `hyperion-capability` (forged rights, forged object, forged
+derived-child rights) prove escalation attempts are rejected; this is a real, unconditional
+security property now, not contingent on M9's future cryptography — what crypto adds later is
+confidentiality/replay-resistance for a token *observed* in transit, a different, narrower gap,
+documented explicitly on `WireToken` rather than conflated with the forgery question this closes.
+
+Proven end to end by a real two-process test (`hyperion-ipc/tests/real_transport.rs`): a
+genuinely separate, `exec`'d client process (`ipc_client_probe`, holding only a `WireToken` claim
+passed via an environment variable — no local monitor of its own, the realistic shape for a real
+IPC client) makes a real call over a real socket to a server running in the test process (which
+owns the authoritative `CapabilityMonitor`); the call round-trips for real
+(`CALL_OK:pong`), then the token is revoked and an identical second call from a fresh client
+process is rejected at `authenticate()` — the transport boundary — with the rejection
+attributable to revocation specifically, not a generic failure. Deliberately verified this wasn't
+a vacuous pass (same discipline as M1's and M2's caught false positives): temporarily removed the
+`cap_revoke` call and confirmed the test fails without it before restoring it. Note on scope: the
+client here is *not* additionally run under M2's Landlock/seccomp sandbox (that would need
+allowlisting `AF_UNIX` socket syscalls and Landlock `MakeSock` rights, a real but separable
+extension) — the security property the exit criteria actually cares about ("not just a
+library-level check the process could route around if it weren't actually sandboxed") holds
+regardless, because rejection is enforced by the server's independent re-validation against the
+real monitor, not by anything the client itself does or refrains from doing.
 
 ## 4. Milestones
 

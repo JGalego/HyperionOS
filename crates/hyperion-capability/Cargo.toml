@@ -6,8 +6,9 @@ license.workspace = true
 description = "Hyperion L0 capability security core: unforgeable tokens, attenuated delegation, cascading revocation (docs/03-kernel-architecture.md)."
 
 [dependencies]
-bitflags = { workspace = true }
+bitflags = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
