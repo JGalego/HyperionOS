@@ -95,7 +95,7 @@ below assume UEFI.
 | M1 — Bootable "Hello Hyperion" image (the literal ask) | done (QEMU); real-hardware USB boot needs the user |
 | M2 — Real capability/Trust-Boundary enforcement | done |
 | M3 — Real IPC transport | done |
-| M4 — Real scheduler enforcement (cgroups v2) | pending |
+| M4 — Real scheduler enforcement (cgroups v2) | done |
 | M5 — Real init & supervision tree | pending |
 | M6 — Real persistent storage | pending |
 | M7 — Real console UI, then real display | pending |
@@ -222,6 +222,65 @@ extension) — the security property the exit criteria actually cares about ("no
 library-level check the process could route around if it weren't actually sandboxed") holds
 regardless, because rejection is enforced by the server's independent re-validation against the
 real monitor, not by anything the client itself does or refrains from doing.
+
+**M4 completion note (2026-07-11):** new crate `crates/hyperion-cgroups` maps
+`hyperion-scheduler`'s existing `ResourceVector`/DRF-weight math onto real Linux cgroups v2
+(`cpu.weight`, `memory.max`, `pids.max`) and real `SCHED_DEADLINE` — per the reuse map, no second
+fairness computation lives here, this crate only decides what real OS configuration *expresses* a
+decision `hyperion-scheduler` already made. `cpu_weight_for` maps a DRF `priority_weight` linearly
+around cgroup v2's own default (100), so `priority_weight = 1.0` (docs/04's baseline) lands exactly
+on equal real CFS shares, matching DRF's equal-weight baseline with the same notion of "equal."
+`SCHED_DEADLINE` is applied via the raw `sched_setattr(2)` syscall (no libc wrapper exists for it)
+rather than `SCHED_RR`, deliberately: docs/04's `RealTimeUI` class is already EDF-dispatched in
+`hyperion-scheduler`'s own algorithm, and `SCHED_DEADLINE` is a real in-kernel EDF implementation,
+so applying it doesn't approximate the algorithm, it *is* the algorithm, kernel-enforced instead of
+in-memory-sorted.
+
+A real, non-obvious mapping bug surfaced by the crate's own unit tests (not foreseen from reading
+the cgroup v2 docs alone): `f32::max` resolves a `NaN` argument by returning the *other* value
+(`f32::NAN.max(0.0)` is `0.0`, not `NaN`), so an `is_finite()` check placed *after* the weight
+multiplication let `NaN` silently collapse to the minimum cgroup weight while `+Infinity` correctly
+mapped to the default — two equally-invalid inputs treated inconsistently. Caught by
+`weight_clamps_to_cgroup_v2s_valid_range` failing (`left: 1, right: 100`) the first time both were
+asserted together; fixed by checking `is_finite()` before any arithmetic, so both map to the same
+default.
+
+Proven for real by `tests/real_fairness.rs`: real `fork()`-ed CPU-burner processes (more than this
+host's core count, so CFS is actually forced to arbitrate rather than both classes running
+unopposed on separate cores) join two real, `hyperion-cgroups`-configured cgroups
+(`INTERACTIVE_WEIGHT = 2.0`, `BACKGROUND_WEIGHT = 1.0` — the same weights and claim as
+`hyperion-scheduler/tests/synthetic_workload.rs`), and the winning share is measured from real
+kernel `cpu.stat` `usage_usec` accounting, not in-memory ledger state — the literal M4 exit
+criterion. Deliberately verified non-vacuous the same way as M1-M3's caught false positives:
+temporarily set both weights equal and confirmed the ratio assertion actually fails (got a real
+`0.99x`, not the required `>1.2x`) before restoring the real `2.0`/`1.0` split and confirming a
+clean pass.
+
+Getting this test to run at all surfaced a genuine environment requirement, documented rather than
+routed around: a process joining a cgroup must itself already be inside a delegated subtree,
+because moving a process *out* of its current cgroup needs write access to that cgroup's own
+`cgroup.procs`, not just the destination's — and a plain `cargo test` starts in the root cgroup
+(`0::/`), which this uid can't write to at all. Diagnosed by hand (manual bash reproduction, then a
+minimal standalone Rust repro) before finding the fix: run the compiled test binary already inside
+a delegated scope, e.g. `systemd-run --user --scope --quiet -- "$TESTBIN"`. Rather than let
+`cargo test --workspace` either fail on this precondition or silently need every caller to know a
+launcher flag this crate can't enforce, the test checks the precondition itself
+(`running_within_delegated_scope()`, via `/proc/self/cgroup`) and skips with a clear explanatory
+message when unmet, keeping the ordinary workspace-wide gate meaningfully green while still running
+the real, meaningful assertion whenever the precondition holds — under `systemd-run --user --scope`
+here, or inside any real supervision tree (M5's real `hyperion-init`, running as real root,
+delegating a subtree to its children directly). This is a genuine sandbox/test-launch requirement,
+not a code bug, and won't apply to the real booted system.
+
+Two things implemented but deliberately not wired to a live effect yet, both explained in the
+crate's own docs: (1) `io.max`'s line format (`mapping::io_max_line_for`) is unit-tested but not
+written anywhere — it needs a real block device's major:minor, which only exists once M6 gives this
+system real storage, and this sandbox's own cgroup delegation doesn't expose the `io` controller at
+all regardless (verified: absent from `cgroup.controllers` here). (2) `SCHED_DEADLINE` is verified
+to reach real kernel admission control — rejected with `EPERM`, proving the syscall is well-formed
+and really evaluated, not that it's unreachable — but this sandbox has no `CAP_SYS_NICE` and no
+`rtprio` rlimit budget to actually be granted the policy, a kernel privilege boundary this crate
+correctly respects rather than works around.
 
 ## 4. Milestones
 

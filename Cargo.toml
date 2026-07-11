@@ -5,6 +5,7 @@ members = [
     "crates/hyperion-ai-runtime",
     "crates/hyperion-api-gateway",
     "crates/hyperion-capability",
+    "crates/hyperion-cgroups",
     "crates/hyperion-context",
     "crates/hyperion-compat",
     "crates/hyperion-coordination",
@@ -46,6 +47,7 @@ hyperion-agent-runtime = { path = "crates/hyperion-agent-runtime" }
 hyperion-ai-runtime = { path = "crates/hyperion-ai-runtime" }
 hyperion-api-gateway = { path = "crates/hyperion-api-gateway" }
 hyperion-capability = { path = "crates/hyperion-capability" }
+hyperion-cgroups = { path = "crates/hyperion-cgroups" }
 hyperion-context = { path = "crates/hyperion-context" }
 hyperion-compat = { path = "crates/hyperion-compat" }
 hyperion-coordination = { path = "crates/hyperion-coordination" }
