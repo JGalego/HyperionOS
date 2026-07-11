@@ -285,7 +285,10 @@ name = "hyperion-netstack"
 version = "0.1.0"
 dependencies = [
  "hyperion-capability",
+ "hyperion-context",
  "hyperion-knowledge-graph",
+ "hyperion-storage",
+ "hyperion-workspace",
  "serde",
  "serde_json",
  "tempfile",

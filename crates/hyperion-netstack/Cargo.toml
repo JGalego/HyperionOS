@@ -7,10 +7,13 @@ repository.workspace = true
 
 [dependencies]
 hyperion-capability = { workspace = true }
+hyperion-context = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
+hyperion-workspace = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+hyperion-storage = { workspace = true }
 tempfile = { workspace = true }

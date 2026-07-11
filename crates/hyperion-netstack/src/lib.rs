@@ -23,6 +23,11 @@
 //! the Knowledge Graph via exact external identifier match or a
 //! token-overlap similarity proxy (see §5.4 below), writing typed
 //! relationship edges alongside the resolved entity in the same call.
+//! [`workspace_bridge::present_disambiguation_as_workspace`] surfaces
+//! docs/19 §10's human-in-the-loop disambiguation for real, compiling a
+//! [`types::SemanticObjectRef`] flagged `needs_review` through the real
+//! `hyperion-workspace` Phase 5 pipeline rather than leaving the flag
+//! sitting unused on the node's metadata.
 //!
 //! Deliberately deferred, and why:
 //!
@@ -65,10 +70,15 @@
 //!   System](../31-event-system.md)) — no Event System crate exists yet
 //!   in this workspace; the hook point is named in docs/19 §6 but not
 //!   wired here.
-//! - **Human-in-the-loop disambiguation UI.** `needs_review` is recorded
-//!   on the created node's metadata (§10); surfacing it through an active
-//!   Workspace is [13 — Dynamic UI Runtime](../13-dynamic-ui-runtime.md)'s
-//!   concern and not wired into this crate.
+//! - **A real, model-driven disambiguation *decision*.**
+//!   [`workspace_bridge::present_disambiguation_as_workspace`] now
+//!   surfaces a `needs_review`-flagged [`types::SemanticObjectRef`]
+//!   through a real, compiled `hyperion-workspace` Workspace (see this
+//!   crate's "Real:" section above) — but nothing here decides *what the
+//!   user chose*; this crate has no confirm/reject callback that would
+//!   feed back into `resolve::find_match`'s `MatchDecision`, since that
+//!   needs [13 — Dynamic UI Runtime](../13-dynamic-ui-runtime.md)'s own
+//!   real input/binding plumbing this hosted simulator doesn't run.
 //! - **`web.fetch.raw`'s real DOM/JS/cookie semantics for the
 //!   [27 — Compatibility Layer](../27-compatibility-layer.md).**
 //!   [`hub::NetstackHub::web_fetch_raw`] returns the mock backend's
@@ -82,6 +92,7 @@ mod hub;
 mod quarantine;
 mod resolve;
 mod types;
+mod workspace_bridge;
 
 pub use extract::{ExtractionBackend, MockExtractionBackend};
 pub use fetch::{FetchBackend, FetchError, MockFetchBackend};
@@ -91,3 +102,4 @@ pub use types::{
     FetchedPage, FreshnessPolicy, NetstackError, ObjectId, ResolutionCacheEntry, SemanticObjectRef,
     StructuredSignal, WebResolutionRequest,
 };
+pub use workspace_bridge::present_disambiguation_as_workspace;
