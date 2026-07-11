@@ -23,12 +23,17 @@ pub fn required_capabilities_for(predicate: &str) -> Vec<String> {
 /// target of [`required_capabilities_for`] — no HTN leaf predicate maps to
 /// it — because it exists for `hyperion-console`'s *undecomposed*-goal
 /// fallback (no template, no leaves, nothing for that function to be
-/// asked about), not for a template's own leaves.
+/// asked about), not for a template's own leaves. `"research"`'s own baseline
+/// capabilities gained `web.research` the same way (PRODUCTION_BOOT_PROMPT.md M10) — also never
+/// a target of [`required_capabilities_for`], for the same reason: it's `hyperion-console`'s
+/// *other* undecomposed-goal fallback (a URL-shaped utterance), not a template leaf. Purely
+/// additive: `market_research`'s own existing real 4-task-decomposition demo (M7) still only
+/// ever needs this same specialization's pre-existing `web.search`.
 pub fn default_manifests() -> Vec<AgentManifest> {
     vec![
         AgentManifest {
             specialization: "research".to_string(),
-            baseline_capabilities: vec!["web.search".to_string()],
+            baseline_capabilities: vec!["web.search".to_string(), "web.research".to_string()],
             requestable_capabilities: Vec::new(),
             trust_tier: TrustTier::System,
         },

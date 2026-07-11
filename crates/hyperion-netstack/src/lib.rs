@@ -29,17 +29,24 @@
 //! `hyperion-workspace` Phase 5 pipeline rather than leaving the flag
 //! sitting unused on the node's metadata.
 //!
+//! PRODUCTION_BOOT_PROMPT.md M10 adds real HTTP/TLS/DNS behind a new `real-http` Cargo feature
+//! (off by default, same reason `hyperion-ai-runtime`'s `candle` feature is): [`fetch::ReqwestFetchBackend`]
+//! is a real [`fetch::FetchBackend`] (real `reqwest` blocking client, real rustls TLS with a
+//! *bundled* root store, real DNS) and [`extract::HtmlHeuristicExtractionBackend`] is a real
+//! [`extract::ExtractionBackend`] (real `<title>`/`<meta name="description">`/`<p>` tag parsing
+//! via `scraper`, no model in the loop). `MockFetchBackend`/`MockExtractionBackend` remain the
+//! default for every existing test. See each real type's own doc comment for what real HTML/DOM
+//! parsing and real transport-failure classification actually cover and don't.
+//!
 //! Deliberately deferred, and why:
 //!
-//! - **The real HTTP/1.1/2/3, TLS 1.3, and DNS stack.** Per this
-//!   workspace's hosted-simulator convention, [`fetch::FetchBackend`] is a
-//!   trait with a deterministic [`fetch::MockFetchBackend`] — no socket is
-//!   ever opened. Real transport failure *shapes* (DNS/TLS/timeout) are
-//!   modeled as [`fetch::FetchError`] variants a fixture can return.
-//! - **Real HTML/DOM parsing.** [`types::FetchedPage`] carries an already-
-//!   parsed [`types::StructuredSignal`] (standing in for a real
-//!   `schema.org`/JSON-LD/OpenGraph/microformat extractor) or raw
-//!   unstructured text — this crate never tokenizes HTML.
+//! - ~~**The real HTTP/1.1/2/3, TLS 1.3, and DNS stack.**~~ — now real for HTTP/1.1 + TLS 1.3 +
+//!   DNS (see the M10 note above); real HTTP/2/3(QUIC) specifically remain whatever `reqwest`'s
+//!   own default negotiation provides, not something this crate configures or asserts on.
+//! - **Real HTML/DOM parsing** beyond [`extract::HtmlHeuristicExtractionBackend`]'s real but
+//!   narrow `<title>`/`<meta name="description">`/`<p>` tag selectors — no real `schema.org`/
+//!   JSON-LD/OpenGraph microformat parser exists; [`types::FetchedPage::structured`] is always
+//!   `None` from the real fetch backend, exactly as from the mock one.
 //! - **Real embeddings for entity-resolution similarity (§5.4).** No
 //!   embedding producer exists in this pipeline (Phase 3's Local AI
 //!   Runtime embeddings were never wired into web extraction). A
@@ -94,7 +101,11 @@ mod resolve;
 mod types;
 mod workspace_bridge;
 
+#[cfg(feature = "real-http")]
+pub use extract::HtmlHeuristicExtractionBackend;
 pub use extract::{ExtractionBackend, MockExtractionBackend};
+#[cfg(feature = "real-http")]
+pub use fetch::ReqwestFetchBackend;
 pub use fetch::{FetchBackend, FetchError, MockFetchBackend};
 pub use hub::NetstackHub;
 pub use types::{

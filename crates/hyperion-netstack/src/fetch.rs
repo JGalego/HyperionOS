@@ -14,6 +14,15 @@ pub enum FetchError {
     Tls(String),
     #[error("timed out fetching {0}")]
     Timeout(String),
+    /// PRODUCTION_BOOT_PROMPT.md M10: a real connection-establishment failure that a real
+    /// backend's error classification could confirm was neither DNS nor TLS (e.g. TCP reset,
+    /// network unreachable) -- empirically, a real closed port in this workspace's own dev
+    /// sandbox doesn't even produce this shape (it hangs to a real client-side [`Self::Timeout`]
+    /// instead of an instant refusal, confirmed by direct probing before writing this variant),
+    /// but real hardware/networks can and do produce a real, fast refusal, and conflating that
+    /// with [`Self::Timeout`] would be less honest than naming it.
+    #[error("connection failed for {0}: {1}")]
+    ConnectionFailed(String, String),
     #[error("no fixture registered for {0}")]
     NotFound(String),
 }
@@ -83,5 +92,125 @@ impl FetchBackend for MockFetchBackend {
 impl FetchBackend for Arc<MockFetchBackend> {
     fn fetch(&self, canonical_url: &str) -> Result<FetchedPage, FetchError> {
         self.as_ref().fetch(canonical_url)
+    }
+}
+
+/// A real [`FetchBackend`] (PRODUCTION_BOOT_PROMPT.md M10) -- a real HTTP client, real TLS
+/// (rustls, with a *bundled* Mozilla root store rather than reading the OS's own trust store: the
+/// actual target rootfs ships no `ca-certificates` package today, so a verifier reading a
+/// nonexistent on-disk store would fail every real handshake on the booted image -- see this
+/// crate's own Cargo.toml feature comment), and real DNS resolution, all via `reqwest`'s blocking
+/// client -- the same synchronous-call-signature choice `hyperion-ai-runtime`'s M8 `CandleBackend`
+/// already established via `hf-hub`'s blocking client, so this crate's existing sync
+/// `FetchBackend` trait needs no async-runtime rework to host a real implementation.
+#[cfg(feature = "real-http")]
+pub struct ReqwestFetchBackend {
+    client: reqwest::blocking::Client,
+}
+
+#[cfg(feature = "real-http")]
+impl ReqwestFetchBackend {
+    /// A generous but bounded real timeout -- long enough for a real, slow origin, short enough
+    /// that a real hung connection doesn't block this crate's caller indefinitely.
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+    pub fn new() -> Result<Self, FetchError> {
+        Self::with_timeout(Self::TIMEOUT)
+    }
+
+    /// As [`Self::new`], with a caller-chosen timeout -- real production callers have no reason
+    /// to need this (see [`Self::TIMEOUT`]'s own reasoning), but a real test proving a real
+    /// timeout is detected shouldn't have to wait out the full production duration to prove it.
+    pub fn with_timeout(timeout: std::time::Duration) -> Result<Self, FetchError> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(timeout)
+            // hub.rs's own redirect-following loop re-canonicalizes and re-checks SSRF at every
+            // hop (docs/19's own real security requirement) -- if this client silently followed
+            // redirects itself, every intermediate hop would bypass that per-hop check entirely.
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| {
+                FetchError::ConnectionFailed("<client init>".to_string(), e.to_string())
+            })?;
+        Ok(ReqwestFetchBackend { client })
+    }
+
+    /// Real error classification, based on this backend's own real, empirically-observed error
+    /// shapes (probed directly against a real nonexistent domain, a real expired-certificate
+    /// host, and a real slow endpoint before writing this function, not guessed from
+    /// documentation): both a real DNS failure and a real TLS failure report
+    /// `reqwest::Error::is_connect() == true`, distinguished only by their error source chain's
+    /// message; a real timeout (including, in this workspace's own dev sandbox, a real closed
+    /// port that never sends a real TCP reset) reports `is_timeout() == true` directly.
+    fn classify_error(url: &str, err: &reqwest::Error) -> FetchError {
+        use std::error::Error as _;
+
+        if err.is_timeout() {
+            return FetchError::Timeout(url.to_string());
+        }
+        if err.is_connect() {
+            let mut cause = err.source();
+            while let Some(source) = cause {
+                let msg = source.to_string().to_lowercase();
+                if msg.contains("dns") || msg.contains("lookup") || msg.contains("name or service")
+                {
+                    return FetchError::Dns(url.to_string());
+                }
+                if msg.contains("certificate")
+                    || msg.contains("tls")
+                    || msg.contains("invalid peer")
+                {
+                    return FetchError::Tls(url.to_string());
+                }
+                cause = source.source();
+            }
+            return FetchError::ConnectionFailed(url.to_string(), err.to_string());
+        }
+        FetchError::ConnectionFailed(url.to_string(), err.to_string())
+    }
+}
+
+#[cfg(feature = "real-http")]
+impl FetchBackend for ReqwestFetchBackend {
+    fn fetch(&self, canonical_url: &str) -> Result<FetchedPage, FetchError> {
+        let response = self
+            .client
+            .get(canonical_url)
+            .send()
+            .map_err(|e| Self::classify_error(canonical_url, &e))?;
+
+        let status = response.status();
+        if status.is_redirection() {
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            return Ok(FetchedPage {
+                // A malformed redirect with no real Location header re-visits the same
+                // canonical form, which hub.rs's own loop already treats as "already visited" --
+                // a safe, real bail-out rather than an infinite loop.
+                final_url: Some(location.unwrap_or_else(|| canonical_url.to_string())),
+                structured: None,
+                text: String::new(),
+                robots_disallowed: false,
+                rate_limited: false,
+            });
+        }
+
+        let rate_limited = status.as_u16() == 429;
+        let text = response
+            .text()
+            .map_err(|e| Self::classify_error(canonical_url, &e))?;
+        Ok(FetchedPage {
+            final_url: None,
+            // Real schema.org/JSON-LD/OpenGraph parsing remains this crate's own already-named
+            // deferred gap -- this real backend always returns unstructured text, same as before.
+            structured: None,
+            text,
+            // Real robots.txt fetch/parse is this crate's own already-named deferred gap too.
+            robots_disallowed: false,
+            rate_limited,
+        })
     }
 }

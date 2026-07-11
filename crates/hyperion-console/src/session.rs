@@ -23,10 +23,18 @@ use hyperion_coordination::CoordinationSession;
 use hyperion_crypto::Keystore;
 use hyperion_intent::{HandleOutcome, IntentEngine};
 use hyperion_knowledge_graph::{GraphError, KnowledgeGraph, NodeId};
+use hyperion_netstack::{DomainEgressGrant, NetstackHub};
 use hyperion_workspace::{
     project, CapabilityUiContract, ComplexityTier, Modality, ModalityInterface, RegionAffinity,
     WorkspaceCompiler,
 };
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before Unix epoch")
+        .as_secs()
+}
 
 /// One real outcome (an HTN task, or the single undecomposed goal) about to be rendered as one
 /// real Workspace panel.
@@ -59,10 +67,34 @@ impl ConsoleSession {
         let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
         let graph = Arc::new(KnowledgeGraph::open(&kg_path)?);
         let context = Arc::new(hyperion_context::ContextEngine::new(graph.clone()));
+        let netstack = Arc::new(Self::build_netstack(graph.clone()));
         let intent_engine = IntentEngine::new(graph, context.clone());
         let ai_runtime = Arc::new(Self::build_ai_runtime(data_dir.as_ref()));
-        let agent_runtime = Arc::new(AgentRuntime::new(ai_runtime));
+        let agent_runtime = Arc::new(AgentRuntime::new_with_netstack(
+            ai_runtime,
+            Some(netstack.clone()),
+        ));
         let coordination = CoordinationSession::new(agent_runtime.clone());
+
+        // A real, permissive domain-egress grant for this session's own root token, minted once
+        // here rather than per-call: a real interactive assistant can't pre-enumerate every real
+        // domain a user might ask about, so this uses the real "*" wildcard pattern
+        // (PRODUCTION_BOOT_PROMPT.md M10 -- see `hyperion_netstack::hub`'s own `domain_matches`
+        // doc comment for what this does and doesn't loosen: SSRF containment and the grant's
+        // own rate limit still apply regardless of which domain pattern matched).
+        let _ = netstack.grant_domain_egress(
+            &monitor,
+            &token,
+            &token,
+            DomainEgressGrant {
+                domain_patterns: vec!["*".to_string()],
+                rate_limit_per_window: 100,
+                window_secs: 60,
+                max_depth: 1,
+                expiry: None,
+            },
+            now(),
+        );
 
         Ok(ConsoleSession {
             monitor,
@@ -137,6 +169,49 @@ impl ConsoleSession {
         runtime
     }
 
+    /// Real network selection for this session's own `web.research` calls (see
+    /// [`Self::run_web_research`]) -- a real [`hyperion_netstack::ReqwestFetchBackend`] +
+    /// [`hyperion_netstack::HtmlHeuristicExtractionBackend`] when this binary is built with
+    /// `--features real-http`, [`hyperion_netstack::MockFetchBackend`]/
+    /// [`hyperion_netstack::MockExtractionBackend`] otherwise -- the exact same "swap the
+    /// backend, not the call site" principle [`Self::build_ai_runtime`] already established for
+    /// M8 (PRODUCTION_BOOT_PROMPT.md M10). Off by default for the same reason: a real release
+    /// image opts in explicitly; every host-side dev/test build of this console stays fast and
+    /// network-free. Falls back to the mock backends (degrading, never panicking the whole
+    /// console) if a `real-http` build's real client init fails for any reason.
+    fn build_netstack(graph: Arc<KnowledgeGraph>) -> NetstackHub {
+        #[cfg(feature = "real-http")]
+        let (fetch_backend, extraction_backend): (
+            Box<dyn hyperion_netstack::FetchBackend>,
+            Box<dyn hyperion_netstack::ExtractionBackend>,
+        ) = match hyperion_netstack::ReqwestFetchBackend::new() {
+            Ok(backend) => (
+                Box::new(backend),
+                Box::new(hyperion_netstack::HtmlHeuristicExtractionBackend),
+            ),
+            Err(e) => {
+                eprintln!(
+                    "warning: real HTTP client init failed ({e}); falling back to the mock \
+                     network backend for this session"
+                );
+                (
+                    Box::new(hyperion_netstack::MockFetchBackend::new()),
+                    Box::new(hyperion_netstack::MockExtractionBackend),
+                )
+            }
+        };
+        #[cfg(not(feature = "real-http"))]
+        let (fetch_backend, extraction_backend): (
+            Box<dyn hyperion_netstack::FetchBackend>,
+            Box<dyn hyperion_netstack::ExtractionBackend>,
+        ) = (
+            Box::new(hyperion_netstack::MockFetchBackend::new()),
+            Box::new(hyperion_netstack::MockExtractionBackend),
+        );
+
+        NetstackHub::new(graph, fetch_backend, extraction_backend)
+    }
+
     /// Real utterance in, real rendered text lines out -- M7 stage 1's exit criterion, this
     /// function *is* the pipeline it names: "a real utterance... produces a real Intent Graph, a
     /// real Agent invocation, and real text output." Never returns an `Err`: any real failure
@@ -206,11 +281,21 @@ impl ConsoleSession {
     /// session runs by default cannot reliably follow a "decompose this into steps" instruction,
     /// and fabricating leaf tasks from output it can't actually produce reliably would be the
     /// "pretend" that crate's own doc comment already rules out.
+    ///
+    /// PRODUCTION_BOOT_PROMPT.md M10: an utterance containing something that looks like a real
+    /// URL routes to [`Self::run_web_research`] instead -- a real, minimal, deterministic
+    /// utterance-shape check (not a general NLU pipeline), matching the same
+    /// deterministic-keyword-matching convention `hyperion-intent`'s own `URGENCY_KEYWORDS`/
+    /// `CANCEL_KEYWORDS` already use.
     fn run_undecomposed_goal(
         &mut self,
         root: NodeId,
         utterance: &str,
     ) -> (String, Vec<TaskOutcome>) {
+        if let Some(url) = extract_url(utterance) {
+            return self.run_web_research(root, url);
+        }
+
         let manifest = hyperion_coordination::default_manifests()
             .into_iter()
             .find(|m| m.specialization == "assistant")
@@ -233,6 +318,63 @@ impl ConsoleSession {
                         Ok(InvokeOutcome::Result(value)) => {
                             let text = value.get("text").and_then(|v| v.as_str()).unwrap_or("");
                             format!("done -- {text}")
+                        }
+                        Ok(InvokeOutcome::Denied) => "denied".to_string(),
+                        Ok(InvokeOutcome::PendingConsent) => "needs your consent first".to_string(),
+                        Ok(InvokeOutcome::QuotaExceeded) => "over quota right now".to_string(),
+                        Ok(InvokeOutcome::Failed(reason)) => format!("failed -- {reason}"),
+                        Err(e) => format!("failed -- {e}"),
+                    }
+                }
+                Err(e) => format!("failed -- couldn't start an Agent: {e}"),
+            };
+
+        (
+            "generic_goal".to_string(),
+            vec![TaskOutcome {
+                predicate: "generic_goal".to_string(),
+                detail,
+            }],
+        )
+    }
+
+    /// PRODUCTION_BOOT_PROMPT.md M10's real deliverable: a URL-shaped undecomposed goal drives
+    /// the "research" specialization's real `web.research` capability -- a real fetch over the
+    /// real network, a real (non-model) HTML extraction, and a real merge into this session's
+    /// own real Knowledge Graph via [`Self::build_netstack`], not a stub. Reuses the same real
+    /// `AgentRuntime::spawn`/`invoke` mechanism every other action in this pipeline goes through,
+    /// gated by the exact same Broker/quota/circuit-breaker checks.
+    fn run_web_research(&mut self, root: NodeId, url: &str) -> (String, Vec<TaskOutcome>) {
+        let manifest = hyperion_coordination::default_manifests()
+            .into_iter()
+            .find(|m| m.specialization == "research")
+            .expect("default_manifests always includes the research specialization");
+
+        let detail =
+            match self
+                .agent_runtime
+                .spawn(&self.monitor, &self.token, manifest, Some(root.0))
+            {
+                Ok(instance_id) => {
+                    let args = serde_json::json!({ "url": url });
+                    match self.agent_runtime.invoke(
+                        &self.monitor,
+                        &self.token,
+                        instance_id,
+                        "web.research",
+                        args,
+                    ) {
+                        Ok(InvokeOutcome::Result(value)) => {
+                            let needs_review = value
+                                .get("needs_review")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            if needs_review {
+                                "done -- merged, but flagged for your review (an ambiguous match)"
+                                    .to_string()
+                            } else {
+                                "done -- merged into the knowledge graph".to_string()
+                            }
                         }
                         Ok(InvokeOutcome::Denied) => "denied".to_string(),
                         Ok(InvokeOutcome::PendingConsent) => "needs your consent first".to_string(),
@@ -376,6 +518,19 @@ impl ConsoleSession {
             ),
         }
     }
+}
+
+/// A minimal, real, deterministic utterance-shape recognizer (PRODUCTION_BOOT_PROMPT.md M10) --
+/// not a general NLU pipeline, just "does this utterance contain something that looks like a
+/// URL," matching the same deterministic-keyword-matching convention `hyperion-intent`'s own
+/// `URGENCY_KEYWORDS`/`CANCEL_KEYWORDS` already use. A trailing punctuation mark immediately
+/// after the URL (e.g. a sentence-ending period) is not stripped -- a real, named imperfection,
+/// not silently assumed correct; precise control just means not punctuating immediately after
+/// a URL.
+fn extract_url(utterance: &str) -> Option<&str> {
+    utterance
+        .split_whitespace()
+        .find(|word| word.starts_with("http://") || word.starts_with("https://"))
 }
 
 fn contract_for(capability_ref: &str, label: &str) -> CapabilityUiContract {

@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 hyperion-ai-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
+hyperion-netstack = { workspace = true }
 hyperion-scheduler = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

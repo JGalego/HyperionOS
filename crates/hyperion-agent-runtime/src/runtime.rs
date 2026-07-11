@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_netstack::{FreshnessPolicy, NetstackHub, WebResolutionRequest};
 use hyperion_scheduler::{
     AgentId, IntentId, ResourceDimension, ResourceLedger, ResourceVector, SchedClass, Scheduler,
     TaskDescriptor, TaskId,
@@ -22,6 +23,9 @@ use crate::types::{
 /// genuinely new Capability rather than a third stub, and PRODUCTION_BOOT_PROMPT.md's M8 note
 /// for why the fallback path needed a real one at all.
 const ASSISTANT_RESPOND_CAPABILITY: &str = "assistant.respond";
+/// PRODUCTION_BOOT_PROMPT.md M10's real Capability alongside `assistant.respond` -- see
+/// [`AgentRuntime::dispatch_web_research`]'s own doc comment.
+const WEB_RESEARCH_CAPABILITY: &str = "web.research";
 
 fn now() -> u64 {
     SystemTime::now()
@@ -64,10 +68,30 @@ pub struct AgentRuntime {
     /// "swap the backend, not the call site" principle `hyperion-ai-runtime` and
     /// `hyperion-api-gateway` already established for M8.
     ai_runtime: Arc<LocalAiRuntime>,
+    /// Real backend for [`WEB_RESEARCH_CAPABILITY`] — see [`Self::dispatch_web_research`].
+    /// `Option`, not a required constructor parameter like `ai_runtime`: unlike inference (every
+    /// real caller of this runtime wants `assistant.respond` available), only the one real
+    /// interactive console instance needs real network access wired up. Threading a
+    /// `NetstackHub` (itself needing a real `Arc<KnowledgeGraph>`) through this struct's
+    /// constructor would force all 13 existing call sites -- most of which have no Knowledge
+    /// Graph of their own at all (`hyperion-federation`'s per-device instances, most of this
+    /// crate's own tests) -- to acquire one just to satisfy a parameter they'd never use. See
+    /// [`Self::new_with_netstack`].
+    netstack: Option<Arc<NetstackHub>>,
 }
 
 impl AgentRuntime {
     pub fn new(ai_runtime: Arc<LocalAiRuntime>) -> Self {
+        Self::new_with_netstack(ai_runtime, None)
+    }
+
+    /// As [`Self::new`], additionally wiring a real [`NetstackHub`] so `web.research` dispatches
+    /// to real network fetch/extraction/Knowledge-Graph-merge instead of falling through to
+    /// [`stubs::dispatch`]'s catch-all echo (PRODUCTION_BOOT_PROMPT.md M10).
+    pub fn new_with_netstack(
+        ai_runtime: Arc<LocalAiRuntime>,
+        netstack: Option<Arc<NetstackHub>>,
+    ) -> Self {
         let mut scheduler = Scheduler::new();
         // One nominal dimension stands in for "a Capability invocation's
         // resource footprint" — `DEFAULT_QUOTA` reused as the ledger's
@@ -86,6 +110,7 @@ impl AgentRuntime {
             scheduler: Mutex::new(scheduler),
             next_task_id: AtomicU64::new(1),
             ai_runtime,
+            netstack,
         }
     }
 
@@ -244,6 +269,8 @@ impl AgentRuntime {
 
         let dispatch_result = if capability_ref == ASSISTANT_RESPOND_CAPABILITY {
             self.dispatch_assistant_respond(monitor, token, &args)
+        } else if capability_ref == WEB_RESEARCH_CAPABILITY && self.netstack.is_some() {
+            self.dispatch_web_research(monitor, token, instance_id, &args)
         } else {
             stubs::dispatch(capability_ref, &args)
         };
@@ -312,6 +339,50 @@ impl AgentRuntime {
         self.ai_runtime
             .infer(monitor, token, ModelClass::Slm, &contract, &request)
             .map(|result| serde_json::json!({ "text": result.text }))
+            .map_err(|e| e.to_string())
+    }
+
+    /// PRODUCTION_BOOT_PROMPT.md M10's real Capability: dispatches to a real, caller-supplied
+    /// [`NetstackHub`] instead of [`stubs::dispatch`]'s catch-all echo -- the real fix for the
+    /// same two-link dead chain M8 found for `assistant.respond`, one milestone later:
+    /// `hyperion-netstack` had zero real (non-test) callers anywhere in this workspace, and
+    /// `hyperion-compat` (the one crate that *did* call it for real) was itself never constructed
+    /// outside its own tests. Reachable here only when [`Self::netstack`] is `Some` (see that
+    /// field's own doc comment on why it's optional, unlike `ai_runtime`) -- when it's `None`,
+    /// `"web.research"` falls through to `stubs::dispatch`'s generic `{"echo": ..., "args": ...}`
+    /// case, same as any other undeclared capability, rather than a hard failure.
+    fn dispatch_web_research(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        instance_id: u64,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let netstack = self
+            .netstack
+            .as_ref()
+            .ok_or_else(|| "no real network backend is wired up for this runtime".to_string())?;
+        let url = args
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let request = WebResolutionRequest {
+            origin: url,
+            agent_id: instance_id,
+            purpose: "agent-initiated web research".to_string(),
+            freshness: FreshnessPolicy::UseCache,
+            depth: 0,
+        };
+        netstack
+            .web_research(monitor, token, &request, now())
+            .map(|result| {
+                serde_json::json!({
+                    "object_id": result.object_id.0,
+                    "stale": result.stale,
+                    "needs_review": result.needs_review,
+                })
+            })
             .map_err(|e| e.to_string())
     }
 

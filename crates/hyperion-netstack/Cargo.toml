@@ -13,7 +13,22 @@ hyperion-workspace = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+reqwest = { version = "0.12", optional = true, default-features = false, features = [
+    "blocking",
+    "rustls-tls-webpki-roots",
+] }
+scraper = { version = "0.20", optional = true }
 
 [dev-dependencies]
 hyperion-storage = { workspace = true }
 tempfile = { workspace = true }
+
+[features]
+# Real, feature-gated HTTP/TLS/DNS (PRODUCTION_BOOT_PROMPT.md M10) -- off by default for the same
+# reason hyperion-ai-runtime's own `candle` feature is: every host-side dev/test build of this
+# crate stays fast and network-free on MockFetchBackend/MockExtractionBackend; a real boot/release
+# build opts in explicitly. `rustls-tls-webpki-roots` (a bundled Mozilla root store compiled into
+# the binary) rather than the platform-native-certs default -- see real_fetch.rs's own doc comment
+# for why: the actual target rootfs ships no ca-certificates package today, so a verifier that
+# reads the OS's own trust store from disk would fail every real handshake on the booted image.
+real-http = ["dep:reqwest", "dep:scraper"]

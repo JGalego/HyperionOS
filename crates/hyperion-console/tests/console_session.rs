@@ -81,6 +81,32 @@ fn an_unmatched_utterance_still_produces_a_real_agent_invocation_as_text() {
 }
 
 #[test]
+fn a_url_shaped_utterance_routes_to_a_real_web_research_dispatch_not_assistant_respond() {
+    let (_dir, mut session) = open_session();
+
+    let lines = session.handle_utterance("what does https://example.com/ say?");
+    let joined = lines.join("\n");
+
+    assert!(!lines.is_empty());
+    // This session's own internal MockFetchBackend (PRODUCTION_BOOT_PROMPT.md M10 -- see
+    // `ConsoleSession::build_netstack`) has no fixture registered for this URL (it's fully
+    // encapsulated inside the session, not reachable from this test), so the real
+    // `NetstackHub::web_research` call really runs, really misses its cache and its mock fetch
+    // backend, and really degrades to a real stub node -- proving the real dispatch wiring
+    // reaches `hyperion-netstack` at all, distinct from `assistant.respond`'s own real inference
+    // path (which would instead echo the prompt via `MockBackend`, per the test above).
+    assert!(
+        joined.contains("merged into the knowledge graph"),
+        "expected the real web.research dispatch's own success text, got: {joined:?}"
+    );
+    assert!(
+        !joined.contains("echo:"),
+        "a URL-shaped utterance must not fall through to assistant.respond's own mock echo, got: \
+         {joined:?}"
+    );
+}
+
+#[test]
 fn each_turn_is_independent_and_the_session_keeps_working_across_many_turns() {
     let (_dir, mut session) = open_session();
 

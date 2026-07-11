@@ -18,6 +18,7 @@ hyperion-coordination = { workspace = true }
 hyperion-crypto = { workspace = true }
 hyperion-intent = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
+hyperion-netstack = { workspace = true }
 hyperion-workspace = { workspace = true }
 serde_json = { workspace = true }
 
@@ -31,3 +32,7 @@ tempfile = { workspace = true }
 # image build opts in explicitly; every host-side dev/test build stays fast and network-free
 # on `MockBackend`.
 candle = ["hyperion-ai-runtime/candle"]
+# Real, feature-gated HTTP/TLS/DNS for this console's own real `web.research` Capability call
+# (PRODUCTION_BOOT_PROMPT.md M10) -- same reasoning as `candle` above, forwarding to
+# `hyperion-netstack`'s own `real-http` feature.
+real-http = ["hyperion-netstack/real-http"]

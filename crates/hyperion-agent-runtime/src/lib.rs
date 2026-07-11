@@ -43,6 +43,16 @@
 //! reaches). See [`runtime::AgentRuntime::dispatch_assistant_respond`]'s own doc comment for
 //! why this is a new Capability, not a third case inside an existing stub.
 //!
+//! PRODUCTION_BOOT_PROMPT.md M10 adds one more real Capability the same way: `web.research`
+//! dispatches through a real, caller-supplied [`hyperion_netstack::NetstackHub`] (see
+//! [`AgentRuntime::new_with_netstack`]) instead of the stub catch-all — real HTTP/TLS/DNS fetch,
+//! real HTML extraction, real merge into the real Knowledge Graph. Unlike `assistant.respond`,
+//! this backend is optional (`Option<Arc<NetstackHub>>`, defaulting to none via the unchanged
+//! [`AgentRuntime::new`]) since only the real interactive console needs it wired — see
+//! [`runtime::AgentRuntime::dispatch_web_research`]'s own doc comment for why this was, again, a
+//! real, separate wiring gap (`hyperion-netstack` had zero real callers anywhere in this
+//! workspace before this milestone) rather than just a backend swap.
+//!
 //! Deliberately deferred, and why:
 //!
 //! - **Real sandboxed processes.** There is no `sandbox_class`/container/

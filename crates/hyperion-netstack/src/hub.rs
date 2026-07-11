@@ -32,7 +32,18 @@ struct CircuitState {
     opened_at: Option<u64>,
 }
 
+/// PRODUCTION_BOOT_PROMPT.md M10: a bare `"*"` pattern matches any domain -- a real, deliberately
+/// minimal addition for a general-purpose interactive caller (`hyperion-console`'s own real
+/// undecomposed-goal fallback) that cannot pre-enumerate every real domain a user might ask
+/// about. This does *not* weaken this crate's other real security checks, which all still apply
+/// independently of which domain pattern matched: SSRF containment
+/// (`canonical::is_private_or_local`) still runs regardless, and the grant's own
+/// `rate_limit_per_window`/`max_depth`/`expiry` still bound abuse -- `"*"` removes only the
+/// pre-approved-domain-allowlist restriction, not this crate's other real enforcement.
 fn domain_matches(pattern: &str, domain: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
     match pattern.strip_prefix("*.") {
         Some(suffix) => domain == suffix || domain.ends_with(&format!(".{suffix}")),
         None => domain == pattern,
@@ -70,6 +81,7 @@ fn provenance(
         "extraction_method": match method {
             ExtractionMethod::StructuredData => "structured-data",
             ExtractionMethod::ModelBased => "model-based",
+            ExtractionMethod::HtmlHeuristic => "html-heuristic",
         },
         "confidence": confidence,
         "timestamp": now,

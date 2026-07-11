@@ -110,6 +110,52 @@ fn a_wildcard_subdomain_pattern_permits_matching_subdomains() {
 }
 
 #[test]
+fn a_bare_wildcard_pattern_permits_any_domain_but_other_checks_still_apply() {
+    let (monitor, root, hub, fetch, _graph) = setup();
+    // authorize_and_charge's rate-limit check runs *before* the SSRF check inside web_research,
+    // so the rate limit needs enough headroom (2) for the real-domain and the SSRF-target calls
+    // below to both reach their own real checks, with one more call left over to prove the rate
+    // limit itself still applies as the third, final call.
+    hub.grant_domain_egress(&monitor, &root, &root, grant(vec!["*"], 2, 5, None), 1_000)
+        .unwrap();
+    fetch.register(
+        "https://totally-unrelated-domain.example/a",
+        FetchedPage {
+            final_url: None,
+            structured: None,
+            text: "hello".to_string(),
+            robots_disallowed: false,
+            rate_limited: false,
+        },
+    );
+
+    assert!(hub
+        .web_research(
+            &monitor,
+            &root,
+            &request("https://totally-unrelated-domain.example/a"),
+            1_000,
+        )
+        .is_ok());
+
+    // "*" removes only the domain-allowlist restriction -- SSRF containment and the grant's own
+    // rate limit still apply independently, proven here against the exact same "*" grant.
+    assert!(matches!(
+        hub.web_research(&monitor, &root, &request("http://127.0.0.1/"), 1_000),
+        Err(NetstackError::SsrfBlocked(_))
+    ));
+    assert!(matches!(
+        hub.web_research(
+            &monitor,
+            &root,
+            &request("https://a-second-unrelated-domain.example/a"),
+            1_000,
+        ),
+        Err(NetstackError::RateLimited)
+    ));
+}
+
+#[test]
 fn a_request_deeper_than_max_depth_is_denied() {
     let (monitor, root, hub, _fetch, _graph) = setup();
     hub.grant_domain_egress(
