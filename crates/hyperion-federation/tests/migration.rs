@@ -58,6 +58,7 @@ fn an_agent_survives_migration_with_its_manifest_and_intent_intact() {
             agent,
             "web.search",
             serde_json::json!({"query": "restaurants"}),
+            42,
             1_020,
         )
         .unwrap();
@@ -110,12 +111,17 @@ fn invoke_agent_produces_a_real_completed_explanation_record() {
         agent,
         "web.search",
         serde_json::json!({"query": "hyperion os"}),
+        55,
         1_010,
     )
     .unwrap();
 
-    let records = hub.trace_intent(0);
-    assert_eq!(records.len(), 1);
+    let records = hub.trace_intent(55);
+    assert_eq!(
+        records.len(),
+        1,
+        "a real, caller-supplied triggering_intent_id must be a genuine correlation, not a sentinel"
+    );
     assert_eq!(records[0].agent_id, agent);
     assert_eq!(
         records[0].control_state,
@@ -176,6 +182,7 @@ fn spawn_agent_yields_a_bound_instance_ready_to_invoke() {
             agent,
             "web.search",
             serde_json::json!({"query": "x"}),
+            42,
             1_000,
         )
         .unwrap();

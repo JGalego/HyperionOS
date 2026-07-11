@@ -31,7 +31,13 @@
 //! agent, `transition` to `Completed`/`RolledBack`/`Interrupted` on the
 //! real outcome) — these were this crate's own two remaining direct
 //! `AgentRuntime::invoke` call sites `hyperion-coordination`'s own
-//! Explanation Record wiring didn't reach. [`FederationHub`] also holds
+//! Explanation Record wiring didn't reach. Both now take a real,
+//! caller-supplied `triggering_intent_id`, so a caller that drives a real
+//! `hyperion_intent::IntentEngine::submit` first gets a genuine
+//! correlation via [`FederationHub::trace_intent`], not a hardcoded
+//! sentinel — this crate still doesn't depend on `hyperion-intent`
+//! itself, since attributing a dispatch to an Intent needs no Intent
+//! Graph structure, only its id. [`FederationHub`] also holds
 //! one real `hyperion_observability::TelemetryCollector` per device
 //! (minted at [`FederationHub::join_device`], resolved by
 //! [`FederationHub::telemetry_for`]), and [`FederationHub::migrate`] is
@@ -44,10 +50,6 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **A real originating Intent id.** Neither dispatch method has a real
-//!   Intent concept to attribute its Explanation Record to yet, so both
-//!   record under the sentinel `triggering_intent_id = 0` — see
-//!   [`FederationHub::trace_intent`].
 //! - **One workspace-wide, shared Explanation Record store.** This hub's
 //!   store is private to it, not shared with `hyperion-coordination`'s or
 //!   `hyperion-api-gateway`'s own separate stores — the same deliberate

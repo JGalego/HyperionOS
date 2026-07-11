@@ -66,6 +66,7 @@ fn picks_the_lowest_latency_feasible_candidate() {
             &descriptor,
             "document.draft",
             serde_json::json!({"topic": "quarterly report"}),
+            42,
             1_000,
         )
         .unwrap();
@@ -97,12 +98,17 @@ fn dispatch_offload_produces_a_real_completed_explanation_record() {
         &descriptor,
         "web.search",
         serde_json::json!({"query": "hyperion os"}),
+        55,
         1_000,
     )
     .unwrap();
 
-    let records = hub.trace_intent(0);
-    assert_eq!(records.len(), 1);
+    let records = hub.trace_intent(55);
+    assert_eq!(
+        records.len(),
+        1,
+        "a real, caller-supplied triggering_intent_id must be a genuine correlation, not a sentinel"
+    );
     assert_eq!(
         records[0].control_state,
         hyperion_explainability::ControlState::Completed
@@ -129,6 +135,7 @@ fn unconsented_cloud_device_is_architecturally_invisible() {
         &descriptor,
         "web.search",
         serde_json::json!({"query": "x"}),
+        42,
         1_000,
     );
     assert!(matches!(result, Err(FederationError::NoFeasiblePlacement)));
@@ -152,6 +159,7 @@ fn consented_cloud_device_is_eligible() {
         &descriptor,
         "web.search",
         serde_json::json!({"query": "x"}),
+        42,
         1_000,
     );
     assert!(result.is_ok());
@@ -185,6 +193,7 @@ fn insufficient_headroom_is_infeasible() {
         &descriptor,
         "web.search",
         serde_json::json!({"query": "x"}),
+        42,
         1_000,
     );
     assert!(matches!(result, Err(FederationError::NoFeasiblePlacement)));
@@ -209,6 +218,7 @@ fn a_stale_ledger_is_excluded() {
         &descriptor,
         "web.search",
         serde_json::json!({"query": "x"}),
+        42,
         1_011,
     );
     assert!(matches!(result, Err(FederationError::NoFeasiblePlacement)));
@@ -233,6 +243,7 @@ fn a_deadline_excludes_a_too_slow_candidate() {
         &descriptor,
         "web.search",
         serde_json::json!({"query": "x"}),
+        42,
         1_000,
     );
     assert!(matches!(result, Err(FederationError::NoFeasiblePlacement)));
@@ -263,6 +274,7 @@ fn a_failing_candidate_is_invalidated_and_retried_against_the_next_one() {
         &descriptor,
         "web.search",
         serde_json::json!({"force_fail": true}),
+        42,
         1_000,
     );
     // Every candidate dispatches the same forced-failure args, so both

@@ -106,10 +106,11 @@ impl FederationHub {
         self.explanations.get(id)
     }
 
-    /// Every record this hub has opened under `intent_id` — federation
-    /// dispatches don't yet carry a real originating Intent id (no
-    /// concept exists at this layer), so every call currently records
-    /// under the sentinel `intent_id = 0`; see this crate's doc comment.
+    /// Every record this hub has opened under `intent_id` —
+    /// [`Self::dispatch_offload`]/[`Self::invoke_agent`] both take a real,
+    /// caller-supplied `triggering_intent_id` now, so this is a genuine
+    /// correlation whenever the caller passes one from a real
+    /// `hyperion_intent::IntentEngine::submit`, not a hardcoded sentinel.
     pub fn trace_intent(&self, intent_id: u64) -> Vec<ExplanationRecord> {
         self.explanations.trace_intent(intent_id)
     }
@@ -241,7 +242,14 @@ impl FederationHub {
     /// `dispatch_offload`: the privacy gate excludes candidates before any
     /// scoring runs (never merely deprioritizes), and a candidate that
     /// fails on arrival is invalidated with an automatic retry against the
-    /// next one, matching the doc's own retry loop.
+    /// next one, matching the doc's own retry loop. `triggering_intent_id`
+    /// is a caller-supplied real `hyperion-intent` Intent `NodeId.0` — this
+    /// crate does not itself depend on `hyperion-intent` (it has no need
+    /// to read Intent Graph structure, only to attribute this dispatch's
+    /// Explanation Record to whichever real Intent triggered it), so a
+    /// caller that never calls `IntentEngine::submit` at all may still
+    /// pass any sentinel `u64` it likes.
+    #[allow(clippy::too_many_arguments)]
     pub fn dispatch_offload(
         &self,
         monitor: &CapabilityMonitor,
@@ -249,6 +257,7 @@ impl FederationHub {
         descriptor: &OffloadDescriptor,
         capability_ref: &str,
         args: serde_json::Value,
+        triggering_intent_id: u64,
         now: u64,
     ) -> Result<serde_json::Value, FederationError> {
         self.require(monitor, token, RightsMask::EXEC)?;
@@ -273,7 +282,7 @@ impl FederationHub {
                 monitor,
                 token,
                 action_id,
-                0,
+                triggering_intent_id,
                 instance,
                 capability_ref,
                 vec![],
@@ -470,6 +479,10 @@ impl FederationHub {
         Ok(global_id)
     }
 
+    /// `triggering_intent_id` is a caller-supplied real `hyperion-intent`
+    /// Intent `NodeId.0` — see [`Self::dispatch_offload`]'s doc comment on
+    /// why this crate doesn't itself depend on `hyperion-intent` to get one.
+    #[allow(clippy::too_many_arguments)]
     pub fn invoke_agent(
         &self,
         monitor: &CapabilityMonitor,
@@ -477,6 +490,7 @@ impl FederationHub {
         global_agent_id: u64,
         capability_ref: &str,
         args: serde_json::Value,
+        triggering_intent_id: u64,
         now: u64,
     ) -> Result<InvokeOutcome, FederationError> {
         self.require(monitor, token, RightsMask::EXEC)?;
@@ -493,7 +507,7 @@ impl FederationHub {
             monitor,
             token,
             action_id,
-            0,
+            triggering_intent_id,
             global_agent_id,
             capability_ref,
             vec![],

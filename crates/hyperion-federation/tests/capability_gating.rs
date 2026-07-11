@@ -49,6 +49,7 @@ fn dispatch_offload_requires_exec_rights() {
         &descriptor,
         "web.search",
         serde_json::json!({}),
+        42,
         1_000,
     );
     assert!(matches!(result, Err(FederationError::Unauthorized)));
