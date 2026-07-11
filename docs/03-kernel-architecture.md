@@ -1,5 +1,17 @@
 # Kernel Architecture
 
+> **Implementation note (added 2026-07-11):** the hybrid microkernel this document specifies is
+> the long-term architectural target, not what the current bootable build actually runs. Per
+> [PRODUCTION_BOOT_PROMPT.md](../PRODUCTION_BOOT_PROMPT.md) §0's decision record, the first
+> bootable Hyperion targets a **Linux-hosted MVP**: a real Linux kernel supplies address-space
+> management, scheduling, and driver I/O, while this document's capability/Trust-Boundary model is
+> implemented as a real, enforced userspace layer on top of it (seccomp-bpf, Landlock, user/mount/pid/
+> net namespaces, cgroups v2) rather than as a privileged microkernel core written from scratch. Every
+> claim below that "the kernel enforces X" should be read as "the Linux-hosted enforcement layer
+> enforces X, using real kernel-level mechanisms it doesn't itself implement." This is a deliberate,
+> reversible divergence made explicitly, not a silent downgrade of the spec — see the decision record
+> for the full reasoning and non-goals.
+
 ## Purpose
 
 This document specifies Hyperion's L0 Kernel — the only layer in the stack defined in

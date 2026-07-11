@@ -218,6 +218,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-init"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "hyperion-intent"
 version = "0.1.0"
 dependencies = [

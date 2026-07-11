@@ -37,3 +37,36 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # PRODUCTION_BOOT_PROMPT.md M0/M1: the boot image is a separate build system
+  # (Buildroot), not a cargo workspace member, so it gets its own job rather
+  # than folding into `test`/`lint` above. Only runs when boot/ itself or the
+  # crates it packages (hyperion-init) change, since a from-scratch Buildroot
+  # build is much slower than the pure-Rust jobs above.
+  boot-image:
+    name: boot image (QEMU + OVMF)
+    runs-on: ubuntu-latest
+    if: >-
+      contains(github.event.head_commit.modified, 'boot/') ||
+      contains(github.event.head_commit.added, 'boot/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - name: Install qemu + OVMF + Buildroot host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf \
+            build-essential bc cpio rsync unzip file libncurses-dev
+      - name: Cache Buildroot download + build output
+        uses: actions/cache@v4
+        with:
+          path: boot/.tools
+          key: buildroot-${{ hashFiles('boot/scripts/fetch-buildroot.sh', 'boot/board/**', 'boot/configs/**') }}
+      - run: boot/scripts/build-image.sh
+      - run: boot/scripts/boot-test.sh
+        env:
+          BOOT_TEST_TIMEOUT: "300"

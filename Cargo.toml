@@ -11,6 +11,7 @@ members = [
     "crates/hyperion-device",
     "crates/hyperion-explainability",
     "crates/hyperion-federation",
+    "crates/hyperion-init",
     "crates/hyperion-intent",
     "crates/hyperion-ipc",
     "crates/hyperion-knowledge-graph",
@@ -50,6 +51,7 @@ hyperion-coordination = { path = "crates/hyperion-coordination" }
 hyperion-device = { path = "crates/hyperion-device" }
 hyperion-explainability = { path = "crates/hyperion-explainability" }
 hyperion-federation = { path = "crates/hyperion-federation" }
+hyperion-init = { path = "crates/hyperion-init" }
 hyperion-intent = { path = "crates/hyperion-intent" }
 hyperion-ipc = { path = "crates/hyperion-ipc" }
 hyperion-knowledge-graph = { path = "crates/hyperion-knowledge-graph" }
@@ -75,3 +77,4 @@ proptest = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
+libc = "0.2"
