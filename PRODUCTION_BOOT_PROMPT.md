@@ -98,7 +98,7 @@ below assume UEFI.
 | M4 — Real scheduler enforcement (cgroups v2) | done |
 | M5 — Real init & supervision tree | done |
 | M6 — Real persistent storage | done |
-| M7 — Real console UI, then real display | pending |
+| M7 — Real console UI, then real display | done (stage 1: text console); stage 2 (real display/compositor) explicitly deferred as its own project |
 | M8 — Real local AI runtime | pending |
 | M9 — Real cryptography | pending |
 | M10 — Real networking | pending |
@@ -418,6 +418,47 @@ every run. That specific, narrower case remains deterministically covered by the
 host-side test (re-confirmed still catches the same injected breakage), which needed no changes to
 keep proving it. Wired into CI as a new step in the existing `boot-image` job, alongside
 `boot-test.sh`.
+
+**M7 completion note (2026-07-11, stage 1 only):** new crate `crates/hyperion-console` is the
+literal exit criterion, end to end: a typed utterance drives `hyperion-intent::IntentEngine`'s real
+(fully deterministic, not mocked) HTN matching to a real Intent Graph, then either
+`hyperion-coordination`'s real multi-task allocator (driving real
+`hyperion-agent-runtime::AgentRuntime::invoke` calls) for the one real HTN-decomposable utterance
+shape, or -- since `hyperion-coordination::create_session` builds its task list from an intent's
+*children* alone, and an unmatched utterance decomposes into none -- a direct
+`AgentRuntime::spawn`/`invoke` call against the root goal itself using the real `web.search` stub
+capability as a reasonable default action, discovered and closed as a real gap while wiring this
+rather than silently only working for the one demo phrase. Both paths' real outcome is then
+compiled through `hyperion-workspace::WorkspaceCompiler` into a real `WorkspaceGraph` and rendered
+via the real `Modality::ScreenReader` accessibility-tree projection -- the literal "drive
+hyperion-workspace's compiled UI/accessibility trees through a real TTY renderer" deliverable,
+using docs/14's own text/voice-first accessibility framing rather than inventing a separate
+rendering path. `hyperion-init` replaces its M1/M5 debug-shell adoption with this real console as
+the primary interactive process (falling back to a plain shell if the console binary isn't present
+in a given image), reusing the exact same setsid/TIOCSCTTY mechanism, and points its Knowledge
+Graph at M6's real dedicated data partition when one is mounted.
+
+Proven twice, for real, via a genuinely new test mechanism this milestone needed and M0-M6 didn't:
+`boot/scripts/console-test.sh` boots the real image with ttyS0 backed by a real Unix domain socket
+(a small `console-drive.py` helper connects to it) instead of `boot-test.sh`'s output-only
+`-serial file:...` capture, since M7 is the first milestone whose exit criterion requires *sending*
+real input, not just observing real output. Typing `"I need to launch my startup"` at the real
+booted console produced the real 4-task decomposition, all four real tasks really completing
+(`status: market_research: Done`, etc.); typing an unrelated utterance
+(`"what is the weather like today"`) produced the real fallback path's real stub result, embedding
+the exact utterance text verbatim
+(`status: generic_goal: done -- {"results":["stub finding for query 'what is the weather like \
+today'"]}`) -- proving both real code paths for real, not just in the crate's own host-side
+integration tests (which also pass, and were themselves verified non-vacuous the same way as every
+prior milestone: temporarily broke the fallback path's query-forwarding, confirmed the "echoes the
+real utterance" assertion actually fails, then restored it).
+
+Stage 2 (a real compositor driving real pixels from a compiled `WorkspaceGraph`, plus real text
+layout/font rendering) is deliberately not attempted here, exactly as this roadmap's own M7 text
+asks: "treat this as its own large sub-project; do not block M7's console stage on it." No model
+inference (real or mock) is called anywhere in this pipeline either -- `hyperion-intent`'s HTN
+matching is permanently, deliberately deterministic (not something M8 replaces), and wiring a real
+model call into a future Agent capability is separate, later work M8 is what motivates for real.
 
 ## 4. Milestones
 

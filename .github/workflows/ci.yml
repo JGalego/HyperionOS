@@ -76,3 +76,13 @@ jobs:
       - run: boot/scripts/storage-crash-test.sh
         env:
           STORAGE_TEST_TIMEOUT: "300"
+      # PRODUCTION_BOOT_PROMPT.md M7 stage 1: a real utterance typed at the real booted console
+      # (over a real Unix-socket serial port, not just boot-test.sh's output-only log capture)
+      # produces a real Intent Graph, a real Agent invocation, and real rendered text -- proven
+      # for both the one real HTN-decomposed utterance shape and the undecomposed fallback path.
+      - run: boot/scripts/console-test.sh "" "I need to launch my startup" "market_research"
+        env:
+          CONSOLE_TEST_TIMEOUT: "300"
+      - run: boot/scripts/console-test.sh "" "what is the weather like today" "generic_goal"
+        env:
+          CONSOLE_TEST_TIMEOUT: "300"

@@ -8,6 +8,7 @@ members = [
     "crates/hyperion-cgroups",
     "crates/hyperion-context",
     "crates/hyperion-compat",
+    "crates/hyperion-console",
     "crates/hyperion-coordination",
     "crates/hyperion-device",
     "crates/hyperion-explainability",
@@ -51,6 +52,7 @@ hyperion-capability = { path = "crates/hyperion-capability" }
 hyperion-cgroups = { path = "crates/hyperion-cgroups" }
 hyperion-context = { path = "crates/hyperion-context" }
 hyperion-compat = { path = "crates/hyperion-compat" }
+hyperion-console = { path = "crates/hyperion-console" }
 hyperion-coordination = { path = "crates/hyperion-coordination" }
 hyperion-device = { path = "crates/hyperion-device" }
 hyperion-explainability = { path = "crates/hyperion-explainability" }

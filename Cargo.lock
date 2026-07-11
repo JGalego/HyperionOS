@@ -182,6 +182,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-console"
+version = "0.1.0"
+dependencies = [
+ "hyperion-agent-runtime",
+ "hyperion-capability",
+ "hyperion-context",
+ "hyperion-coordination",
+ "hyperion-intent",
+ "hyperion-knowledge-graph",
+ "hyperion-workspace",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "hyperion-context"
 version = "0.1.0"
 dependencies = [

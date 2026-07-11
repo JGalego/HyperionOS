@@ -25,21 +25,24 @@ BOOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/fetch-buildroot.sh"
 
 REPO_ROOT="$(cd "$BOOT_DIR/.." && pwd)"
-echo "Cross-compiling hyperion-init (static, x86_64-unknown-linux-musl)..."
-( cd "$REPO_ROOT" && cargo build -p hyperion-init --release --target x86_64-unknown-linux-musl )
+echo "Cross-compiling hyperion-init and hyperion-console (static, x86_64-unknown-linux-musl)..."
+( cd "$REPO_ROOT" && cargo build -p hyperion-init -p hyperion-console --release --target x86_64-unknown-linux-musl )
 HYPERION_INIT_BIN="$REPO_ROOT/target/x86_64-unknown-linux-musl/release/hyperion-init"
+HYPERION_CONSOLE_BIN="$REPO_ROOT/target/x86_64-unknown-linux-musl/release/hyperion-console"
 
 echo "Overlaying board/hyperion-x86_64 and the Hyperion defconfig onto Buildroot..."
 rsync -a --delete "$BOOT_DIR/board/hyperion-x86_64/" "$BUILDROOT_DIR/board/hyperion-x86_64/"
 cp "$BOOT_DIR/configs/hyperion_x86_64_efi_defconfig" "$BUILDROOT_DIR/configs/hyperion_x86_64_efi_defconfig"
 
 # The overlay lives entirely inside the (gitignored) Buildroot copy, populated fresh from the
-# just-built binary each run -- rsync --delete above would otherwise wipe it if it lived under
+# just-built binaries each run -- rsync --delete above would otherwise wipe it if it lived under
 # the tracked boot/board/hyperion-x86_64 source, which has no rootfs-overlay/ of its own.
 OVERLAY_DIR="$BUILDROOT_DIR/board/hyperion-x86_64/rootfs-overlay"
-mkdir -p "$OVERLAY_DIR"
+mkdir -p "$OVERLAY_DIR" "$OVERLAY_DIR/usr/bin"
 cp "$HYPERION_INIT_BIN" "$OVERLAY_DIR/hyperion-init"
 chmod 755 "$OVERLAY_DIR/hyperion-init"
+cp "$HYPERION_CONSOLE_BIN" "$OVERLAY_DIR/usr/bin/hyperion-console"
+chmod 755 "$OVERLAY_DIR/usr/bin/hyperion-console"
 
 cd "$BUILDROOT_DIR"
 make hyperion_x86_64_efi_defconfig

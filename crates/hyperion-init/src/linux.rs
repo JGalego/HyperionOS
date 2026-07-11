@@ -1,8 +1,8 @@
 //! Real PID 1 behavior: mount the essential pseudo-filesystems, print the boot banner, then bring
 //! up the real supervision tree (M5) -- every Phase 2-10 subsystem this image ships, each spawned
-//! as its own real, capability-scoped Trust Boundary process (M2), plus a carryover debug shell
-//! folded into the same supervision tree so a human can still get an interactive console on this
-//! image before M7 gives it a real one.
+//! as its own real, capability-scoped Trust Boundary process (M2), plus the real interactive
+//! console (M7) folded into the same supervision tree, falling back to a plain debug shell if
+//! that binary isn't present in this image.
 //!
 //! What this deliberately does *not* do yet (real gaps closed as their own milestone, not
 //! silently ignored): handle `SIGINT`/`SIGTERM` for a clean reboot/halt path (the supervision
@@ -21,6 +21,7 @@ use hyperion_supervisor::{ServiceScheduling, ServiceSpec, Supervisor};
 use hyperion_trust_boundary::TrustDepth;
 
 const SHELL_PATH: &str = "/bin/sh";
+const CONSOLE_PATH: &str = "/usr/bin/hyperion-console";
 const IPC_RENDEZVOUS_DIR: &str = "/run/hyperion/ipc";
 /// Beneath which every supervised service's own `fs_scope` and cgroup live -- real, dedicated
 /// directories a real root PID 1 owns outright, not shared with anything BusyBox or Buildroot's
@@ -236,9 +237,11 @@ fn run_supervision_tree() -> ! {
     // attached (inert -- returns None -- on every boot that doesn't have one, e.g. real hardware
     // without a data drive yet, or an ordinary single-disk QEMU dev-loop boot). The crash-
     // consistency probe only ever does anything when a real mounted partition exists to run it
-    // against.
-    if let Some(data_dir) = storage_probe::mount_data_partition() {
-        storage_probe::run_crash_consistency_probe(&data_dir);
+    // against; the same directory (or a tmpfs fallback -- see `console_data_dir`) is where M7's
+    // real console keeps its own Knowledge Graph.
+    let data_partition = storage_probe::mount_data_partition();
+    if let Some(data_dir) = &data_partition {
+        storage_probe::run_crash_consistency_probe(data_dir);
     }
 
     let cgroup_parent = prepare_cgroup_parent();
@@ -281,35 +284,91 @@ fn run_supervision_tree() -> ! {
         }
     }
 
-    adopt_shell(&mut supervisor);
+    adopt_interactive_process(&mut supervisor, data_partition.as_deref());
 
     println!("[hyperion-init] supervision tree running");
     supervisor.run_forever();
 }
 
-/// Folds the interactive debug shell into the same supervision tree as every capability-scoped
+/// Where M7's real console keeps its own Knowledge Graph: M6's real, dedicated data partition
+/// when one is mounted, or a real (if ephemeral) tmpfs directory otherwise -- the console still
+/// needs *somewhere* real to open a `KnowledgeGraph` against even on a boot with no second disk
+/// attached (e.g. `boot/scripts/run-qemu.sh`'s default single-disk invocation, or real hardware
+/// not yet given a data drive), the same best-effort shape as this crate's own cgroup bootstrap.
+const CONSOLE_FALLBACK_DATA_DIR: &str = "/run/hyperion/console";
+
+fn console_data_dir(data_partition: Option<&Path>) -> PathBuf {
+    if let Some(dir) = data_partition {
+        return dir.to_path_buf();
+    }
+    if let Err(e) = std::fs::create_dir_all(CONSOLE_FALLBACK_DATA_DIR) {
+        eprintln!(
+            "[hyperion-init] warning: couldn't create the console's fallback data dir \
+             {CONSOLE_FALLBACK_DATA_DIR}: {e}"
+        );
+    }
+    PathBuf::from(CONSOLE_FALLBACK_DATA_DIR)
+}
+
+/// Folds the real interactive surface into the same supervision tree as every capability-scoped
 /// service (see `hyperion_supervisor::Supervisor::adopt_plain`'s own docs on why a second,
-/// independent wait loop for it would be unsafe) -- carried over from M1 unchanged in spirit: a
-/// shell exists so a human can debug a real boot by hand, and fundamentally needs broad access to
-/// be useful for that, unlike a Phase 2-10 subsystem. M7 is what gives this system a real,
-/// properly capability-scoped interactive surface; this is deliberately not that.
-fn adopt_shell(supervisor: &mut Supervisor) {
+/// independent wait loop for it would be unsafe). M7 replaces M1's placeholder debug shell with
+/// `hyperion-console`, the real Intent -> Agent -> Workspace text loop -- "the first milestone
+/// where booting Hyperion does something a person can actually use" is exactly what this crate's
+/// PID 1 now spawns onto the interactive terminal, not a generic shell. Neither the console nor
+/// the plain shell it falls back to (if the console binary isn't present in this image, e.g. an
+/// older build) is capability-scoped the way a Phase 2-10 service is: both fundamentally need
+/// broad, real-time interactive I/O access, the same reasoning M1/M5 already applied to the debug
+/// shell -- a real, properly capability-scoped interactive surface is a further, separate
+/// refinement M7 stage 2 (a real compositor) would need, not this stage.
+fn adopt_interactive_process(supervisor: &mut Supervisor, data_partition: Option<&Path>) {
+    let data_dir = console_data_dir(data_partition);
+    match spawn_console(&data_dir) {
+        Ok(pid) => {
+            supervisor.adopt_plain("console", pid, move || spawn_console(&data_dir));
+            return;
+        }
+        Err(e) => eprintln!(
+            "[hyperion-init] warning: failed to start the real console ({e}) -- falling back to \
+             a plain debug shell"
+        ),
+    }
+
     match spawn_shell() {
         Ok(pid) => supervisor.adopt_plain("debug-shell", pid, spawn_shell_retry),
         Err(e) => eprintln!("[hyperion-init] warning: failed to start the debug shell: {e}"),
     }
 }
 
+/// Forks and execs the real console, returning immediately with its pid -- reaping and
+/// restart-on-exit is `hyperion_supervisor::Supervisor`'s single, unified job (see that crate's
+/// own docs on why a second waiter would race it). Not attempted at all if the binary isn't
+/// present in this image (not yet wired into an older Buildroot overlay build): the caller falls
+/// back to a plain shell rather than treating a missing optional binary as a boot failure.
+fn spawn_console(data_dir: &Path) -> std::io::Result<libc::pid_t> {
+    if !Path::new(CONSOLE_PATH).exists() {
+        return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+    }
+    spawn_interactive(
+        CONSOLE_PATH,
+        &[("HYPERION_CONSOLE_DATA_DIR", data_dir.display().to_string())],
+    )
+}
+
 fn spawn_shell_retry() -> std::io::Result<libc::pid_t> {
     spawn_shell()
 }
 
-/// Forks and execs the shell, returning immediately with its pid -- unlike M1's original
-/// `spawn_and_wait`, this never blocks waiting for it to exit: reaping and restart-on-exit is
-/// `hyperion_supervisor::Supervisor`'s single, unified job now (see that crate's own docs on why
-/// a second waiter would race it).
 fn spawn_shell() -> std::io::Result<libc::pid_t> {
-    let c_path = CString::new(SHELL_PATH).expect("shell path has no interior NUL");
+    spawn_interactive(SHELL_PATH, &[])
+}
+
+/// Forks and execs `path` with `extra_env` set, claiming a real controlling terminal for it --
+/// the shared mechanism behind both the real console and the plain debug-shell fallback. Never
+/// blocks waiting for the child to exit (unlike M1's original `spawn_and_wait`): reaping and
+/// restart-on-exit is `hyperion_supervisor::Supervisor`'s job now.
+fn spawn_interactive(path: &str, extra_env: &[(&str, String)]) -> std::io::Result<libc::pid_t> {
+    let c_path = CString::new(path).expect("interactive process path has no interior NUL");
     let argv: [*const libc::c_char; 2] = [c_path.as_ptr(), std::ptr::null()];
 
     // SAFETY: fork() duplicates the process; the child branch only calls async-signal-safe
@@ -320,16 +379,21 @@ fn spawn_shell() -> std::io::Result<libc::pid_t> {
         std::cmp::Ordering::Less => Err(std::io::Error::last_os_error()),
         std::cmp::Ordering::Equal => {
             // The child inherits fd 0/1/2 = /dev/console from PID 1, but not a *controlling*
-            // terminal -- without claiming one, the shell has no job control. setsid() makes the
-            // child a new session leader with no controlling terminal, then TIOCSCTTY claims fd
-            // 0 as one, the same sequence a getty performs.
+            // terminal -- without claiming one, it has no job control. setsid() makes the child a
+            // new session leader with no controlling terminal, then TIOCSCTTY claims fd 0 as one,
+            // the same sequence a getty performs.
             //
             // SAFETY: setsid/ioctl are async-signal-safe and valid to call here; errors are
-            // deliberately ignored (worst case is a shell with no job control, not a boot
-            // failure).
+            // deliberately ignored (worst case is no job control, not a boot failure).
             unsafe {
                 libc::setsid();
                 libc::ioctl(0, libc::TIOCSCTTY as _, 0);
+            }
+            // set_var before exec is inherited by the exec'd program; execv (unlike execve)
+            // carries no separate envp of its own, so this is the simplest way to hand the real
+            // console its one real config value without hand-building a raw environment array.
+            for (key, value) in extra_env {
+                std::env::set_var(key, value);
             }
             // SAFETY: c_path and argv are valid for this call, which does not return on success.
             unsafe {
