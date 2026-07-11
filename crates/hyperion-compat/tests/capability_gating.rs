@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_compat::{
-    CompatError, CompatHost, CompatibilityProfile, LegacyTarget, NetworkPolicy, TrustDepth,
+    AccessibilityBridgeTier, CompatError, CompatHost, CompatibilityProfile, LegacyTarget,
+    NetworkPolicy, TrustDepth,
 };
 use hyperion_knowledge_graph::KnowledgeGraph;
 use hyperion_netstack::{MockExtractionBackend, MockFetchBackend, NetstackHub};
@@ -16,6 +17,7 @@ fn linux_profile() -> CompatibilityProfile {
         min_depth: TrustDepth::D1,
         network_default: NetworkPolicy::Deny,
         filesystem_roots: vec!["/home/guest".to_string()],
+        accessibility_bridge: AccessibilityBridgeTier::Platform,
     }
 }
 

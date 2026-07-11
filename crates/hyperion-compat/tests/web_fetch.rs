@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_compat::{
-    CompatError, CompatHost, CompatibilityProfile, LegacyTarget, NetworkPolicy, TrustDepth,
+    AccessibilityBridgeTier, CompatError, CompatHost, CompatibilityProfile, LegacyTarget,
+    NetworkPolicy, TrustDepth,
 };
 use hyperion_knowledge_graph::KnowledgeGraph;
 use hyperion_netstack::{FetchedPage, MockExtractionBackend, MockFetchBackend, NetstackHub};
@@ -42,6 +43,7 @@ fn a_web_session_with_an_allowed_domain_can_fetch_within_that_scope() {
             scope: "legacy-bank.example".to_string(),
         },
         filesystem_roots: vec![],
+        accessibility_bridge: AccessibilityBridgeTier::Platform,
     };
     let session = host
         .launch(&mut monitor, &root, profile, TrustDepth::D1, 1_000)
@@ -80,6 +82,7 @@ fn a_non_web_session_cannot_use_the_web_fetch_path_at_all() {
             scope: "example.com".to_string(),
         },
         filesystem_roots: vec![],
+        accessibility_bridge: AccessibilityBridgeTier::Platform,
     };
     let session = host
         .launch(&mut monitor, &root, profile, TrustDepth::D2, 1_000)
@@ -107,6 +110,7 @@ fn a_web_session_with_network_denied_cannot_fetch() {
         min_depth: TrustDepth::D0,
         network_default: NetworkPolicy::Deny,
         filesystem_roots: vec![],
+        accessibility_bridge: AccessibilityBridgeTier::Platform,
     };
     let session = host
         .launch(&mut monitor, &root, profile, TrustDepth::D1, 1_000)

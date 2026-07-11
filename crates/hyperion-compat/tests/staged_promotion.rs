@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_compat::{
-    CompatError, CompatHost, CompatibilityProfile, LegacyTarget, NetworkPolicy, PromotionPolicy,
-    PromotionState, TrustDepth,
+    AccessibilityBridgeTier, CompatError, CompatHost, CompatibilityProfile, LegacyTarget,
+    NetworkPolicy, PromotionPolicy, PromotionState, TrustDepth,
 };
 use hyperion_knowledge_graph::{GraphQuery, KnowledgeGraph};
 use hyperion_netstack::{MockExtractionBackend, MockFetchBackend, NetstackHub};
@@ -38,6 +38,7 @@ fn linux_profile() -> CompatibilityProfile {
         min_depth: TrustDepth::D1,
         network_default: NetworkPolicy::Deny,
         filesystem_roots: vec!["/home/guest/Documents".to_string()],
+        accessibility_bridge: AccessibilityBridgeTier::Platform,
     }
 }
 
@@ -235,6 +236,7 @@ fn a_target_requiring_deeper_trust_than_available_cannot_launch() {
         min_depth: TrustDepth::D3,
         network_default: NetworkPolicy::Deny,
         filesystem_roots: vec![],
+        accessibility_bridge: AccessibilityBridgeTier::Platform,
     };
     let result = host.launch(&mut monitor, &root, windows_profile, TrustDepth::D1, 1_000);
     assert!(matches!(result, Err(CompatError::Unauthorized)));

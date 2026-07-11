@@ -51,10 +51,17 @@
 //!   [20 — Device Framework](../20-device-framework.md) (Phase 7, not
 //!   built) to size dwell targets against; screen-reader, voice, and
 //!   switch-scan projections need no such device input.
-//! - **The Compatibility Layer's bounded accessibility exception**
-//!   ([27 — Compatibility Layer](../27-compatibility-layer.md), Phase 9,
-//!   not built) — there is no legacy-application Workspace type here to
-//!   carry it.
+//! - **Real platform accessibility bridges / OCR pixel fallback for
+//!   [27 — Compatibility Layer](../27-compatibility-layer.md)'s legacy
+//!   applications.** `hyperion-compat`'s own
+//!   `workspace_bridge::present_as_workspace` now compiles a real
+//!   Workspace for a Compatibility session through this crate's pipeline
+//!   and emits docs/27's disclosure node for real — this crate's earlier
+//!   "there is no legacy-application Workspace type here to carry it" gap
+//!   was the stale premise (`hyperion-compat` not yet having been built);
+//!   what's still deferred is entirely on `hyperion-compat`'s side
+//!   (running an actual platform accessibility API bridge or OCR pass),
+//!   not a gap in this crate.
 
 mod accessibility;
 mod compiler;

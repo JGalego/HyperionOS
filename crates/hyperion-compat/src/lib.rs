@@ -31,6 +31,16 @@
 //! `hyperion-knowledge-graph::put_node`. [`host::CompatHost::terminate`]
 //! implements the doc's "microreboot" recovery — cascade-revoking every
 //! token the session was ever granted.
+//! [`workspace_bridge::present_as_workspace`] implements docs/27's
+//! "Window-to-Workspace binding" and "Accessibility bridging (bounded
+//! exception)" for real: it wraps a session as the sole content of a
+//! Workspace compiled through the real `hyperion-workspace` Phase 5
+//! pipeline, binds the session's real promoted artifacts to that panel's
+//! Context Bundle entries, and emits docs/27's literal "Limited
+//! accessibility: legacy application" disclosure node whenever the
+//! session's `accessibility_bridge` tier is not `Platform` — closing both
+//! this crate's and `hyperion-workspace`'s own "no legacy-application
+//! Workspace type exists yet" gap.
 //!
 //! Deliberately deferred, and why (all of these require real
 //! infrastructure a hosted simulator cannot provide):
@@ -46,7 +56,13 @@
 //!   `web.fetch.raw`) but renders nothing.
 //! - **Real framebuffer/compositor capture and platform accessibility
 //!   bridges** (Windows UI Automation, Android `AccessibilityService`,
-//!   X11 AT-SPI, OCR-based pixel fallback).
+//!   X11 AT-SPI, OCR-based pixel fallback). [`types::AccessibilityBridgeTier`]
+//!   records *which* tier is active and
+//!   [`workspace_bridge::present_as_workspace`] surfaces the required
+//!   disclosure for it, but nothing here actually runs a platform
+//!   accessibility API bridge or an OCR pass — a caller sets the tier
+//!   directly, matching this crate's `sniffed_type`-as-caller-supplied
+//!   precedent below.
 //! - **Real content-type sniffing.** [`host::CompatHost::promote_artifact`]
 //!   takes `sniffed_type` as a caller-supplied string — no real file-
 //!   format detection runs; a caller (or a future integration with
@@ -65,9 +81,11 @@
 
 mod host;
 mod types;
+mod workspace_bridge;
 
 pub use host::CompatHost;
 pub use types::{
-    CompatError, CompatSession, CompatibilityProfile, IngestedArtifact, LegacyTarget,
-    NetworkPolicy, PromotionPolicy, PromotionState, SessionId, TrustDepth,
+    AccessibilityBridgeTier, CompatError, CompatSession, CompatibilityProfile, IngestedArtifact,
+    LegacyTarget, NetworkPolicy, PromotionPolicy, PromotionState, SessionId, TrustDepth,
 };
+pub use workspace_bridge::present_as_workspace;

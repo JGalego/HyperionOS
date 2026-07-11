@@ -50,6 +50,24 @@ pub enum NetworkPolicy {
     Allow { scope: String },
 }
 
+/// docs/27's "Accessibility bridging (bounded exception to
+/// [02 §4](../02-core-architecture.md#4-design-invariants)'s Invariant 6)"
+/// tiers: opaque pixel content has no Capability contract for [14 —
+/// Accessibility](../14-accessibility.md)'s compiler pass to derive a real
+/// tree from, so the Compatibility Host declares which mitigation is
+/// active instead of silently claiming full accessibility. `Platform`
+/// (a real platform accessibility-API bridge) is the only tier docs/27
+/// treats as not needing a user-facing disclosure; `PixelFallback` and
+/// `None` both surface [`crate::workspace_bridge::present_as_workspace`]'s
+/// "Limited accessibility: legacy application" notice — see that
+/// function's doc comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessibilityBridgeTier {
+    Platform,
+    PixelFallback,
+    None,
+}
+
 /// docs/27 §2's `CompatibilityProfile`, `filesystem_roots` narrowed from
 /// `Vec<SemanticRoot>` to plain guest-path-prefix strings —
 /// `ShimPathMapping`'s `semantic_root` linkage is deferred (see this
@@ -60,6 +78,7 @@ pub struct CompatibilityProfile {
     pub min_depth: TrustDepth,
     pub network_default: NetworkPolicy,
     pub filesystem_roots: Vec<String>,
+    pub accessibility_bridge: AccessibilityBridgeTier,
 }
 
 /// docs/27 §2's `CompatSession`. "The guest itself holds zero capability
@@ -123,4 +142,6 @@ pub enum CompatError {
     Graph(#[from] hyperion_knowledge_graph::GraphError),
     #[error("netstack error: {0}")]
     Netstack(#[from] hyperion_netstack::NetstackError),
+    #[error("workspace error: {0}")]
+    Workspace(#[from] hyperion_workspace::WorkspaceError),
 }

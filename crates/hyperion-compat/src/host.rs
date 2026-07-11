@@ -290,4 +290,21 @@ impl CompatHost {
     pub fn session(&self, session_id: SessionId) -> Option<CompatSession> {
         self.sessions.lock().unwrap().get(&session_id).cloned()
     }
+
+    /// Every artifact this session has actually promoted (Stage B) into
+    /// the Knowledge Graph so far — the real objects
+    /// [`crate::workspace_bridge::present_as_workspace`] binds a legacy
+    /// app's Workspace panel to, exactly like any natively generated
+    /// panel binds to its Context Bundle entries.
+    pub fn promoted_artifacts(&self, session_id: SessionId) -> Vec<IngestedArtifact> {
+        self.artifacts
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|((sid, _), artifact)| {
+                *sid == session_id && artifact.promotion_state == PromotionState::Promoted
+            })
+            .map(|(_, artifact)| artifact.clone())
+            .collect()
+    }
 }

@@ -136,9 +136,11 @@ name = "hyperion-compat"
 version = "0.1.0"
 dependencies = [
  "hyperion-capability",
+ "hyperion-context",
  "hyperion-knowledge-graph",
  "hyperion-netstack",
  "hyperion-storage",
+ "hyperion-workspace",
  "serde_json",
  "tempfile",
  "thiserror",
