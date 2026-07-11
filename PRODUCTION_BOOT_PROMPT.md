@@ -97,7 +97,7 @@ below assume UEFI.
 | M3 — Real IPC transport | done |
 | M4 — Real scheduler enforcement (cgroups v2) | done |
 | M5 — Real init & supervision tree | done |
-| M6 — Real persistent storage | pending |
+| M6 — Real persistent storage | done |
 | M7 — Real console UI, then real display | pending |
 | M8 — Real local AI runtime | pending |
 | M9 — Real cryptography | pending |
@@ -371,6 +371,53 @@ already-large milestone. A respawn attempt that itself keeps failing (distinct f
 process merely exiting) is logged and the service drops out of supervision rather than retried
 indefinitely -- a real give-up/alerting policy for that case is a further refinement this MVP
 doesn't attempt.
+
+**M6 completion note (2026-07-11):** `hyperion-storage`'s WAL/`StorageEngine` needed zero code
+changes -- exactly the reuse-map's promise ("WAL format, replay/recovery logic" reused as-is, only
+"host tempfile → real block device" changes). What changed is *where* the WAL lives: a new,
+dedicated second virtio-blk drive (distinct from the boot disk), pre-formatted ext4 at build/test
+time by `boot/scripts/create-data-disk.sh` (this minimal Buildroot rootfs has no `mkfs.ext4` to
+format one at runtime, and shouldn't need one -- a data volume is provisioned once, not reformatted
+every boot). Deliberately a real *filesystem* on the dedicated device, not raw block I/O: the WAL's
+own `append_and_fsync` relies on ordinary `O_APPEND` regular-file semantics, which only mean "grow
+the file" on a real filesystem -- `O_APPEND` on a raw block special file seeks to the *device's
+total capacity*, not "the end of what's been written," so pointing the existing WAL at a raw device
+node directly would have been silently wrong, not just unconventional. `hyperion-init` (M5's real
+supervision tree) gained a new `linux::storage_probe` module: mounts the dedicated partition at
+`/var/lib/hyperion/data` if a second block device is present (inert -- returns `None` -- on any
+boot without one, the same best-effort shape as M5's cgroup bootstrap), then runs a real
+crash-consistency probe using `StorageEngine` at the same abstraction level
+`tests/wal_recovery.rs`'s existing tests already use.
+
+The real power-loss simulation the exit criteria asks for is a new script,
+`boot/scripts/storage-crash-test.sh`: boots with the dedicated data disk attached
+(`cache=none`/O_DIRECT -- load-bearing, not a performance tweak, since QEMU's default
+`cache=writeback` would let a guest's fsync "complete" against the *host's* page cache, which a
+SIGKILL to the qemu process itself could still lose, silently testing QEMU's own write-back
+buffering instead of hyperion-storage's discipline), waits for the guest's own probe to report its
+real WAL write loop has actually started, lets it run for a few more real seconds, then SIGKILLs
+qemu outright -- a real abrupt kill, not a graceful shutdown. Reboots with the *same* data-disk
+image and confirms the guest recovers a real, specific, in-range value via a completely fresh
+process, kernel, and `StorageEngine` instance. Run three times for real: recovered `seq=358`,
+`seq=316`, and `seq=300` respectively -- each a plausible value between the last printed progress
+marker and the 200,000-write target, confirming the kill genuinely landed mid-loop each time, never
+a corrupt or missing value.
+
+One honest, important nuance surfaced while verifying this wasn't a vacuous pass (the same
+discipline as every prior milestone): temporarily broke `Wal::replay`'s torn-trailing-record
+tolerance (made it fail hard instead of truncating) and confirmed the *existing* host-side test
+(`recovery_tolerates_a_torn_trailing_record_without_losing_prior_writes`) catches it immediately --
+but re-running the *live* two-phase QEMU test with that same breakage in place **still passed**,
+because that specific kill happened to land cleanly between two already-fsynced writes rather than
+mid-write, never actually exercising the torn-record code path. This is real and worth being
+explicit about, not glossed over: individual WAL appends here are small and fast enough that a
+SIGKILL rarely lands mid-write specifically, so the live QEMU test's real, reliable contribution is
+proving the write-and-recover mechanism produces a correct, real, in-range committed value after a
+genuine abrupt kill against a real device -- not that it exercises the torn-trailing-bytes edge case
+every run. That specific, narrower case remains deterministically covered by the existing
+host-side test (re-confirmed still catches the same injected breakage), which needed no changes to
+keep proving it. Wired into CI as a new step in the existing `boot-image` job, alongside
+`boot-test.sh`.
 
 ## 4. Milestones
 

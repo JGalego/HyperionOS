@@ -12,6 +12,8 @@ path = "src/main.rs"
 [dependencies]
 hyperion-capability = { workspace = true }
 hyperion-scheduler = { workspace = true }
+hyperion-storage = { workspace = true }
 hyperion-supervisor = { workspace = true }
 hyperion-trust-boundary = { workspace = true }
 libc = { workspace = true }
+serde_json = { workspace = true }

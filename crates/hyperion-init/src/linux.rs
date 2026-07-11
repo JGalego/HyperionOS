@@ -11,6 +11,8 @@
 //! that aren't one of this supervisor's own tracked children (a real init eventually needs a
 //! background reaper for exactly those; `hyperion_supervisor::Supervisor` only reaps its own).
 
+mod storage_probe;
+
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
 
@@ -230,6 +232,15 @@ fn service_spec(name: &str, program: &str) -> ServiceSpec {
 }
 
 fn run_supervision_tree() -> ! {
+    // M6: mounts a real, dedicated persistent-storage partition if a second block device is
+    // attached (inert -- returns None -- on every boot that doesn't have one, e.g. real hardware
+    // without a data drive yet, or an ordinary single-disk QEMU dev-loop boot). The crash-
+    // consistency probe only ever does anything when a real mounted partition exists to run it
+    // against.
+    if let Some(data_dir) = storage_probe::mount_data_partition() {
+        storage_probe::run_crash_consistency_probe(&data_dir);
+    }
+
     let cgroup_parent = prepare_cgroup_parent();
     if cgroup_parent.is_none() {
         eprintln!(

@@ -70,3 +70,9 @@ jobs:
       - run: boot/scripts/boot-test.sh
         env:
           BOOT_TEST_TIMEOUT: "300"
+      # PRODUCTION_BOOT_PROMPT.md M6: re-validates hyperion-storage's crash-consistency-by-replay
+      # guarantee against a real power-loss simulation (a real, dedicated block device, hard-
+      # killed mid-write), not just the existing host-tempfile fault-injection tests.
+      - run: boot/scripts/storage-crash-test.sh
+        env:
+          STORAGE_TEST_TIMEOUT: "300"

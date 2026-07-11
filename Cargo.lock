@@ -259,9 +259,11 @@ version = "0.1.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-scheduler",
+ "hyperion-storage",
  "hyperion-supervisor",
  "hyperion-trust-boundary",
  "libc",
+ "serde_json",
 ]
 
 [[package]]
