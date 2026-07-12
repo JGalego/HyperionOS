@@ -22,6 +22,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # hyperion-trust-boundary/tests/enforcement.rs and hyperion-supervisor/tests/real_supervision.rs
+          # (both Linux-only, both #[cfg(target_os = "linux")]-gated) each build a real, statically
+          # linked musl probe/service binary at test time to run under real Landlock/seccomp
+          # enforcement -- needs this target installed, same as the boot-image job below already
+          # does. Meaningless on macOS (those test files don't even compile there), so only added
+          # for the ubuntu leg of this matrix.
+          targets: ${{ matrix.os == 'ubuntu-latest' && 'x86_64-unknown-linux-musl' || '' }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --all-targets
       - run: cargo test --workspace
