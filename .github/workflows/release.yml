@@ -1,0 +1,157 @@
+name: Release
+
+# PRODUCTION_BOOT_PROMPT.md M13: builds both reference-platform images from scratch, boot-tests
+# each the same way ci.yml does on every push, signs both with this project's real Ed25519
+# release-signing identity (a real device key, generated once with
+# hyperion-release-gate's gen-signing-key bin and stored as the HYPERION_RELEASE_SIGNING_KEY
+# repo secret -- never committed to the repo itself), and publishes the signed images plus their
+# manifests as downloadable GitHub Release assets. Never runs against an untested image: both
+# build jobs must pass their own boot-test before the publish job can sign or upload anything.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp into the release manifests and the created tag"
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-x86_64:
+    name: build + boot-test x86_64 image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - name: Install qemu + OVMF + Buildroot host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf \
+            build-essential bc cpio rsync unzip file libncurses-dev
+      - name: Cache Buildroot download + build output
+        uses: actions/cache@v4
+        with:
+          path: boot/.tools
+          key: buildroot-x86_64-${{ hashFiles('boot/scripts/fetch-buildroot.sh', 'boot/board/hyperion-x86_64/**', 'boot/configs/hyperion_x86_64_efi_defconfig') }}
+      - run: boot/scripts/build-image.sh
+      - run: boot/scripts/boot-test.sh
+        env:
+          BOOT_TEST_TIMEOUT: "300"
+      - name: Upload built x86_64 image
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyperion-x86_64-image
+          path: boot/.tools/buildroot-2026.05/output/images/disk.img
+          retention-days: 1
+
+  build-aarch64:
+    name: build + boot-test aarch64 image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - name: Install qemu + Buildroot host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-arm \
+            build-essential bc cpio rsync unzip file libncurses-dev
+      - name: Cache Buildroot download + build output
+        uses: actions/cache@v4
+        with:
+          path: boot/.tools
+          key: buildroot-aarch64-${{ hashFiles('boot/scripts/fetch-buildroot.sh', 'boot/board/hyperion-aarch64/**', 'boot/configs/hyperion_aarch64_virt_defconfig') }}
+      - run: boot/scripts/build-image-aarch64.sh
+      - run: boot/scripts/boot-test-aarch64.sh
+        env:
+          BOOT_TEST_TIMEOUT: "300"
+      - name: Upload built aarch64 image
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyperion-aarch64-image
+          path: |
+            boot/.tools/buildroot-2026.05/output-aarch64/images/Image
+            boot/.tools/buildroot-2026.05/output-aarch64/images/rootfs.ext2
+          retention-days: 1
+
+  publish:
+    name: sign + publish release
+    needs: [build-x86_64, build-aarch64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: hyperion-x86_64-image
+          path: release-staging/x86_64
+      - uses: actions/download-artifact@v4
+        with:
+          name: hyperion-aarch64-image
+          path: release-staging/aarch64
+      - name: Determine release version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "value=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            # Tag-push trigger: GITHUB_REF_NAME is already the exact pushed tag (e.g. "v1.2.0").
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Restore the real release-signing keystore from its repo secret
+        env:
+          HYPERION_RELEASE_SIGNING_KEY: ${{ secrets.HYPERION_RELEASE_SIGNING_KEY }}
+        run: |
+          mkdir -p boot/.tools/release-keystore
+          echo "$HYPERION_RELEASE_SIGNING_KEY" | base64 -d > boot/.tools/release-keystore/device.key
+      - name: Sign each image
+        run: |
+          VERSION="${{ steps.version.outputs.value }}"
+          cargo run --release -p hyperion-release-gate --bin sign-release -- \
+            release-staging/x86_64/disk.img boot/.tools/release-keystore/device.key "$VERSION" x86_64
+          cargo run --release -p hyperion-release-gate --bin sign-release -- \
+            release-staging/aarch64/Image boot/.tools/release-keystore/device.key "$VERSION" aarch64-kernel
+          cargo run --release -p hyperion-release-gate --bin sign-release -- \
+            release-staging/aarch64/rootfs.ext2 boot/.tools/release-keystore/device.key "$VERSION" aarch64-rootfs
+      - name: Verify each signature before publishing anything
+        run: |
+          cargo run --release -p hyperion-release-gate --bin verify-release -- \
+            release-staging/x86_64/disk.img release-staging/x86_64/disk.img.release.json
+          cargo run --release -p hyperion-release-gate --bin verify-release -- \
+            release-staging/aarch64/Image release-staging/aarch64/Image.release.json
+          cargo run --release -p hyperion-release-gate --bin verify-release -- \
+            release-staging/aarch64/rootfs.ext2 release-staging/aarch64/rootfs.ext2.release.json
+      - name: Rename staged assets to their published release names
+        run: |
+          VERSION="${{ steps.version.outputs.value }}"
+          mkdir -p release-assets
+          mv release-staging/x86_64/disk.img "release-assets/hyperion-x86_64-$VERSION.img"
+          mv release-staging/x86_64/disk.img.release.json "release-assets/hyperion-x86_64-$VERSION.img.release.json"
+          mv release-staging/aarch64/Image "release-assets/hyperion-aarch64-$VERSION-Image"
+          mv release-staging/aarch64/Image.release.json "release-assets/hyperion-aarch64-$VERSION-Image.release.json"
+          mv release-staging/aarch64/rootfs.ext2 "release-assets/hyperion-aarch64-$VERSION-rootfs.ext2"
+          mv release-staging/aarch64/rootfs.ext2.release.json "release-assets/hyperion-aarch64-$VERSION-rootfs.ext2.release.json"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.value }}"
+          gh release create "$VERSION" \
+            --repo "${{ github.repository }}" \
+            --title "Hyperion $VERSION" \
+            --generate-notes \
+            release-assets/*

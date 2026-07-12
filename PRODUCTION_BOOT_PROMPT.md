@@ -104,7 +104,7 @@ below assume UEFI.
 | M10 — Real networking | done (real HTTP/TLS/DNS fetch + real HTML extraction + real Knowledge Graph merge, reachable from the actual compiled console binary; guest network interface bring-up at real boot time named as a deferred, separate systems-provisioning gap — see completion note) |
 | M11 — Second reference platform (aarch64) | done (real aarch64 kernel + rootfs boots to the real M7-stage-1 console loop under `qemu-system-aarch64 -M virt`; a real macOS-breaking seccomp portability bug was found and fixed along the way; real Raspberry Pi hardware itself named as a deferred, real-hardware-only handoff — see completion note) |
 | M12 — Boot benchmarking against docs/36 | done (real, measured end-to-end cold-boot time on both reference platforms via a new `boot-benchmark.sh`/`.py`; both over docs/36's ~4.5s budget, named cause is this sandbox's lack of KVM/TCG-only emulation — a real, fixable GRUB-menu-wait bug was found and fixed along the way; real hardware timing itself named as the deferred, real-hardware-only measurement — see completion note) |
-| M13 — Release engineering for a bootable artifact | done, sandbox-achievable portion (real `hyperion-release-gate` hardware-criteria extension; a real staged update applied to and rolled back from a real running booted system with no data loss, docs/41 Phase 10's literal exit criterion; a real signed, versioned, `dd`-able image built and its signature verified; a real, honestly-diagnosed image-non-reproducibility gap found and named, not silently claimed solved) — the literal exit criterion itself (a real USB drive, written via a real `dd`, booting on real reference-platform hardware) needs the user's own action, per this document's own explicit standing pause condition; not attempted here — see completion note |
+| M13 — Release engineering for a bootable artifact | done, sandbox-achievable portion (real `hyperion-release-gate` hardware-criteria extension; a real staged update applied to and rolled back from a real running booted system with no data loss, docs/41 Phase 10's literal exit criterion; a real signed, versioned, `dd`-able image built and its signature verified; a real, honestly-diagnosed image-non-reproducibility gap found, named, and later fixed for real on both platforms; a real CI pipeline now builds, signs, and publishes both platforms as downloadable GitHub Release assets on every version tag, with a real release-signing key and README download/verify/flash instructions — see completion note) — the literal exit criterion itself (a real USB drive, written via Balena Etcher or `dd`, booting on real reference-platform hardware) needs the user's own action, per this document's own explicit standing pause condition; not attempted here — see completion note |
 
 **M0 completion note (2026-07-11):** built via `boot/` (Buildroot 2026.05, board `hyperion-x86_64`
 modeled on Buildroot's own real-hardware `board/pc` EFI target, kernel 6.12.47 LTS). Verified for
@@ -1008,6 +1008,44 @@ x86_64 platform only: aarch64 has no combined bootable image for real hardware a
 used QEMU's generic `virt` reference rather than real Raspberry Pi board support -- see that
 milestone's own completion note), so there is nothing to write to a real Pi's SD card yet either
 way.
+
+**Update (2026-07-12): automated, downloadable `.img` releases -- real CI now builds, signs, and
+publishes both platforms on every version tag.** Closes the gap between "a `package-release.sh`
+script exists" and "a user can actually download a release." Four real pieces landed together:
+
+1. **A real release-signing identity.** `hyperion-release-gate`'s new `gen-signing-key` bin
+   generates a real Ed25519 keystore via M9's own `Keystore::open_or_create` and prints its
+   verifying key in hex. Run once, for real, against this repo:
+   `b5c19b1e890fed3e164342f0285f6a1a1635d724f2284a2ebe00589a122ac90a` -- now published in
+   [README.md](README.md) as the independent, out-of-band value a downloader checks a manifest's
+   own recorded verifying key against (never trust a key recorded only inside the thing it's
+   meant to authenticate). The private seed itself was base64-encoded and stored as this repo's
+   real `HYPERION_RELEASE_SIGNING_KEY` GitHub Actions secret (confirmed via `gh secret list`
+   after setting it) -- never committed to the repo. Verified end-to-end before trusting it for
+   anything: signed a real probe file, verified it (`PASS`), and independently confirmed the
+   printed hex fingerprint matches the manifest's own serialized `verifying_key` bytes.
+2. **`.github/workflows/release.yml`** (new): triggers on `v*` tag pushes (or manual
+   `workflow_dispatch` with an explicit version). Two parallel jobs build and boot-test each
+   platform exactly the way `ci.yml` already does (same scripts, same QEMU boot-test gate -- an
+   image that fails its own boot-test is never signed or published); a third `publish` job
+   downloads both, decodes the real signing key from the secret, signs all three artifacts
+   (x86_64 image, aarch64 kernel, aarch64 rootfs) with the *existing* `sign-release` bin,
+   independently re-verifies every signature with `verify-release` before publishing anything,
+   then creates a real GitHub Release via `gh release create` with the signed images and their
+   `.release.json` manifests as downloadable assets.
+3. **aarch64 image building added to regular CI**, not just at release time: a new
+   `boot-image-aarch64` job in `ci.yml`, mirroring the existing x86_64 `boot-image` job
+   (`build-image-aarch64.sh` + `boot-test-aarch64.sh`, its own Buildroot output-directory cache
+   key) -- an aarch64-only regression now fails CI on every push, rather than surfacing only when
+   someone eventually cuts a release.
+4. **`README.md`** (new -- this repo had none before): points users at the Releases page, gives
+   step-by-step Balena Etcher flashing instructions for the x86_64 `.img`, and documents the
+   verifying-key check above.
+
+Not attempted here, unchanged from directly above: the literal `dd`/Etcher-to-a-real-device step
+and the real hardware boot it enables. This work makes that step a `git tag && git push --tags`
+plus a browser download away, but still stops short of performing it, per this document's own
+standing pause condition.
 
 ## 4. Milestones
 

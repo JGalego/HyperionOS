@@ -13,6 +13,10 @@ path = "src/bin/sign-release.rs"
 name = "verify-release"
 path = "src/bin/verify-release.rs"
 
+[[bin]]
+name = "gen-signing-key"
+path = "src/bin/gen-signing-key.rs"
+
 [dependencies]
 hyperion-capability = { workspace = true }
 hyperion-crypto = { workspace = true }

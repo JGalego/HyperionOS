@@ -73,7 +73,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: boot/.tools
-          key: buildroot-${{ hashFiles('boot/scripts/fetch-buildroot.sh', 'boot/board/**', 'boot/configs/**') }}
+          key: buildroot-x86_64-${{ hashFiles('boot/scripts/fetch-buildroot.sh', 'boot/board/hyperion-x86_64/**', 'boot/configs/hyperion_x86_64_efi_defconfig') }}
       - run: boot/scripts/build-image.sh
       - run: boot/scripts/boot-test.sh
         env:
@@ -94,3 +94,36 @@ jobs:
       - run: boot/scripts/console-test.sh "" "what is the weather like today" "generic_goal"
         env:
           CONSOLE_TEST_TIMEOUT: "300"
+
+  # PRODUCTION_BOOT_PROMPT.md M11: Hyperion's second reference platform. A separate job (not a
+  # matrix leg of boot-image above) because it needs its own cross-toolchain and its own Buildroot
+  # output directory (see build-image-aarch64.sh's own comment on why output/ and output-aarch64/
+  # can't be shared) -- catching an aarch64-only regression here, on every push, rather than only
+  # at release time.
+  boot-image-aarch64:
+    name: boot image aarch64 (QEMU, direct kernel boot)
+    runs-on: ubuntu-latest
+    if: >-
+      contains(github.event.head_commit.modified, 'boot/') ||
+      contains(github.event.head_commit.added, 'boot/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - name: Install qemu + Buildroot host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-arm \
+            build-essential bc cpio rsync unzip file libncurses-dev
+      - name: Cache Buildroot download + build output
+        uses: actions/cache@v4
+        with:
+          path: boot/.tools
+          key: buildroot-aarch64-${{ hashFiles('boot/scripts/fetch-buildroot.sh', 'boot/board/hyperion-aarch64/**', 'boot/configs/hyperion_aarch64_virt_defconfig') }}
+      - run: boot/scripts/build-image-aarch64.sh
+      - run: boot/scripts/boot-test-aarch64.sh
+        env:
+          BOOT_TEST_TIMEOUT: "300"
