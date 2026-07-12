@@ -63,13 +63,18 @@ for deb in "$WORK"/*.deb; do
 done
 
 # `dpkg -x` extracts a .deb's own tarball contents only -- it never runs a package's maintainer
-# scripts (preinst/postinst/etc). On distros where the unversioned `aarch64-linux-gnu-gcc` name is
-# created by `update-alternatives` from a package's real `postinst` (observed on Ubuntu 24.04's
-# real GitHub Actions runners) rather than shipped as a real file/symlink inside the tarball itself
-# (as Debian 12 bookworm's own package apparently does -- this rootless extraction worked there
-# unmodified), the unversioned name never gets created. Synthesize it ourselves from whichever
-# versioned binary (`aarch64-linux-gnu-gcc-<N>`) actually got extracted, rather than assume either
-# packaging convention.
+# scripts (preinst/postinst/etc). On Ubuntu 24.04's real GitHub Actions runners, the package
+# itself ships `usr/bin/aarch64-linux-gnu-gcc` as a symlink pointing at
+# `/etc/alternatives/aarch64-linux-gnu-gcc` -- a path `update-alternatives` (run from postinst,
+# which `dpkg -x` never executes) would normally populate. That leaves a real but *dangling*
+# symlink at the unversioned path: `[[ -e ]]` correctly reports it as broken (confirmed directly
+# against a real failed CI run: `-e` was false, so the check below did fire, but a plain `ln -s`
+# then refused to overwrite the dangling symlink already occupying that path, failing with "File
+# exists"). Debian 12 bookworm's own package doesn't have this problem (this same rootless
+# extraction already works there unmodified) -- exact cause unconfirmed there, but irrelevant:
+# `ln -sf` (removes whatever's at the destination first) handles a missing name, an already-correct
+# symlink, and a dangling one identically, so it's the right fix regardless of which case a given
+# distro's packaging produces.
 if [[ ! -e "$PREFIX/usr/bin/aarch64-linux-gnu-gcc" ]]; then
     # The `[0-9]*` suffix (not a bare `*`) deliberately excludes sibling tools that share the
     # `aarch64-linux-gnu-gcc-` prefix but aren't version-numbered gcc itself, e.g.
@@ -79,8 +84,8 @@ if [[ ! -e "$PREFIX/usr/bin/aarch64-linux-gnu-gcc" ]]; then
         echo "no aarch64-linux-gnu-gcc (versioned or not) found under $PREFIX/usr/bin after extraction" >&2
         exit 1
     fi
-    echo "no unversioned aarch64-linux-gnu-gcc shipped by this distro's packages -- linking $(basename "$versioned_gcc") to it"
-    ln -s "$(basename "$versioned_gcc")" "$PREFIX/usr/bin/aarch64-linux-gnu-gcc"
+    echo "no working unversioned aarch64-linux-gnu-gcc shipped by this distro's packages -- linking $(basename "$versioned_gcc") to it"
+    ln -sf "$(basename "$versioned_gcc")" "$PREFIX/usr/bin/aarch64-linux-gnu-gcc"
 fi
 
 touch "$STAMP"
