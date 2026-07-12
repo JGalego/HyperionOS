@@ -11,6 +11,7 @@
 //! that aren't one of this supervisor's own tracked children (a real init eventually needs a
 //! background reaper for exactly those; `hyperion_supervisor::Supervisor` only reaps its own).
 
+mod display_probe;
 mod network_probe;
 mod storage_probe;
 mod update_probe;
@@ -242,6 +243,10 @@ fn run_supervision_tree() -> ! {
     // resolution from the moment it starts. Runs first: everything below spawns real processes
     // that may want real network access immediately.
     network_probe::write_resolv_conf_from_kernel_dhcp();
+
+    // M7 stage 2: real DRM/KMS mode-set on a real display device, if one is attached (inert
+    // otherwise -- see that module's own doc comment).
+    display_probe::run_display_probe();
 
     // M6: mounts a real, dedicated persistent-storage partition if a second block device is
     // attached (inert -- returns None -- on every boot that doesn't have one, e.g. real hardware

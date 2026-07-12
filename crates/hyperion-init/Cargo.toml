@@ -10,6 +10,7 @@ name = "hyperion-init"
 path = "src/main.rs"
 
 [dependencies]
+drm = { workspace = true }
 hyperion-capability = { workspace = true }
 hyperion-crypto = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }

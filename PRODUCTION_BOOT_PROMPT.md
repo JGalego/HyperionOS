@@ -98,7 +98,7 @@ below assume UEFI.
 | M4 — Real scheduler enforcement (cgroups v2) | done |
 | M5 — Real init & supervision tree | done |
 | M6 — Real persistent storage | done |
-| M7 — Real console UI, then real display | done (stage 1: text console); stage 2 (real display/compositor) explicitly deferred as its own project |
+| M7 — Real console UI, then real display | done (stage 1: text console; stage 2: a real, minimal DRM/KMS mode-set proof landed 2026-07-12, scoped deliberately to real pixels on a real screen, not a full compositor -- see stage 2 addendum to the completion note below) |
 | M8 — Real local AI runtime | done (real Candle backend + real Intent→Agent→inference wiring on the actually-booted console path; production-scale model size, a plugin-framework bridge gap, and boot-time model pre-baking remain named, not solved — see completion note) |
 | M9 — Real cryptography | done (real Ed25519 signing + BLAKE3 hashing via a new `hyperion-crypto` crate and a real software keystore, replacing all 5 named non-cryptographic stand-ins; TPM-backed sealing confirmed unavailable on this sandbox, named as a real-hardware stretch goal — see completion note) |
 | M10 — Real networking | done (real HTTP/TLS/DNS fetch + real HTML extraction + real Knowledge Graph merge, reachable from the actual compiled console binary; guest network interface bring-up at real boot time named as a deferred, separate systems-provisioning gap — see completion note) |
@@ -459,6 +459,41 @@ asks: "treat this as its own large sub-project; do not block M7's console stage 
 inference (real or mock) is called anywhere in this pipeline either -- `hyperion-intent`'s HTN
 matching is permanently, deliberately deterministic (not something M8 replaces), and wiring a real
 model call into a future Agent capability is separate, later work M8 is what motivates for real.
+
+**M7 stage 2 addendum (2026-07-12):** a real, deliberately minimal proof landed -- real DRM/KMS
+mode-setting on a real display device, drawing real, controlled pixel data, scoped down from "a
+full compositor" to exactly the bounded claim this roadmap's own text allows ("real pixels on a
+real screen," not window management, GPU-accelerated rendering, or `WorkspaceGraph` rasterization,
+all of which remain the same large, separate sub-project stage 1's own note already deferred).
+New `crates/hyperion-init/src/linux/display_probe.rs`: opens `/dev/dri/card0` if present (inert
+otherwise -- every other boot script in this repo attaches no display device, so this never
+triggers there), finds a connected connector + mode + CRTC via the real `drm` crate (mirroring
+that crate's own `legacy_modeset` example), creates a real kernel "dumb buffer" (the generic
+CPU-writable framebuffer any KMS driver supports, no GPU-specific rendering pipeline needed),
+writes a deliberate three-band color pattern into it (not a solid fill, so a real screenshot
+matching it exactly is strong evidence of real, controlled pixel output rather than stale/garbage
+VRAM content), and issues the real `SETCRTC` ioctl that actually displays it.
+
+Proven two ways, not just "the guest-side ioctls returned success": (1) the guest's own real,
+reported mode (`1280x800`, `vrefresh: 75`, `PREFERRED | DRIVER`) confirms a real KMS negotiation
+happened, not a hardcoded resolution. (2) New `boot/scripts/display-test.sh` boots with a real
+`virtio-gpu-pci` device attached (via the kernel's own already-enabled `CONFIG_DRM_VIRTIO_GPU`)
+and, from *outside* the guest entirely, issues a real QEMU HMP `screendump` command
+(`boot/scripts/screendump.py`) to capture the emulated display's actual current pixel content to
+a real PPM file -- `boot/scripts/verify-screendump.py` then confirms the captured screenshot's
+real pixel values match the expected three bands exactly (`RGB(107,44,74)`/`(255,255,255)`/
+`(74,44,107)`, sampled and confirmed pixel-for-pixel). This is real, independent verification: the
+screenshot-capture path has no dependency on anything the guest itself claims.
+
+Scoped to x86_64 only for this pass -- proving the identical mechanism on aarch64 is real,
+straightforward, deferred work (the same kernel `CONFIG_DRM_VIRTIO_GPU` is already enabled there
+too; it would need aarch64's own virtio-mmio device name for the GPU rather than x86_64's PCI one,
+mirroring this session's own already-learned virtio-mmio-vs-PCI device-naming lesson), not
+attempted here given this milestone's own "prove the mechanism once against a representative
+platform, don't redo the same thing without new engineering insight" precedent (M5/M9/M11 all
+already made the same call). Everything beyond this bounded proof -- a real compositor, real
+`WorkspaceGraph` rasterization, real font/text rendering, real input routing -- remains exactly as
+deferred as stage 1's own note already said, and is real, separate, large future work.
 
 **M8 completion note (2026-07-11):** `hyperion-ai-runtime` gains a new, feature-gated (`candle`,
 off by default) `CandleBackend` (`src/candle_backend.rs`) implementing the crate's own
