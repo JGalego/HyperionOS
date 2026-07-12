@@ -92,6 +92,31 @@ impl WorkspaceCompiler {
         }
     }
 
+    /// Recomputes a panel's accessibility node from `contracts` in place. The template cache
+    /// key above is deliberately coarse (predicate + capability-set + tier, not full contract
+    /// content) so two turns with the same *shape* -- e.g. two different "generic_goal"
+    /// responses -- reuse the same real layout decisions (panel count/size/position, lint
+    /// result) instead of redoing that work every time. But `build_template` also bakes each
+    /// contract's own content (`label_template`, surfaced as `accessible_name`) into the very
+    /// same cached `Panel`/`AccessibilityNode` -- a cache hit must never let a *later* call
+    /// silently redisplay an *earlier* call's content just because the shape matched. Called on
+    /// every cache hit *and* miss (a fresh build's own panels already carry today's content, but
+    /// re-deriving is cheap and keeps both paths honest rather than trusting `build_template`'s
+    /// own freshness by convention).
+    fn refresh_panel_node(panel: &mut Panel, contracts: &[CapabilityUiContract]) {
+        if let Some(contract) = contracts
+            .iter()
+            .find(|c| c.capability_ref == panel.capability_ref)
+        {
+            panel.accessibility_node = derive_node(
+                panel.accessibility_node.node_id,
+                panel.panel_id,
+                contract,
+                !panel.bindings.is_empty(),
+            );
+        }
+    }
+
     /// docs/13 §7's `compile_workspace` + docs/14 §5.1's tree derivation,
     /// fused. `target_size_multiplier` stands in for a caller-supplied
     /// `UserAccessibilityProfile.target_size_multiplier` (docs/14 §4) —
@@ -150,6 +175,7 @@ impl WorkspaceCompiler {
             } else {
                 RenderState::Ready
             };
+            Self::refresh_panel_node(panel, contracts);
         }
 
         let graph_id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -364,6 +390,13 @@ impl WorkspaceCompiler {
     /// Exposed for tests/callers that want to observe cache behavior
     /// directly (hit_count, lint_result) — docs/13 §5.4's cache reuse is
     /// otherwise an internal, invisible optimization.
+    ///
+    /// Also the one real caller this crate has today (`hyperion_console::ConsoleSession`) uses
+    /// this, not [`Self::compile`]'s own returned `WorkspaceGraph`, to get the
+    /// `AccessibilityTree` it actually projects and displays -- so this refreshes each panel's
+    /// (and the parallel tree node's) content from `contracts` exactly like `compile` does,
+    /// same reasoning as [`Self::refresh_panel_node`]'s own doc comment: a cache hit must never
+    /// silently redisplay an earlier call's content just because the shape matched.
     pub fn get_template(
         &self,
         intent_predicate: &str,
@@ -371,6 +404,22 @@ impl WorkspaceCompiler {
         tier: ComplexityTier,
     ) -> Option<CompiledLayoutTemplate> {
         let key = Self::cache_key(intent_predicate, contracts, tier);
-        self.template_cache.lock().unwrap().get(&key).cloned()
+        let mut template = self.template_cache.lock().unwrap().get(&key).cloned()?;
+        for panel in &mut template.panels {
+            Self::refresh_panel_node(panel, contracts);
+        }
+        // `accessibility_tree.nodes` and `panels` are built from the same per-contract loop in
+        // `build_template`, in the same order and with the same node_id == panel_id, so mirroring
+        // each now-refreshed panel's node onto its matching tree node keeps both in lockstep.
+        for node in &mut template.accessibility_tree.nodes {
+            if let Some(panel) = template
+                .panels
+                .iter()
+                .find(|p| p.accessibility_node.node_id == node.node_id)
+            {
+                *node = panel.accessibility_node.clone();
+            }
+        }
+        Some(template)
     }
 }

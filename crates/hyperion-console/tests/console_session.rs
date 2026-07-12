@@ -107,6 +107,51 @@ fn a_url_shaped_utterance_routes_to_a_real_web_research_dispatch_not_assistant_r
 }
 
 #[test]
+fn two_different_undecomposed_goals_each_get_their_own_response_text() {
+    // Regression test: every undecomposed utterance shares the same "generic_goal" predicate
+    // (see `run_undecomposed_goal`), which `hyperion-workspace`'s own `WorkspaceCompiler` uses,
+    // together with the capability set and complexity tier, as its template *cache key* -- a
+    // real, intentional optimization so two turns of the same *shape* reuse the same real
+    // layout decisions (panel count/size/position, lint result) instead of redoing that work.
+    // A real bug let a cache hit also silently reuse the *first* turn's baked-in response
+    // content (its `AccessibilityNode.accessible_name`) for every later same-shaped turn --
+    // found by actually driving a real multi-turn interactive session (not just a single
+    // utterance per session, which is all any test here did before), never by reasoning about
+    // the code. `each_turn_is_independent...` below doesn't catch this: its own two same-shaped
+    // ("launch my startup") turns send *identical* text, so identical cached content would pass
+    // regardless of whether the cache-hit path actually refreshed anything.
+    let (_dir, mut session) = open_session();
+
+    let first = session.handle_utterance("hey there");
+    let second = session.handle_utterance("I'd like to know more about giraffes");
+    let third = session.handle_utterance("what is the weather like today");
+
+    let first_text = first.join("\n");
+    let second_text = second.join("\n");
+    let third_text = third.join("\n");
+
+    assert!(
+        first_text.contains("hey there"),
+        "expected the first turn to echo its own real utterance, got: {first_text:?}"
+    );
+    assert!(
+        second_text.contains("I'd like to know more about giraffes"),
+        "expected the second turn to echo its own real utterance, not the first turn's cached \
+         content, got: {second_text:?}"
+    );
+    assert!(
+        !second_text.contains("hey there"),
+        "the second turn must not still carry the first turn's stale response text, got: \
+         {second_text:?}"
+    );
+    assert!(
+        third_text.contains("what is the weather like today"),
+        "expected the third turn to echo its own real utterance, not an earlier turn's cached \
+         content, got: {third_text:?}"
+    );
+}
+
+#[test]
 fn each_turn_is_independent_and_the_session_keeps_working_across_many_turns() {
     let (_dir, mut session) = open_session();
 
