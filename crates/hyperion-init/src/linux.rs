@@ -11,6 +11,7 @@
 //! that aren't one of this supervisor's own tracked children (a real init eventually needs a
 //! background reaper for exactly those; `hyperion_supervisor::Supervisor` only reaps its own).
 
+mod network_probe;
 mod storage_probe;
 mod update_probe;
 
@@ -234,6 +235,14 @@ fn service_spec(name: &str, program: &str) -> ServiceSpec {
 }
 
 fn run_supervision_tree() -> ! {
+    // Real guest network bring-up (deferred gap named in M10, closed here): the kernel's own
+    // real DHCP handshake (CONFIG_IP_PNP_DHCP + `ip=dhcp`) already completed before this process
+    // ever started -- this just writes /etc/resolv.conf from its real result, so anything this
+    // supervision tree spawns (M10's own web.research capability, most concretely) has real DNS
+    // resolution from the moment it starts. Runs first: everything below spawns real processes
+    // that may want real network access immediately.
+    network_probe::write_resolv_conf_from_kernel_dhcp();
+
     // M6: mounts a real, dedicated persistent-storage partition if a second block device is
     // attached (inert -- returns None -- on every boot that doesn't have one, e.g. real hardware
     // without a data drive yet, or an ordinary single-disk QEMU dev-loop boot). The crash-

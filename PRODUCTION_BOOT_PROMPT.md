@@ -687,23 +687,36 @@ timeout in this sandbox, with no dependency on any remote service's uptime. Full
 green throughout, including `cargo clippy --features real-http` and `--features candle,real-http`
 together -- 467 tests passing.
 
-Named gaps left open, deliberately: (1) **the guest's network interface is never brought up at
-real boot time.** The kernel config already has full real networking (`CONFIG_NET`,
-`CONFIG_VIRTIO_NET`, etc.) and QEMU's own boot scripts already attach a real virtual NIC with
-real outbound SLIRP networking (`-netdev user` + `-device virtio-net-pci`, already present in
-`run-qemu.sh`/`boot-test.sh` since M0) -- but nothing configures the interface itself (no IP, no
-route, no resolver) once the guest actually boots. The cheapest real fix is kernel IP
-autoconfiguration (`CONFIG_IP_PNP`/`CONFIG_IP_PNP_DHCP` plus an `ip=dhcp` boot parameter, which
-would let the *kernel itself* complete a real DHCP handshake before `hyperion-init` ever runs,
-no new userspace package needed) plus a real `/etc/resolv.conf` -- QEMU's own SLIRP DNS proxy has
-a fixed, well-known address (`10.0.2.3`), though a real hardware deployment would separately need
-a real userspace DHCP client for its own dynamically-assigned resolver, since kernel autoconfig
-alone doesn't cover every real network topology. Not attempted here: the kernel config change
-needs a real kernel rebuild and a fresh live-QEMU verification cycle this pass didn't spend the
-time on, given the core real-networking mechanism was already fully provable through the actual
-compiled binary without it (the same standard of proof M1's real-hardware boot and M8's real
-model pre-baking were already held to) -- named precisely rather than either silently skipped or
-used to block the rest of this milestone's real, working deliverable. (2) Real `schema.org`/
+**Update (2026-07-12): guest network bring-up at real boot fixed and reverified for real, on both
+platforms.** Originally named as an open gap (below, preserved for the record); closed in a
+follow-up pass exactly the way it was scoped: `CONFIG_IP_PNP`/`CONFIG_IP_PNP_DHCP` added to both
+platforms' kernel configs, `ip=dhcp` added to every real kernel cmdline (x86_64's `grub.cfg.in`;
+aarch64's own `-append` strings in `boot-test-aarch64.sh`/`boot-benchmark.sh`/
+`update-rollback-test.sh`, since that platform has no single shared cmdline file to begin with).
+New `crates/hyperion-init/src/linux/network_probe.rs` reads `/proc/net/pnp` (populated by the
+kernel's own real DHCP client before hyperion-init ever runs) and writes a real `/etc/resolv.conf`
+from it -- confirmed by direct inspection that the kernel's own format is already
+`resolv.conf`-compatible line for line (`nameserver <ip>`), not assumed. Verified live on both
+platforms: a real boot shows `IP-Config: Complete: ... nameserver0=10.0.2.3` from the kernel
+itself, followed by this crate's own `NETWORK: wrote real /etc/resolv.conf` with the matching
+content. Proven end to end, not just at the kernel-log level: built `hyperion-console` with
+`--features real-http` and drove a real `https://example.com` utterance through the actual
+booted console (needing a rootless `musl-tools` extraction + a hand-corrected `musl-gcc` specs
+file to cross-compile `ring`'s C shim, since its own Debian package hardcodes absolute
+`/usr/lib/...` paths this sandbox can't write to) -- it reported real success
+(`done -- merged into the knowledge graph`), which requires real DNS resolution to have actually
+worked; before this fix, no `/etc/resolv.conf` existed at all, so any hostname-based fetch would
+have failed at the DNS step specifically.
+
+Original finding, preserved for the record: the kernel config already had full real networking
+(`CONFIG_NET`, `CONFIG_VIRTIO_NET`, etc.) and QEMU's own boot scripts already attached a real
+virtual NIC with real outbound SLIRP networking, but nothing configured the interface itself (no
+IP, no route, no resolver) once the guest actually booted. The fix named at the time (kernel IP
+autoconfiguration plus a real `/etc/resolv.conf`) is exactly the fix applied above; at the time it
+was named as real and scoped but not attempted in the same pass, given the core real-networking
+mechanism was already fully provable through the actual compiled binary without it.
+
+Named gaps still open, deliberately: (1) Real `schema.org`/
 JSON-LD/OpenGraph structured-data parsing -- `FetchedPage::structured` is always `None` from the
 real fetch backend, exactly as from the mock one; this crate's own doc comment already named this
 gap before M10 and it remains exactly as deferred. (3) `web.fetch.raw` itself (the no-KG-merge

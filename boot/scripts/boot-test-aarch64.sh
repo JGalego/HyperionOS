@@ -36,7 +36,7 @@ timeout "$TIMEOUT_S" qemu-system-aarch64 \
     -no-reboot \
     -serial file:"$LOG" \
     -kernel "$KERNEL_IMAGE" \
-    -append "root=/dev/vda rootwait console=ttyAMA0 init=/hyperion-init" \
+    -append "root=/dev/vda rootwait console=ttyAMA0 init=/hyperion-init ip=dhcp" \
     -drive file="$ROOTFS_IMAGE",if=none,format=raw,id=hd0 \
     -device virtio-blk-device,drive=hd0 \
     -netdev user,id=net0 \

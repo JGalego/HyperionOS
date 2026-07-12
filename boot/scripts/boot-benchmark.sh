@@ -66,7 +66,7 @@ case "$PLATFORM" in
             -chardev socket,id=con0,path="$SOCK",server=on,wait=off \
             -serial chardev:con0 \
             -kernel "$IMAGES_DIR/Image" \
-            -append "root=/dev/vda rootwait console=ttyAMA0 init=/hyperion-init" \
+            -append "root=/dev/vda rootwait console=ttyAMA0 init=/hyperion-init ip=dhcp" \
             -drive file="$IMAGES_DIR/rootfs.ext2",if=none,format=raw,id=hd0 \
             -device virtio-blk-device,drive=hd0 \
             -netdev user,id=net0 \

@@ -35,7 +35,7 @@ timeout "$TIMEOUT_S" qemu-system-aarch64 \
     -no-reboot \
     -serial file:"$LOG" \
     -kernel "$IMAGES_DIR/Image" \
-    -append "root=/dev/vda rootwait console=ttyAMA0 init=/hyperion-init hyperion.run_update_test=1" \
+    -append "root=/dev/vda rootwait console=ttyAMA0 init=/hyperion-init hyperion.run_update_test=1 ip=dhcp" \
     -drive file="$DATA_IMG",if=none,format=raw,id=hd1,cache=none \
     -device virtio-blk-device,drive=hd1 \
     -drive file="$IMAGES_DIR/rootfs.ext2",if=none,format=raw,id=hd0 \
