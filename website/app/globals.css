@@ -26,6 +26,12 @@
   --color-accent: #d9a54a;
   --color-accent-strong: #e6bb6e;
   --color-accent-fg: #16130a;
+
+  /* Same two tints as the README banner's nebula washes (assets/generate-banner.py) --
+     nebula-violet is the real color PRODUCTION_BOOT_PROMPT.md's M7 stage-2 display probe
+     proved on a real screen, reused here rather than an invented purple. */
+  --color-nebula-violet: #4a2c6b;
+  --color-nebula-blue: #1a2a52;
 }
 
 @theme inline {
@@ -44,6 +50,8 @@
 
   --animate-fade-up: fade-up 0.6s ease-out both;
   --animate-slow-spin: slow-spin 36s linear infinite;
+  --animate-twinkle: twinkle 3s ease-in-out infinite;
+  --animate-shooting-star: shooting-star 60s linear infinite;
 
   @keyframes fade-up {
     from {
@@ -59,6 +67,36 @@
   @keyframes slow-spin {
     to {
       transform: rotate(360deg);
+    }
+  }
+
+  @keyframes twinkle {
+    0%,
+    100% {
+      opacity: 0.25;
+    }
+    50% {
+      opacity: 0.9;
+    }
+  }
+
+  @keyframes shooting-star {
+    0%,
+    95% {
+      opacity: 0;
+      translate: 0 0;
+    }
+    96% {
+      opacity: 1;
+      translate: 18px 6px;
+    }
+    99% {
+      opacity: 1;
+      translate: 132px 45px;
+    }
+    100% {
+      opacity: 0;
+      translate: 150px 51px;
     }
   }
 }
@@ -77,12 +115,18 @@
     color: var(--color-fg);
   }
 
-  /* A flat near-black reads dead; a faint dawn glow behind the hero gives it depth without
-     becoming a "gradient hero" cliché — it fades out well before the next section. */
+  /* The same four nebula washes as the hero (and the README banner), pinned to the viewport
+     with background-attachment: fixed so they stay put on screen as you scroll, instead of
+     scrolling away with the page. That's what keeps the margins around every card lit up
+     the whole way down rather than fading to flat black after the first screen. */
   .dark body {
     background:
-      radial-gradient(1200px 750px at 50% -10%, color-mix(in srgb, var(--color-accent) 24%, transparent), transparent 70%),
+      radial-gradient(circle 560px at 8% 10%, color-mix(in srgb, var(--color-nebula-violet) 40%, transparent), transparent 70%),
+      radial-gradient(circle 480px at 92% 8%, color-mix(in srgb, var(--color-accent) 16%, transparent), transparent 70%),
+      radial-gradient(circle 620px at 94% 92%, color-mix(in srgb, var(--color-nebula-blue) 45%, transparent), transparent 70%),
+      radial-gradient(circle 520px at 6% 94%, color-mix(in srgb, var(--color-nebula-violet) 30%, transparent), transparent 70%),
       var(--color-bg);
+    background-attachment: fixed;
   }
 
   ::selection {

@@ -29,7 +29,7 @@ const columns = [
 
 export function Footer() {
   return (
-    <footer className="border-t border-border">
+    <footer className="relative z-10 border-t border-border">
       <Container className="grid gap-12 py-16 md:grid-cols-[1.2fr_repeat(3,1fr)]">
         <div>
           <p className="text-base font-semibold tracking-tight">{site.name}</p>

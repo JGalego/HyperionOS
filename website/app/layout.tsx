@@ -5,6 +5,7 @@ import { siteUrl, jsonLd } from "@/lib/seo";
 import { ThemeProvider } from "@/components/layout/ThemeProvider";
 import { NavBar } from "@/components/layout/NavBar";
 import { Footer } from "@/components/layout/Footer";
+import { Starfield } from "@/components/ui/Starfield";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -50,11 +51,19 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} antialiased`}
     >
-      <body className="flex min-h-screen flex-col">
+      <body className="relative flex min-h-screen flex-col">
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd()) }}
         />
+
+        {/* The page's own starfield, behind every card -- visible in the margins either side of
+            the content column and in the gaps between sections, not just behind the hero.
+            The nebula color washes live in globals.css (`.dark body`, background-attachment:
+            fixed) since they're the same fixed viewport-anchored backdrop everywhere, not
+            something that needs to vary per scroll position the way the stars do. */}
+        <Starfield seed="page" count={600} />
+
         <ThemeProvider>
           <a
             href="#main"
@@ -63,7 +72,7 @@ export default function RootLayout({
             Skip to content
           </a>
           <NavBar />
-          <main id="main" className="flex-1">
+          <main id="main" className="relative z-10 flex-1">
             {children}
           </main>
           <Footer />

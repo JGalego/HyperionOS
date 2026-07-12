@@ -1,6 +1,7 @@
 import { hero } from "@/content/hero";
 import { Button } from "@/components/ui/Button";
 import { Container } from "@/components/ui/Container";
+import { Starfield } from "@/components/ui/Starfield";
 import { HeroMark } from "./HeroMark";
 
 export function Hero() {
@@ -8,9 +9,11 @@ export function Hero() {
     <section
       id="top"
       aria-label="Introduction"
-      className="flex min-h-[calc(100dvh-4rem)] items-center py-14"
+      className="relative flex min-h-[calc(100dvh-4rem)] items-center overflow-hidden py-14"
     >
-      <Container className="flex flex-col items-center text-center">
+      <Starfield />
+
+      <Container className="relative z-10 flex flex-col items-center text-center">
         <HeroMark />
 
         <h1 className="mt-8 text-3xl font-medium tracking-tight text-balance sm:text-4xl md:text-5xl">
