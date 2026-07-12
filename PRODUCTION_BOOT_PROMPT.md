@@ -495,6 +495,30 @@ already made the same call). Everything beyond this bounded proof -- a real comp
 `WorkspaceGraph` rasterization, real font/text rendering, real input routing -- remains exactly as
 deferred as stage 1's own note already said, and is real, separate, large future work.
 
+**M7 stage 1 bug fix (2026-07-12): stale response text across multiple console turns.** Found by
+actually driving a real multi-turn interactive session against the real booted console (both in
+QEMU and reproduced natively on the host) -- never by reading code, and not caught by any existing
+test, since every one of them (`console-test.sh`, `console-drive.py`) sends exactly one utterance
+per boot. Typing two different utterances that both fall through to the undecomposed-goal
+("generic_goal") path in the same session made the *second* one's response silently redisplay the
+*first* one's text. Root cause traced with targeted `eprintln!` instrumentation at every layer of
+the call chain (console input loop → `run_undecomposed_goal` → `assistant.respond` dispatch →
+`MockBackend::generate`) confirmed the *prompt* was correct at every one of those layers; the bug
+was one layer further, in `hyperion-workspace::WorkspaceCompiler`'s template cache. Its cache key
+(`intent_predicate` + capability-set + `complexity_tier`) is deliberately coarse -- a real,
+intentional optimization so two same-shaped turns reuse the same real layout decisions (panel
+count/size/position, lint result) instead of redoing that work -- but `build_template` also bakes
+each contract's own content (`label_template`, surfaced as `AccessibilityNode.accessible_name`)
+into that same cached `Panel`, and neither `compile()` nor `get_template()` (the one
+`hyperion-console::render_workspace` actually calls to get the tree it projects) ever refreshed
+that content on a cache hit. Fixed in `crates/hyperion-workspace/src/compiler.rs`: both now
+refresh each panel's accessibility node from the current turn's contracts, hit or miss, while
+still reusing the cached structural layout. A new regression test
+(`two_different_undecomposed_goals_each_get_their_own_response_text`) sends two different
+undecomposed goals back to back and asserts the second doesn't carry the first's text -- confirmed
+non-vacuous by reverting the fix (via `git stash`) and watching the new test fail first, then
+restoring it and watching the whole suite pass clean.
+
 **M8 completion note (2026-07-11):** `hyperion-ai-runtime` gains a new, feature-gated (`candle`,
 off by default) `CandleBackend` (`src/candle_backend.rs`) implementing the crate's own
 pre-existing `InferenceBackend` trait for real: real weights, real tokenizer, a real
