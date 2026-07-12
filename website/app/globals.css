@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+/* next-themes toggles a `.dark` class on <html>; opt Tailwind's dark: variant into that class
+   instead of the prefers-color-scheme media query. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --color-bg: #fafaf8;
+  --color-bg-muted: #f2f0ec;
+  --color-bg-elevated: #ffffff;
+  --color-fg: #16150f;
+  --color-fg-muted: #5e5b52;
+  --color-border: #e3e0d8;
+  --color-accent: #b8842a;
+  --color-accent-strong: #8c6220;
+  --color-accent-fg: #16150f;
+}
+
+.dark {
+  --color-bg: #0b0a08;
+  --color-bg-muted: #151310;
+  --color-bg-elevated: #17140f;
+  --color-fg: #f5f3ee;
+  --color-fg-muted: #a6a196;
+  --color-border: #2a2822;
+  --color-accent: #d9a54a;
+  --color-accent-strong: #e6bb6e;
+  --color-accent-fg: #16130a;
+}
+
+@theme inline {
+  --color-bg: var(--color-bg);
+  --color-bg-muted: var(--color-bg-muted);
+  --color-bg-elevated: var(--color-bg-elevated);
+  --color-fg: var(--color-fg);
+  --color-fg-muted: var(--color-fg-muted);
+  --color-border: var(--color-border);
+  --color-accent: var(--color-accent);
+  --color-accent-strong: var(--color-accent-strong);
+  --color-accent-fg: var(--color-accent-fg);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --animate-fade-up: fade-up 0.6s ease-out both;
+  --animate-slow-spin: slow-spin 36s linear infinite;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes slow-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+  }
+
+  /* A flat near-black reads dead; a faint dawn glow behind the hero gives it depth without
+     becoming a "gradient hero" cliché — it fades out well before the next section. */
+  .dark body {
+    background:
+      radial-gradient(1200px 750px at 50% -10%, color-mix(in srgb, var(--color-accent) 24%, transparent), transparent 70%),
+      var(--color-bg);
+  }
+
+  ::selection {
+    background: var(--color-accent);
+    color: var(--color-accent-fg);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent-strong);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
