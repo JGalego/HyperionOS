@@ -908,12 +908,29 @@ already covered -- named explicitly, and `image_build_reproducible: false` repor
 this session's own real release manifest, rather than silently assumed or fabricated `true`.
 
 Named handoff, per this document's own explicit standing pause condition (§0a): **the literal M13
-exit criterion -- a real USB drive, `dd`-written from this tagged release image, booting on both
+exit criterion -- a real USB drive, written from this tagged release image, booting on both
 real reference-platform hardware and passing a real smoke test -- needs the user's own action.**
-Everything upstream of the actual `dd` (building both images, signing them, verifying the
-signature, boot-testing in QEMU) is done and real; the `dd` itself, and the real hardware boot it
-enables, is real-world, physical-device, irreversible-if-wrong territory this session does not
-perform unprompted, exactly as this document's own Execution Mode section requires.
+Everything upstream (building both images, signing them, verifying the signature, boot-testing in
+QEMU) is done and real; the actual write to a real device, and the real hardware boot it enables,
+is real-world, physical-device, irreversible-if-wrong territory this session does not perform
+unprompted, exactly as this document's own Execution Mode section requires.
+
+Decided (2026-07-12, by the project owner): the x86_64 image stays a plain `.img` (no ISO
+conversion) -- it is already a real, complete GPT disk image (a real EFI System Partition with
+GRUB2 plus a real root partition), exactly the shape meant to be written directly to a device,
+matching the Buildroot reference board (`board/pc`) this board was modeled on. Wrapping it in an
+ISO9660/El-Torito hybrid image first would need new build tooling this pipeline doesn't have
+(`grub-mkrescue`/`xorriso`) to solve a problem the `.img` doesn't have. For the actual write step,
+**Balena Etcher** is the recommended tool over raw `dd` -- it writes a raw `.img` natively (no
+conversion needed), and has real safety guardrails (hides system drives from its target list,
+verifies the write afterward) that a bare `dd` invocation doesn't. UNetBootin was considered and
+rejected: it's unmaintained and built around extracting a live-CD ISO's own filesystem and
+reconstructing a syslinux/GRUB config, not around writing a custom GPT+GRUB2-EFI raw image
+byte-for-byte -- a worse fit than either `.img`+Etcher or a plain `dd`. This decision covers the
+x86_64 platform only: aarch64 has no combined bootable image for real hardware at all yet (M11
+used QEMU's generic `virt` reference rather than real Raspberry Pi board support -- see that
+milestone's own completion note), so there is nothing to write to a real Pi's SD card yet either
+way.
 
 ## 4. Milestones
 
