@@ -53,8 +53,35 @@ pub struct ConsoleSession {
     /// `CoordinationSession` doesn't expose the runtime it was built with, and the undecomposed-
     /// goal path needs a real `AgentRuntime` handle of its own to spawn/invoke directly.
     agent_runtime: Arc<AgentRuntime>,
+    /// Held so the `/backend`/`use backend` meta-command can swap the live backend without
+    /// restarting the process -- `agent_runtime` above only holds its own clone of this same
+    /// `Arc`, with no way to reach back out to it.
+    ai_runtime: Arc<LocalAiRuntime>,
+    current_backend: BackendKind,
     workspace: WorkspaceCompiler,
     next_turn_id: u64,
+}
+
+/// Which real [`hyperion_ai_runtime::InferenceBackend`] is currently answering
+/// `assistant.respond` calls -- tracked here (not in `hyperion-ai-runtime` itself) because
+/// "candle" vs "mock" are console-level, human-facing labels for backends this crate is the one
+/// that actually constructs; the runtime crate only knows the trait object, never these names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackendKind {
+    /// A real, small, CPU-only Candle model -- see [`hyperion_ai_runtime::CandleBackend`].
+    Candle,
+    /// The deterministic echo stub -- see [`MockBackend`]. Never a real answer, only ever a
+    /// dev/test fallback or explicit choice.
+    Mock,
+}
+
+impl BackendKind {
+    fn name(self) -> &'static str {
+        match self {
+            BackendKind::Candle => "candle",
+            BackendKind::Mock => "mock",
+        }
+    }
 }
 
 impl ConsoleSession {
@@ -69,9 +96,10 @@ impl ConsoleSession {
         let context = Arc::new(hyperion_context::ContextEngine::new(graph.clone()));
         let netstack = Arc::new(Self::build_netstack(graph.clone()));
         let intent_engine = IntentEngine::new(graph, context.clone());
-        let ai_runtime = Arc::new(Self::build_ai_runtime(data_dir.as_ref()));
+        let (runtime, current_backend) = Self::build_ai_runtime(data_dir.as_ref());
+        let ai_runtime = Arc::new(runtime);
         let agent_runtime = Arc::new(AgentRuntime::new_with_netstack(
-            ai_runtime,
+            ai_runtime.clone(),
             Some(netstack.clone()),
         ));
         let coordination = CoordinationSession::new(agent_runtime.clone());
@@ -103,6 +131,8 @@ impl ConsoleSession {
             intent_engine,
             coordination,
             agent_runtime,
+            ai_runtime,
+            current_backend,
             workspace: WorkspaceCompiler::new(),
             next_turn_id: 1,
         })
@@ -130,21 +160,27 @@ impl ConsoleSession {
     /// checksum stand-in -- by this session's own real device identity, a [`Keystore`] persisted
     /// under `data_dir` (the same real, dedicated partition M6 already gives the Knowledge Graph),
     /// so it's stable across reboots rather than a fresh, unverifiable identity every restart.
-    fn build_ai_runtime(data_dir: &Path) -> LocalAiRuntime {
-        #[cfg(feature = "candle")]
-        let backend: Box<dyn hyperion_ai_runtime::InferenceBackend> =
-            match hyperion_ai_runtime::CandleBackend::load() {
-                Ok(backend) => Box::new(backend),
+    fn build_ai_runtime(data_dir: &Path) -> (LocalAiRuntime, BackendKind) {
+        let (backend, current_backend) = if cfg!(feature = "candle") {
+            match Self::try_load_candle() {
+                Ok(backend) => (backend, BackendKind::Candle),
                 Err(e) => {
                     eprintln!(
-                        "warning: real Candle model load failed ({e}); falling back to the \
-                         mock inference backend for this session"
+                        "warning: {e}; falling back to the mock inference backend for this \
+                         session"
                     );
-                    Box::new(MockBackend)
+                    (
+                        Box::new(MockBackend) as Box<dyn hyperion_ai_runtime::InferenceBackend>,
+                        BackendKind::Mock,
+                    )
                 }
-            };
-        #[cfg(not(feature = "candle"))]
-        let backend: Box<dyn hyperion_ai_runtime::InferenceBackend> = Box::new(MockBackend);
+            }
+        } else {
+            (
+                Box::new(MockBackend) as Box<dyn hyperion_ai_runtime::InferenceBackend>,
+                BackendKind::Mock,
+            )
+        };
 
         let runtime = LocalAiRuntime::new(backend, 8_000);
         let keystore = Keystore::open_or_create(&data_dir.join("device.key"))
@@ -166,7 +202,110 @@ impl ConsoleSession {
         runtime
             .register_model(descriptor, &keystore.verifying_key())
             .expect("a descriptor this session just really signed always verifies");
-        runtime
+        (runtime, current_backend)
+    }
+
+    /// Loads a fresh real [`hyperion_ai_runtime::CandleBackend`], or a clear, honest error if
+    /// this binary wasn't even compiled with `--features candle` -- shared by
+    /// [`Self::build_ai_runtime`] (startup) and [`Self::switch_backend`] (the `/backend`/
+    /// `use backend` meta-command), so both paths give the exact same message for the exact same
+    /// failure.
+    #[cfg(feature = "candle")]
+    fn try_load_candle() -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        hyperion_ai_runtime::CandleBackend::load()
+            .map(|backend| Box::new(backend) as Box<dyn hyperion_ai_runtime::InferenceBackend>)
+            .map_err(|e| format!("real Candle model load failed ({e})"))
+    }
+
+    #[cfg(not(feature = "candle"))]
+    fn try_load_candle() -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        Err(
+            "this build wasn't compiled with real inference support (--features candle)"
+                .to_string(),
+        )
+    }
+
+    /// The `/backend <name>` / `use backend <name>` meta-command's real effect: swaps
+    /// [`Self::ai_runtime`]'s live backend in place via
+    /// [`hyperion_ai_runtime::LocalAiRuntime::set_backend`] -- no restart, no new session, every
+    /// other piece of state (Knowledge Graph, capability token, registered model descriptor)
+    /// untouched. A no-op (with its own honest reply) if `kind` is already active, so repeating
+    /// the command is always safe.
+    fn switch_backend(&mut self, kind: BackendKind) -> String {
+        if kind == self.current_backend {
+            return format!("Already using the {} backend.", kind.name());
+        }
+        let backend = match kind {
+            BackendKind::Mock => {
+                Box::new(MockBackend) as Box<dyn hyperion_ai_runtime::InferenceBackend>
+            }
+            BackendKind::Candle => match Self::try_load_candle() {
+                Ok(backend) => backend,
+                Err(e) => return format!("I couldn't switch: {e}."),
+            },
+        };
+        self.ai_runtime.set_backend(backend);
+        self.current_backend = kind;
+        format!("Switched to the {} backend.", kind.name())
+    }
+
+    /// Recognizes the console's small set of meta-commands -- session/runtime controls, not
+    /// goals -- ahead of the intent engine, the same "deterministic check before the AI path"
+    /// tier [`Self::run_undecomposed_goal`]'s own URL check already uses. Both a `/`-prefixed
+    /// form and a plain-English `"use backend "` phrase are recognized for the backend switch;
+    /// the plain-English form is deliberately the full three words "use backend", never the bare
+    /// "use <name>" -- "candle" and "mock" are ordinary enough words that a two-word phrase could
+    /// collide with a real goal utterance, exactly the ambiguity a meta-command must never risk.
+    /// Returns `None` (not a meta-command at all) for everything else, so the normal goal
+    /// pipeline runs unchanged.
+    fn handle_meta_command(&mut self, utterance: &str) -> Option<Vec<String>> {
+        let trimmed = utterance.trim();
+        let lower = trimmed.to_ascii_lowercase();
+
+        if lower == "/help" {
+            return Some(Self::help_text());
+        }
+
+        let arg = if lower.starts_with("/backend") {
+            trimmed["/backend".len()..].trim()
+        } else if lower.starts_with("use backend") {
+            trimmed["use backend".len()..].trim()
+        } else {
+            return None;
+        };
+
+        if arg.is_empty() {
+            return Some(vec![format!(
+                "Currently using the {} backend.",
+                self.current_backend.name()
+            )]);
+        }
+
+        let kind = match arg.to_ascii_lowercase().as_str() {
+            "candle" | "real" | "llama" => BackendKind::Candle,
+            "mock" | "echo" => BackendKind::Mock,
+            other => {
+                return Some(vec![format!(
+                    "I don't know a \"{other}\" backend -- try \"candle\" or \"mock\"."
+                )])
+            }
+        };
+
+        Some(vec![self.switch_backend(kind)])
+    }
+
+    fn help_text() -> Vec<String> {
+        vec![
+            "I'm not menu-driven -- just tell me what you'd like to do, in your own words."
+                .to_string(),
+            String::new(),
+            "A couple of things you can also ask directly:".to_string(),
+            "  /backend <candle|mock>   switch which inference backend answers you (also: \
+             \"use backend <name>\")"
+                .to_string(),
+            "  /backend                 show which backend is active right now".to_string(),
+            "  /help                    show this message".to_string(),
+        ]
     }
 
     /// Real network selection for this session's own `web.research` calls (see
@@ -219,6 +358,10 @@ impl ConsoleSession {
     /// expose technical errors directly" -- this is the boundary where that applies), not a
     /// panic or a propagated error a caller must handle.
     pub fn handle_utterance(&mut self, utterance: &str) -> Vec<String> {
+        if let Some(reply) = self.handle_meta_command(utterance) {
+            return reply;
+        }
+
         let turn_tag = format!("console-turn-{}", self.next_turn_id);
         self.next_turn_id += 1;
 

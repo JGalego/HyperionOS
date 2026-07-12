@@ -168,3 +168,87 @@ fn each_turn_is_independent_and_the_session_keeps_working_across_many_turns() {
          intervening, differently-shaped turn"
     );
 }
+
+#[test]
+fn backend_meta_command_reports_and_switches_the_active_backend() {
+    let (_dir, mut session) = open_session();
+
+    let status = session.handle_utterance("/backend").join("\n");
+    assert!(
+        status.contains("mock"),
+        "a default (non-candle) build must report mock as the active backend, got: {status:?}"
+    );
+
+    let noop = session.handle_utterance("/backend mock").join("\n");
+    assert!(
+        noop.contains("Already using"),
+        "switching to the already-active backend must be a safe no-op, got: {noop:?}"
+    );
+
+    let failed = session.handle_utterance("/backend candle").join("\n");
+    assert!(
+        failed.contains("--features candle"),
+        "a non-candle build must give a clear, honest reason it can't switch, got: {failed:?}"
+    );
+    assert!(
+        !failed.contains("generic_goal"),
+        "a meta-command reply must not also render a goal outcome, got: {failed:?}"
+    );
+
+    // The session must keep working normally after a failed switch attempt.
+    let after = session.handle_utterance("still working?").join("\n");
+    assert!(
+        after.contains("still working?"),
+        "a failed backend switch must not break the session's normal goal pipeline, got: \
+         {after:?}"
+    );
+}
+
+#[test]
+fn the_plain_english_backend_phrase_requires_all_three_words() {
+    let (_dir, mut session) = open_session();
+
+    // The deliberately narrow "use backend <name>" phrasing must not fire on the bare two-word
+    // "use <name>" form -- see `ConsoleSession::handle_meta_command`'s own doc comment on why:
+    // "candle"/"mock" are ordinary enough words that a shorter phrase could collide with a real
+    // goal utterance, exactly the ambiguity a meta-command must never risk.
+    let lines = session.handle_utterance("use mock").join("\n");
+    assert!(
+        lines.contains("echo: use mock"),
+        "\"use mock\" (without \"backend\") must be treated as a normal goal utterance, not a \
+         meta-command, got: {lines:?}"
+    );
+    assert!(
+        lines.contains("generic_goal"),
+        "expected the bare two-word phrase to take the normal undecomposed-goal path, got: \
+         {lines:?}"
+    );
+}
+
+#[test]
+fn the_backend_meta_command_is_case_insensitive_and_has_a_plain_english_alias() {
+    let (_dir, mut session) = open_session();
+
+    let via_slash = session.handle_utterance("/BACKEND").join("\n");
+    let via_phrase = session.handle_utterance("USE BACKEND").join("\n");
+
+    assert!(via_slash.contains("mock"), "got: {via_slash:?}");
+    assert!(via_phrase.contains("mock"), "got: {via_phrase:?}");
+}
+
+#[test]
+fn help_command_lists_the_backend_meta_command() {
+    let (_dir, mut session) = open_session();
+
+    let lines = session.handle_utterance("/help");
+    let joined = lines.join("\n");
+
+    assert!(
+        joined.contains("/backend"),
+        "expected /help to mention the /backend meta-command, got: {joined:?}"
+    );
+    assert!(
+        !joined.contains("generic_goal"),
+        "/help must not also fall through to a real Agent invocation, got: {joined:?}"
+    );
+}

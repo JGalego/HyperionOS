@@ -45,7 +45,7 @@ pub struct LocalAiRuntime {
     registry: Mutex<ModelRegistry>,
     residency: Mutex<ResidencyManager>,
     power_mode: Mutex<PowerMode>,
-    backend: Box<dyn InferenceBackend>,
+    backend: Mutex<Box<dyn InferenceBackend>>,
     total_capacity_mb: u32,
     next_request_id: AtomicU64,
 }
@@ -56,10 +56,18 @@ impl LocalAiRuntime {
             registry: Mutex::new(ModelRegistry::default()),
             residency: Mutex::new(ResidencyManager::default()),
             power_mode: Mutex::new(PowerMode::Performance),
-            backend,
+            backend: Mutex::new(backend),
             total_capacity_mb,
             next_request_id: AtomicU64::new(1),
         }
+    }
+
+    /// Swaps the active backend in place -- the console's `/backend`/`use backend` meta-command
+    /// needs this to move between `MockBackend` and a real one without restarting the process.
+    /// Takes effect starting with the very next [`Self::infer`] call; registered models,
+    /// residency, and power mode are untouched.
+    pub fn set_backend(&self, backend: Box<dyn InferenceBackend>) {
+        *self.backend.lock().unwrap() = backend;
     }
 
     /// Registers a model artifact after checking its real Ed25519 signature — docs/22
@@ -187,7 +195,7 @@ impl LocalAiRuntime {
         };
 
         self.load(model_id, &variant)?;
-        let text = self.backend.generate(model_id, request);
+        let text = self.backend.lock().unwrap().generate(model_id, request);
         self.residency.lock().unwrap().touch(model_id, now());
         let _request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
 
