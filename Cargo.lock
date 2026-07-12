@@ -1842,10 +1842,14 @@ name = "hyperion-init"
 version = "0.1.0"
 dependencies = [
  "hyperion-capability",
+ "hyperion-crypto",
+ "hyperion-knowledge-graph",
+ "hyperion-recovery",
  "hyperion-scheduler",
  "hyperion-storage",
  "hyperion-supervisor",
  "hyperion-trust-boundary",
+ "hyperion-update",
  "libc",
  "serde_json",
 ]
@@ -1987,7 +1991,10 @@ name = "hyperion-release-gate"
 version = "0.1.0"
 dependencies = [
  "hyperion-capability",
+ "hyperion-crypto",
  "hyperion-observability",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 

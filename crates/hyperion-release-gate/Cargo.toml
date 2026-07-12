@@ -5,7 +5,18 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "sign-release"
+path = "src/bin/sign-release.rs"
+
+[[bin]]
+name = "verify-release"
+path = "src/bin/verify-release.rs"
+
 [dependencies]
 hyperion-capability = { workspace = true }
+hyperion-crypto = { workspace = true }
 hyperion-observability = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }

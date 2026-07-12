@@ -137,6 +137,60 @@ pub enum ReleaseDecision {
     Blocked,
 }
 
+/// PRODUCTION_BOOT_PROMPT.md M13: the new hardware/boot-surface criteria a release must also
+/// satisfy, on top of docs/35's suite reports and docs/36's benchmark regression check -- a
+/// caller supplies these as already-computed facts from real boot/build tooling
+/// (`boot/scripts/build-image*.sh`'s own reproducibility check, `boot/scripts/boot-test*.sh`'s
+/// own real QEMU boot-test result per platform, `boot/scripts/update-rollback-test.sh`'s own real
+/// staged-update-and-rollback proof), matching this crate's own "pure aggregation, never
+/// re-derives a sub-result itself" nature (see this crate's own doc comment).
+#[derive(Debug, Clone)]
+pub struct HardwareReleaseCriteria {
+    /// True iff building the same tagged source twice produced byte-identical (or
+    /// hash-identical) images -- a real two-build comparison the caller already ran, not
+    /// something this crate re-builds to check.
+    pub image_build_reproducible: bool,
+    /// Per-platform real boot-test result (M11/M12) -- `(platform name, passed)`. A platform
+    /// absent from this list is treated the same as `false` for it: an untested platform is not
+    /// a passing one, matching this milestone's own exit criterion naming *both* reference
+    /// platforms explicitly.
+    pub boot_tested_platforms: Vec<(String, bool)>,
+    /// True iff `boot/scripts/update-rollback-test.sh`'s real staged-update-and-rollback proof
+    /// (docs/41 Phase 10's literal exit criterion, run against a real booted system) reported
+    /// `PASS`.
+    pub staged_update_rollback_verified: bool,
+}
+
+impl HardwareReleaseCriteria {
+    /// This roadmap's own two reference platforms (M11) -- both required, neither optional.
+    pub const REQUIRED_PLATFORMS: &'static [&'static str] = &["x86_64", "aarch64"];
+
+    /// A convenience constructor for callers/tests exercising a *different* release-gate axis
+    /// that don't care about this one -- every hardware criterion reports satisfied.
+    pub fn all_clear() -> Self {
+        HardwareReleaseCriteria {
+            image_build_reproducible: true,
+            boot_tested_platforms: Self::REQUIRED_PLATFORMS
+                .iter()
+                .map(|&p| (p.to_string(), true))
+                .collect(),
+            staged_update_rollback_verified: true,
+        }
+    }
+
+    /// True iff the image build is reproducible, every required reference platform boot-tested
+    /// successfully, and the real staged-update-and-rollback proof passed.
+    pub fn is_met(&self) -> bool {
+        self.image_build_reproducible
+            && self.staged_update_rollback_verified
+            && Self::REQUIRED_PLATFORMS.iter().all(|&platform| {
+                self.boot_tested_platforms
+                    .iter()
+                    .any(|(p, ok)| p == platform && *ok)
+            })
+    }
+}
+
 /// docs/35 §1's `ReleaseGate.evaluate(build) -> ReleaseDecision`, widened
 /// to a full report — which suites (by [`SuiteKind`]) and/or which
 /// benchmark outcome actually blocked, not just a bare verdict.
@@ -146,6 +200,9 @@ pub struct ReleaseGateReport {
     pub decision: ReleaseDecision,
     pub blocking_suites: Vec<SuiteKind>,
     pub benchmark_outcome: Option<GateOutcome>,
+    /// PRODUCTION_BOOT_PROMPT.md M13: `false` here blocks release even if every suite and the
+    /// benchmark gate are otherwise clean -- see [`HardwareReleaseCriteria::is_met`].
+    pub hardware_criteria_met: bool,
 }
 
 #[derive(Debug, thiserror::Error)]

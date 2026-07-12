@@ -12,6 +12,7 @@
 //! background reaper for exactly those; `hyperion_supervisor::Supervisor` only reaps its own).
 
 mod storage_probe;
+mod update_probe;
 
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
@@ -241,6 +242,13 @@ fn run_supervision_tree() -> ! {
     // real console keeps its own Knowledge Graph.
     let data_partition = storage_probe::mount_data_partition();
     if let Some(data_dir) = &data_partition {
+        // M13's probe runs first: it's opt-in and self-contained within one boot (see its own
+        // doc comment), while M6's crash-consistency probe's own write loop is deliberately slow
+        // (200k iterations, meant to still be mid-flight whenever storage-crash-test.sh's hard
+        // kill lands) and would otherwise block this sequential boot path from ever reaching the
+        // M13 probe on a fresh data disk. Neither probe's own state (a separate dedicated file
+        // each) depends on the other's, so the order between them is otherwise arbitrary.
+        update_probe::run_update_rollback_probe(data_dir);
         storage_probe::run_crash_consistency_probe(data_dir);
     }
 

@@ -104,7 +104,7 @@ below assume UEFI.
 | M10 — Real networking | done (real HTTP/TLS/DNS fetch + real HTML extraction + real Knowledge Graph merge, reachable from the actual compiled console binary; guest network interface bring-up at real boot time named as a deferred, separate systems-provisioning gap — see completion note) |
 | M11 — Second reference platform (aarch64) | done (real aarch64 kernel + rootfs boots to the real M7-stage-1 console loop under `qemu-system-aarch64 -M virt`; a real macOS-breaking seccomp portability bug was found and fixed along the way; real Raspberry Pi hardware itself named as a deferred, real-hardware-only handoff — see completion note) |
 | M12 — Boot benchmarking against docs/36 | done (real, measured end-to-end cold-boot time on both reference platforms via a new `boot-benchmark.sh`/`.py`; both over docs/36's ~4.5s budget, named cause is this sandbox's lack of KVM/TCG-only emulation — a real, fixable GRUB-menu-wait bug was found and fixed along the way; real hardware timing itself named as the deferred, real-hardware-only measurement — see completion note) |
-| M13 — Release engineering for a bootable artifact | pending |
+| M13 — Release engineering for a bootable artifact | done, sandbox-achievable portion (real `hyperion-release-gate` hardware-criteria extension; a real staged update applied to and rolled back from a real running booted system with no data loss, docs/41 Phase 10's literal exit criterion; a real signed, versioned, `dd`-able image built and its signature verified; a real, honestly-diagnosed image-non-reproducibility gap found and named, not silently claimed solved) — the literal exit criterion itself (a real USB drive, written via a real `dd`, booting on real reference-platform hardware) needs the user's own action, per this document's own explicit standing pause condition; not attempted here — see completion note |
 
 **M0 completion note (2026-07-11):** built via `boot/` (Buildroot 2026.05, board `hyperion-x86_64`
 modeled on Buildroot's own real-hardware `board/pc` EFI target, kernel 6.12.47 LTS). Verified for
@@ -833,6 +833,87 @@ much-faster number is real TCG/no-KVM overhead: aarch64's own boot has no firmwa
 stage at all to begin with (direct kernel load, per M11's own completion note), so it pays the
 same real TCG tax on a strictly shorter real critical path, which is the concrete, measured reason
 it lands under budget in this same sandbox while x86_64 does not.
+
+**M13 completion note (2026-07-12):** extended `hyperion-release-gate` with a new
+`HardwareReleaseCriteria` type (`image_build_reproducible`, `boot_tested_platforms`,
+`staged_update_rollback_verified`) and widened `evaluate_release` to gate on it alongside the
+existing suite/benchmark checks -- the same "caller supplies an already-computed real fact, this
+crate never re-derives it" shape every other criterion here already uses. A platform simply
+*absent* from `boot_tested_platforms` is treated the same as an explicit failure (an untested
+platform is not a passing one); 6 new tests cover the extension, all passing alongside the
+existing suite.
+
+Real staged update + rollback, docs/41 Phase 10's literal exit criterion, finally proven against a
+real system: new `crates/hyperion-init/src/linux/update_probe.rs`, opt-in via a
+`hyperion.run_update_test=1` kernel cmdline parameter (so it's inert on every other boot -- M7/
+M11/M12's own boot tests never pass it) and `boot/scripts/update-rollback-test.sh`. Inside the
+real booted aarch64 guest (chosen over x86_64 here specifically because aarch64 boots via direct
+kernel load, so the trigger parameter goes straight on QEMU's own `-append`; x86_64's cmdline is
+baked into a GRUB config embedded in the disk image itself, which this pass didn't need to touch
+for this proof), it writes a real node to a dedicated real `KnowledgeGraph` on the M6 persistent
+data partition, applies a real, Ed25519-signed `UpdateOrchestrator::apply_update` against it (a
+real health-gated staged rollout, a real `hyperion_recovery::RecoveryService` pre-update
+snapshot), writes new data representing the update's own real payload effect (the orchestrator
+itself has no migration DSL -- applying the actual change is the caller's job, same as any real
+update needs to do), then calls a real `update_rollback`, which really restores the pre-update
+snapshot via `RecoveryService::restore_to`. Confirmed live: `applied real update to v1... real
+data now = "POST-UPDATE-MODIFIED"`, then `PASS -- real rollback restored real data to
+"pre-update-original" (no data loss), real active version back to v0`. Verified non-vacuous by
+temporarily skipping the real rollback call and confirming the probe correctly reports `FAIL` with
+the stale (unrestored) data and version, then restoring it and reconfirming a clean `PASS`.
+
+Two real, non-obvious bugs surfaced and fixed along the way, neither guessed at:
+1. **Two virtio-mmio block devices enumerate in a different order than their `-device` flags on
+   the command line** -- adding the real M6 data disk alongside aarch64's rootfs disk swapped
+   which one became `/dev/vda` vs `/dev/vdb` relative to what a single-disk boot (and
+   `storage_probe.rs`'s own hardcoded `/dev/vdb` data-device assumption) expects, discovered via a
+   real boot that kernel-panicked trying to exec `/hyperion-init` from the wrong (64MB, data-only)
+   disk. Fixed by reordering this test's own `-drive`/`-device` pairs to match the enumeration
+   `storage_probe.rs` already assumes, rather than touching that shared production code for a
+   test-script-specific device-count difference.
+2. **A fresh `UpdateOrchestrator`'s `active_version` starts at 0** (its own `unwrap_or(0)`
+   default, never set by any constructor) -- this probe's first attempt used `from_version: 1`,
+   which `compatibility_check`'s real schema-compatibility check correctly (not a bug) rejected as
+   stale. Traced through the actual check before assuming a plausible-looking version number was
+   right; fixed to `from_version: 0, to_version: 1`.
+3. (Separately, not a bug in new code but a real scheduling conflict) the existing M6
+   crash-consistency probe's own write loop is deliberately slow (200k iterations, meant to still
+   be mid-flight whenever `storage-crash-test.sh`'s own hard kill lands) and, sharing the same
+   fresh data disk, blocked this sequential boot path from ever reaching the M13 probe. Fixed by
+   running the M13 probe first in `run_supervision_tree()` -- both probes are independently gated
+   on their own dedicated files, so the order between them was otherwise arbitrary.
+
+Signed, versioned, `dd`-able release artifact: two new `hyperion-release-gate` binaries,
+`sign-release` (real BLAKE3 hash of an image's own bytes, real Ed25519 signature over that hash
+via M9's real device `Keystore`, written as a `.release.json` manifest) and `verify-release` (recomputes
+the hash directly from the image's own bytes -- never trusts a manifest's recorded hash blindly --
+and checks the real signature against the manifest's own recorded verifying key), plus
+`boot/scripts/package-release.sh` tying both real platform images together into one versioned
+release directory. Verified non-vacuous twice: a byte-tampered copy of the real signed image
+correctly fails the hash check; the real image against a manifest with a fabricated verifying key
+correctly fails the signature check specifically (proving the signature check, not just the hash
+check, does real work).
+
+Named gap, found by actually testing the claim rather than assuming it: **this build is not
+currently reproducible.** Building the identical x86_64 source twice, back to back, produced two
+different SHA-256 image hashes (confirmed directly, not inferred). Root cause traced precisely,
+not left vague: `post-image.sh` reads the rootfs's own `mkfs.ext4`-assigned filesystem UUID (which
+that tool generates randomly by default, with no `-U` determinism flag set anywhere in this
+pipeline) and embeds it as `PARTUUID` into *both* GRUB's `root=PARTUUID=...` cmdline and the GPT
+partition table itself -- meaning the disk image's own bytes differ on every build even when the
+compiled binaries and rootfs contents are byte-identical. The well-understood fix (pin a
+deterministic filesystem UUID, e.g. via a hook into Buildroot's own rootfs-image-generation step)
+is real and scoped, but not attempted in this same pass given everything else this milestone
+already covered -- named explicitly, and `image_build_reproducible: false` reported honestly in
+this session's own real release manifest, rather than silently assumed or fabricated `true`.
+
+Named handoff, per this document's own explicit standing pause condition (§0a): **the literal M13
+exit criterion -- a real USB drive, `dd`-written from this tagged release image, booting on both
+real reference-platform hardware and passing a real smoke test -- needs the user's own action.**
+Everything upstream of the actual `dd` (building both images, signing them, verifying the
+signature, boot-testing in QEMU) is done and real; the `dd` itself, and the real hardware boot it
+enables, is real-world, physical-device, irreversible-if-wrong territory this session does not
+perform unprompted, exactly as this document's own Execution Mode section requires.
 
 ## 4. Milestones
 

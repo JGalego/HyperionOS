@@ -2,7 +2,8 @@ use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_observability::{AuditAction, AuditLedger, AuditLogEntry, AuditPayload, PrincipalRef};
 
 use crate::types::{
-    GateOutcome, ReleaseDecision, ReleaseGateError, ReleaseGateReport, SuiteReport,
+    GateOutcome, HardwareReleaseCriteria, ReleaseDecision, ReleaseGateError, ReleaseGateReport,
+    SuiteReport,
 };
 
 fn require(
@@ -17,15 +18,16 @@ fn require(
 
 /// docs/35 §1's `ReleaseGate.evaluate(build) -> ReleaseDecision`: a build
 /// passes only if every sub-suite is non-blocking (per
-/// [`SuiteReport::is_blocking`]) *and* the benchmark regression check
-/// (docs/36) did not return [`GateOutcome::Blocked`] — the one
-/// consolidated gate/report spanning both docs' suites, matching each
-/// doc's own "Release candidate" convergence point in its architecture
-/// diagram.
+/// [`SuiteReport::is_blocking`]), the benchmark regression check
+/// (docs/36) did not return [`GateOutcome::Blocked`], and (PRODUCTION_BOOT_PROMPT.md M13)
+/// `hardware`'s own criteria are met — the one consolidated gate/report spanning both docs'
+/// suites plus this roadmap's own real hardware/boot surface, matching each doc's own "Release
+/// candidate" convergence point in its architecture diagram.
 pub fn evaluate_release(
     build_id: &str,
     suites: &[SuiteReport],
     benchmark_outcome: Option<GateOutcome>,
+    hardware: &HardwareReleaseCriteria,
 ) -> ReleaseGateReport {
     let blocking_suites: Vec<_> = suites
         .iter()
@@ -33,8 +35,9 @@ pub fn evaluate_release(
         .map(|s| s.kind)
         .collect();
     let benchmark_blocks = benchmark_outcome == Some(GateOutcome::Blocked);
+    let hardware_criteria_met = hardware.is_met();
 
-    let decision = if blocking_suites.is_empty() && !benchmark_blocks {
+    let decision = if blocking_suites.is_empty() && !benchmark_blocks && hardware_criteria_met {
         ReleaseDecision::Pass
     } else {
         ReleaseDecision::Blocked
@@ -44,6 +47,7 @@ pub fn evaluate_release(
         decision,
         blocking_suites,
         benchmark_outcome,
+        hardware_criteria_met,
     }
 }
 
