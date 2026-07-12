@@ -50,8 +50,13 @@
 
 mod errors;
 mod spec;
+// Linux-only: `Supervisor` forks real processes under `hyperion_trust_boundary::spawn`, which
+// itself only exists on Linux (see that crate's own lib.rs) -- `errors`/`spec` are plain data
+// with no OS-specific dependency and stay available everywhere.
+#[cfg(target_os = "linux")]
 mod supervisor;
 
 pub use errors::SupervisorError;
 pub use spec::{ServiceScheduling, ServiceSpec};
+#[cfg(target_os = "linux")]
 pub use supervisor::Supervisor;

@@ -5,6 +5,10 @@
 //! Landlock/seccomp-sandboxed processes (M2); killing one is proven, from outside, to produce a
 //! new real pid *and* a new real capability `token_id` for exactly that service, while the other's
 //! pid/token/restart-count are untouched throughout.
+//!
+//! Linux-only (`Supervisor` itself only exists there -- see hyperion-supervisor's own lib.rs),
+//! same as this crate's real Landlock/seccomp-sandboxed subject matter.
+#![cfg(target_os = "linux")]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

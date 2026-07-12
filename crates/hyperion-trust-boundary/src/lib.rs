@@ -18,13 +18,22 @@
 //! base besides). See [`TrustDepth`] for exactly which depths are implemented and why depth 3
 //! (VM) is not.
 
+// `enforcement`/`spawn` are Linux-only: their whole job is real namespaces/Landlock/seccomp-bpf,
+// kernel mechanisms with no macOS equivalent (and `landlock`/`seccompiler`, their backing crates,
+// don't even compile there -- see Cargo.toml's own comment). `errors`/`types` are plain data with
+// no OS-specific dependency and stay available everywhere so a cross-platform caller (or `cargo
+// build --workspace --all-targets` on macOS CI) can still see this crate's shape.
+#[cfg(target_os = "linux")]
 mod enforcement;
 mod errors;
+#[cfg(target_os = "linux")]
 mod spawn;
 mod types;
 
+#[cfg(target_os = "linux")]
 pub use enforcement::fs_access_for_rights;
 pub use errors::EnforcementError;
+#[cfg(target_os = "linux")]
 pub use spawn::{spawn, SpawnedBoundary};
 pub use types::{SpawnGrant, TrustDepth};
 

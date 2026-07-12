@@ -162,6 +162,25 @@ fn interactive_wins_more_real_cpu_time_than_background_under_real_contention() {
     )
     .expect("create+configure the real background cgroup");
 
+    // A second, stronger precondition beyond `running_within_delegated_scope`'s "not the bare
+    // root cgroup": some CI runners (found on a real GitHub Actions ubuntu-latest run) place the
+    // process in a non-root delegated cgroup where `cpu.weight` is still writable (enforce_admission
+    // above succeeds) but real per-cgroup `cpu.stat` accounting is nonetheless absent for a
+    // freshly created child -- `cpu.stat` read failed with ENOENT even though nothing above it
+    // errored. Rather than let that surface as a confusing panic deep inside the burn-and-measure
+    // phase, check the actual thing this test needs (a readable `cpu.stat`) up front and skip the
+    // same way `running_within_delegated_scope` does, before burning any real CPU time on it.
+    if interactive.cpu_usage_usec().is_err() || background.cpu_usage_usec().is_err() {
+        eprintln!(
+            "SKIP interactive_wins_more_real_cpu_time_than_background_under_real_contention: \
+             this environment's delegated cgroup accepts real cpu.weight writes but doesn't \
+             expose real cpu.stat accounting for a freshly created child cgroup (seen on a real \
+             GitHub Actions ubuntu-latest runner) -- there is no real kernel accounting here for \
+             this test's real assertion to check."
+        );
+        return;
+    }
+
     // More total workers than this host's cores, so CFS *must* actually arbitrate between the
     // two cgroups' cpu.weight instead of both classes simply running unopposed on separate
     // cores the whole time.

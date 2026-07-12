@@ -9,6 +9,13 @@ description = "Real, kernel-enforced Trust Boundaries (PRODUCTION_BOOT_PROMPT.md
 hyperion-capability = { workspace = true }
 libc = { workspace = true }
 thiserror = { workspace = true }
+
+# Linux-only: both crates compile real syscall numbers/ABI constants (Landlock, seccomp-bpf) that
+# simply don't exist on macOS -- confirmed the hard way (2026-07-12 CI: `cargo build --workspace
+# --all-targets` on macos-latest failed to compile `landlock`/`seccompiler` themselves, not just
+# this crate's use of them). A `[target.'cfg(...)']` section keeps them out of the macOS build
+# graph entirely rather than trying to make Linux-only crates cross-compile.
+[target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
 seccompiler = "0.5"
 

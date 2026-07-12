@@ -3,16 +3,24 @@
 /// Deliberately its own type rather than reusing `hyperion_capability::Fault`: these are
 /// OS-mechanism failures (a syscall failing, a kernel feature missing), a different failure
 /// class from `Fault`'s capability-algorithm violations (revoked, expired, insufficient rights).
+///
+/// The `Landlock`/`Seccomp*` variants only exist on Linux (their error types come from
+/// Linux-only crates -- see this crate's own Cargo.toml), but `Io` and the type itself stay
+/// available on every platform so a cross-platform caller can still name this crate's shape.
 #[derive(Debug, thiserror::Error)]
 pub enum EnforcementError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    #[cfg(target_os = "linux")]
     #[error("Landlock ruleset error: {0}")]
     Landlock(#[from] landlock::RulesetError),
+    #[cfg(target_os = "linux")]
     #[error("Landlock path error: {0}")]
     LandlockPath(#[from] landlock::PathFdError),
+    #[cfg(target_os = "linux")]
     #[error("seccomp filter error: {0}")]
     Seccomp(#[from] seccompiler::Error),
+    #[cfg(target_os = "linux")]
     #[error("seccomp backend error: {0}")]
     SeccompBackend(#[from] seccompiler::BackendError),
 }

@@ -43,6 +43,11 @@
 mod cgroup;
 mod errors;
 pub mod mapping;
+// Linux-only: SCHED_DEADLINE/sched_setattr(2)/sched_setscheduler(2) are Linux-specific scheduling
+// APIs `libc` doesn't even define on macOS (confirmed directly: `cargo check --target
+// x86_64-apple-darwin` fails on all three symbols here). `cgroup`/`mapping`/`errors` are plain
+// filesystem I/O and computation with no OS-specific dependency and stay available everywhere.
+#[cfg(target_os = "linux")]
 pub mod realtime;
 
 use std::path::Path;

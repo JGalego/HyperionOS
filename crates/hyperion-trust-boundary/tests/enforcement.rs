@@ -2,6 +2,9 @@
 //! real syscall surface on a real, separate Linux process (`sandbox_enforces_scoped_filesystem_and_denies_unlisted_syscalls`),
 //! and revoking it has a real effect -- the process stops existing, not just a struct flag
 //! flipping (`revoking_a_token_kills_the_real_process`).
+//!
+//! Linux-only: `spawn` itself only exists there (see this crate's own lib.rs).
+#![cfg(target_os = "linux")]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
