@@ -1,5 +1,10 @@
 set default="0"
-set timeout="5"
+# PRODUCTION_BOOT_PROMPT.md M12: a real, measured contributor to cold-boot time -- this is a
+# single-entry, headless appliance boot (init=/hyperion-init), never an interactive dual-boot
+# menu a human needs time to pick from, so waiting at all before auto-selecting the only entry is
+# pure, real, wasted boot time, not a safety margin worth keeping. docs/36's own budget allocates
+# ~250ms for the *entire* firmware/bootloader handoff phase; this alone was 20x that.
+set timeout="0"
 
 menuentry "Hyperion" {
 	linux /bzImage root=PARTUUID=%PARTUUID% rootwait console=tty1 console=ttyS0,115200 init=/hyperion-init
