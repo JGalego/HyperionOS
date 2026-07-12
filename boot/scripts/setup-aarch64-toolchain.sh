@@ -62,6 +62,27 @@ for deb in "$WORK"/*.deb; do
     dpkg -x "$deb" "$PREFIX"
 done
 
+# `dpkg -x` extracts a .deb's own tarball contents only -- it never runs a package's maintainer
+# scripts (preinst/postinst/etc). On distros where the unversioned `aarch64-linux-gnu-gcc` name is
+# created by `update-alternatives` from a package's real `postinst` (observed on Ubuntu 24.04's
+# real GitHub Actions runners) rather than shipped as a real file/symlink inside the tarball itself
+# (as Debian 12 bookworm's own package apparently does -- this rootless extraction worked there
+# unmodified), the unversioned name never gets created. Synthesize it ourselves from whichever
+# versioned binary (`aarch64-linux-gnu-gcc-<N>`) actually got extracted, rather than assume either
+# packaging convention.
+if [[ ! -e "$PREFIX/usr/bin/aarch64-linux-gnu-gcc" ]]; then
+    # The `[0-9]*` suffix (not a bare `*`) deliberately excludes sibling tools that share the
+    # `aarch64-linux-gnu-gcc-` prefix but aren't version-numbered gcc itself, e.g.
+    # `aarch64-linux-gnu-gcc-ar-12`/`-nm-12`/`-ranlib-12`.
+    versioned_gcc="$(find "$PREFIX/usr/bin" -maxdepth 1 -name 'aarch64-linux-gnu-gcc-[0-9]*' | sort -V | tail -1)"
+    if [[ -z "$versioned_gcc" ]]; then
+        echo "no aarch64-linux-gnu-gcc (versioned or not) found under $PREFIX/usr/bin after extraction" >&2
+        exit 1
+    fi
+    echo "no unversioned aarch64-linux-gnu-gcc shipped by this distro's packages -- linking $(basename "$versioned_gcc") to it"
+    ln -s "$(basename "$versioned_gcc")" "$PREFIX/usr/bin/aarch64-linux-gnu-gcc"
+fi
+
 touch "$STAMP"
 echo "Provisioned aarch64 cross-toolchain at $PREFIX"
 
