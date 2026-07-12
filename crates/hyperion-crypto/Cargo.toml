@@ -6,7 +6,12 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-blake3 = { version = "1", features = ["serde"] }
+# "pure" disables blake3's C/assembly SIMD backends in favor of pure Rust: hashing here is
+# audit-log chaining and small-artifact (model/plugin/update) signatures, never a bulk-throughput
+# hot path, so the perf cost is immaterial -- and it means no C cross-compiler toolchain is a
+# build-or-boot dependency for any target this workspace cross-compiles for (PRODUCTION_BOOT_PROMPT.md M11
+# hit this directly: aarch64-unknown-linux-musl has no such toolchain in this sandbox).
+blake3 = { version = "1", features = ["serde", "pure"] }
 ed25519-dalek = { version = "2", features = ["rand_core", "serde"] }
 rand_core = { version = "0.6", features = ["std"] }
 serde = { workspace = true }

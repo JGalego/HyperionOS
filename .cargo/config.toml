@@ -1,0 +1,14 @@
+# aarch64-unknown-linux-musl (PRODUCTION_BOOT_PROMPT.md M11) has no matching system cross-linker
+# in this workspace's build environments -- rustc's default strategy of shelling out to the host's
+# own `cc` fails here (a native x86_64 `ld` can't link aarch64 ELF objects: "Relocations in generic
+# ELF (EM: 183)"). Stable rustc's self-contained-lld linking path (`-C linker-flavor=gnu-lld-cc`)
+# needs `-Z unstable-options`, i.e. nightly -- undesirable as a permanent, checked-in build
+# dependency for a workspace that otherwise only needs stable. `boot/scripts/setup-aarch64-toolchain.sh`
+# provisions a real `aarch64-linux-gnu-gcc` rootlessly instead (same technique as
+# setup-qemu-toolchain.sh); it's used here purely as a linker driver (its bundled
+# `aarch64-linux-gnu-ld` does the real work) -- none of the object files being linked need glibc,
+# since both the Rust code and the CRT objects come from rustup's own musl sysroot.
+# x86_64-unknown-linux-musl is untouched: the host's own native cc already links it fine (host arch
+# == target arch), so it keeps the default.
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-gnu-gcc"

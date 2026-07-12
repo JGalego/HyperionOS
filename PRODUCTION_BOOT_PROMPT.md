@@ -102,7 +102,7 @@ below assume UEFI.
 | M8 — Real local AI runtime | done (real Candle backend + real Intent→Agent→inference wiring on the actually-booted console path; production-scale model size, a plugin-framework bridge gap, and boot-time model pre-baking remain named, not solved — see completion note) |
 | M9 — Real cryptography | done (real Ed25519 signing + BLAKE3 hashing via a new `hyperion-crypto` crate and a real software keystore, replacing all 5 named non-cryptographic stand-ins; TPM-backed sealing confirmed unavailable on this sandbox, named as a real-hardware stretch goal — see completion note) |
 | M10 — Real networking | done (real HTTP/TLS/DNS fetch + real HTML extraction + real Knowledge Graph merge, reachable from the actual compiled console binary; guest network interface bring-up at real boot time named as a deferred, separate systems-provisioning gap — see completion note) |
-| M11 — Second reference platform (aarch64) | pending |
+| M11 — Second reference platform (aarch64) | done (real aarch64 kernel + rootfs boots to the real M7-stage-1 console loop under `qemu-system-aarch64 -M virt`; a real macOS-breaking seccomp portability bug was found and fixed along the way; real Raspberry Pi hardware itself named as a deferred, real-hardware-only handoff — see completion note) |
 | M12 — Boot benchmarking against docs/36 | pending |
 | M13 — Release engineering for a bootable artifact | pending |
 
@@ -710,6 +710,85 @@ gap before M10 and it remains exactly as deferred. (3) `web.fetch.raw` itself (t
 lane) has no new real dispatch path from the booted console -- only `web.research` (the
 KG-merging capability the exit criteria's own "merge a real extracted entity" clause specifically
 asks for) does.
+
+**M11 completion note (2026-07-12):** new board `boot/board/hyperion-aarch64`, defconfig
+`boot/configs/hyperion_aarch64_virt_defconfig`, and scripts `build-image-aarch64.sh`/
+`boot-test-aarch64.sh`/`setup-aarch64-toolchain.sh` -- mirroring the existing x86_64 pipeline, but
+genuinely simpler in one real respect: aarch64-virt boots via direct kernel load
+(`qemu-system-aarch64 -M virt -kernel Image -append ...`), so there's no UEFI/GRUB2/GPT-partition
+stage to replicate at all, just a kernel `Image` and a bare `rootfs.ext2`. `linux.config` merges
+Buildroot's own proven `qemu_aarch64_virt` reference config with the identical, verbatim "Hyperion
+M0" primitives block (namespaces, cgroups v2, seccomp-bpf, Landlock) the x86_64 board already
+carries -- chosen over Buildroot's real Raspberry Pi board support specifically because it's
+already proven to boot on plain CPU emulation, the sandbox-achievable half of this milestone;
+real Pi hardware's own GPU firmware/vendor kernel fork is a separate concern (see below). Kernel
+pinned to 6.18.7 (the aarch64-virt reference's own proven version, not x86_64's 6.12.47 -- cross-
+architecture version skew is normal and safer than forcing an untested version onto a new machine
+model). `hyperion-init`/`hyperion-console` cross-compiled for `aarch64-unknown-linux-musl`.
+
+Two real, load-bearing gaps found and fixed, not just Buildroot config work:
+
+1. **`hyperion-trust-boundary`'s seccomp filter was silently x86_64-only.** It hardcoded
+   `TargetArch::x86_64` in `SeccompFilter::new`, and its allowlist unconditionally included
+   `SYS_arch_prctl`/`SYS_open`/`SYS_access`/`SYS_poll` -- x86_64-only syscalls with no aarch64
+   equivalents at all (`arch_prctl`'s whole job, setting up the userspace thread pointer, is done
+   by the kernel writing `TPIDR_EL0` directly on aarch64; the legacy dual syscall forms aarch64's
+   newer "asm-generic" table never had are already covered by the shared `openat`/`faccessat`/
+   `ppoll` entries already on the list). Undetected until now because nothing had ever actually
+   tried to compile this crate for a non-x86_64 target. Fixed with `#[cfg(target_arch = "x86_64")]`
+   on the x86_64-only syscalls and a small `host_target_arch()` helper selecting the right
+   `TargetArch` per `target_arch` -- verified by cross-compiling for
+   `aarch64-unknown-linux-musl` cleanly, syscall list unchanged for the already-proven x86_64 path.
+2. **The same discovery, one layer down, breaks macOS too -- found while verifying this milestone's
+   own fix didn't regress other platforms.** `landlock`/`seccompiler` (hyperion-trust-boundary) and
+   raw `SCHED_DEADLINE`/`sched_setattr`/`sched_setscheduler` calls (hyperion-cgroups's `realtime`
+   module) are Linux-only APIs that were unconditional dependencies/calls -- meaning
+   `cargo build --workspace --all-targets` had never actually succeeded on macOS since M2/M4
+   landed, a real, live CI failure once actually looked at (see below), not a hypothetical. Fixed
+   the same way `hyperion-init`'s own `main.rs` already handles this: real implementation behind
+   `#[cfg(target_os = "linux")]`, nothing pretending to work elsewhere. Verified clean against both
+   `x86_64-apple-darwin` and `aarch64-apple-darwin` (the actual `macos-latest` runner architecture)
+   via `cargo check --target`, not just reasoned about.
+
+Separately, this same pass found and fixed two more real, live CI gaps unrelated to aarch64 itself
+(caught because they were sitting in the same `cargo test --workspace` run being watched closely):
+`hyperion-cgroups`'s real-fairness test read `cpu.stat` only once, right after cgroup creation,
+then panicked on a *second*, later read after its burner processes exited -- some CI runners
+(confirmed live on GitHub Actions ubuntu-latest) prune a delegated cgroup once it briefly has no
+live member process, a real timing window this test's own real fork/join/burn/exit sequence can
+land in; fixed by reading each class's stat immediately after its own `wait_all` and treating
+failure there as the same graceful skip its existing precondition checks already use, not a hard
+panic. And `hyperion-trust-boundary`'s and `hyperion-supervisor`'s own Landlock/seccomp integration
+tests each build a real musl probe/service binary at test time -- needing `x86_64-unknown-linux-musl`
+installed, which the CI `test` job's toolchain step never requested (only the separate `boot-image`
+job did), so both tests had likely been silently failing on every prior ubuntu CI run, masked by
+whichever of the other bugs surfaced first. All three fixed and confirmed against a real, green
+GitHub Actions run before this milestone's own work continued.
+
+Proven the same standard of proof every real milestone here is held to: built the real image via
+`build-image-aarch64.sh` (its own dedicated Buildroot `O=output-aarch64` output directory --
+switching defconfigs in a *shared* output directory the first time around left a stale, wrong-
+architecture host toolchain behind, a real Buildroot gotcha diagnosed and fixed along the way, not
+guessed at) and booted it for real via `boot-test-aarch64.sh`. The real kernel boots, mounts the
+real rootfs, execs `/hyperion-init` as real PID 1, the real M5 supervision tree starts, and the
+real M7 console prompt ("Hyperion -- tell me what you'd like to do.") comes up -- the identical
+`"Humans express goals"` banner the x86_64 platform's own boot-test asserts on, now proven on real
+aarch64 CPU semantics under emulation, not just reasoned about.
+
+Named gap, deliberately not attempted here, mirroring M1's own precedent for "boots from a real
+USB drive": **this milestone's own literal exit criterion is booting on real Raspberry Pi
+hardware**, which this sandbox cannot perform or verify. A real Pi 4/5 deployment needs its own,
+substantially different board support Buildroot already has (`raspberrypi4_64_defconfig` /
+`board/raspberrypi4-64/`) -- a Raspberry-Pi-Foundation kernel fork, proprietary VideoCore GPU
+firmware blobs, and an SD-card/firmware-first boot flow with no UEFI or direct-kernel-load
+equivalent at all, none of which the generic `aarch64-virt` board this milestone builds against
+attempts to replicate. What real QEMU CPU emulation genuinely proves -- the kernel config's real
+M2/M4 enforcement primitives and Hyperion's own Rust logic really work on real aarch64 instruction
+semantics, not just x86_64 -- is exactly the same category of proof M1's own QEMU boot-test
+provides for the x86_64 UEFI-USB claim: real, load-bearing, and explicitly not a substitute for
+the literal hardware claim. Real Raspberry Pi 4/5 hardware boot remains a real, separate,
+user-performed verification step this document flags but does not block on, per its own Execution
+Mode section.
 
 ## 4. Milestones
 

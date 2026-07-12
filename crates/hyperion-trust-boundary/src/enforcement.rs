@@ -134,8 +134,19 @@ pub fn apply_landlock(
 /// the baseline, not behind a `RightsMask` bit the way the still-deferred socket syscalls do (see
 /// `hyperion-supervisor`'s own docs) -- unlike a socket, a process's own pid isn't a resource
 /// access `RightsMask` governs at all.
+///
+/// PRODUCTION_BOOT_PROMPT.md M11: `arch_prctl`, plain `open`, plain `access`, and plain `poll`
+/// are x86_64-only entries, `#[cfg]`'d out on aarch64 below rather than merely unused there --
+/// aarch64's syscall table is the newer, reduced "asm-generic" set that never had these legacy
+/// dual forms to begin with (only `arch_prctl`'s job -- setting up the userspace thread pointer --
+/// has no aarch64 syscall equivalent at all; the kernel sets `TPIDR_EL0` directly during `execve`
+/// instead), so `libc` itself doesn't define these constants for that target and the crate would
+/// fail to *compile* for aarch64, not just misbehave at runtime, if they stayed unconditional.
+/// musl's aarch64 build already calls `openat`/`faccessat`/`ppoll` internally where its x86_64
+/// build calls the now-`cfg`'d-out legacy forms, so the shared list below covers it without them.
 fn baseline_allowed_syscalls() -> Vec<i64> {
-    vec![
+    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
+    let mut syscalls = vec![
         libc::SYS_getpid,
         libc::SYS_execve,
         libc::SYS_read,
@@ -155,19 +166,15 @@ fn baseline_allowed_syscalls() -> Vec<i64> {
         libc::SYS_rt_sigreturn,
         libc::SYS_sigaltstack,
         libc::SYS_ioctl,
-        libc::SYS_poll,
         libc::SYS_ppoll,
         libc::SYS_tkill,
         libc::SYS_tgkill,
-        libc::SYS_access,
         libc::SYS_faccessat,
         libc::SYS_faccessat2,
-        libc::SYS_open,
         libc::SYS_openat,
         libc::SYS_pread64,
         libc::SYS_pwrite64,
         libc::SYS_getrandom,
-        libc::SYS_arch_prctl,
         libc::SYS_set_tid_address,
         libc::SYS_set_robust_list,
         libc::SYS_rseq,
@@ -180,7 +187,32 @@ fn baseline_allowed_syscalls() -> Vec<i64> {
         libc::SYS_getcwd,
         libc::SYS_exit,
         libc::SYS_exit_group,
-    ]
+    ];
+
+    #[cfg(target_arch = "x86_64")]
+    syscalls.extend([
+        libc::SYS_arch_prctl,
+        libc::SYS_open,
+        libc::SYS_access,
+        libc::SYS_poll,
+    ]);
+
+    syscalls
+}
+
+/// The `seccompiler::TargetArch` matching the architecture this binary was actually compiled
+/// for -- installing a filter compiled for the wrong arch is worse than installing none: the BPF
+/// program's own arch-validation prologue (`build_arch_validation_sequence`) would reject every
+/// real syscall the running process makes, since none of them would match the audit-arch value
+/// baked into the filter.
+#[cfg(target_arch = "x86_64")]
+fn host_target_arch() -> TargetArch {
+    TargetArch::x86_64
+}
+
+#[cfg(target_arch = "aarch64")]
+fn host_target_arch() -> TargetArch {
+    TargetArch::aarch64
 }
 
 /// Installs the baseline default-deny seccomp-bpf filter on the calling process: every syscall
@@ -195,7 +227,7 @@ pub fn apply_seccomp() -> Result<(), EnforcementError> {
         rules,
         SeccompAction::Errno(libc::EPERM as u32),
         SeccompAction::Allow,
-        TargetArch::x86_64,
+        host_target_arch(),
     )?;
     let bpf_program: BpfProgram = filter.try_into()?;
     seccompiler::apply_filter(&bpf_program)?;

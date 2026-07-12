@@ -45,3 +45,17 @@ else
     echo "or run boot/scripts/setup-qemu-toolchain.sh for a rootless local copy" >&2
     return 1 2>/dev/null || exit 1
 fi
+
+# PRODUCTION_BOOT_PROMPT.md M11's second reference platform: qemu-system-aarch64 needs no
+# firmware at all (board/hyperion-aarch64 boots via direct kernel load -- see boot-test-aarch64.sh),
+# so this half just needs the binary + its shared libs on the search path.
+if command -v qemu-system-aarch64 >/dev/null 2>&1; then
+    :
+elif [[ -f "$QEMU_PREFIX/.provisioned" ]]; then
+    export PATH="$QEMU_PREFIX/usr/bin:$PATH"
+    export LD_LIBRARY_PATH="$QEMU_PREFIX/usr/lib/x86_64-linux-gnu:$QEMU_PREFIX/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+else
+    echo "no qemu-system-aarch64 found: install it (apt-get install qemu-system-arm)" >&2
+    echo "or run boot/scripts/setup-qemu-toolchain.sh for a rootless local copy" >&2
+    return 1 2>/dev/null || exit 1
+fi
