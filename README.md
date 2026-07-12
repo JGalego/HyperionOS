@@ -1,10 +1,16 @@
-# Hyperion
+<div align="center">
 
-> Humans express goals. Hyperion determines how those goals become reality.
+<img src="assets/banner.svg" alt="Hyperion -- the first intent-native operating system." width="100%" />
 
-Hyperion is an intent-native operating system: instead of applications, files, and windows, you
-describe what you want and Hyperion figures out how to make it happen. See
-[CLAUDE.md](CLAUDE.md) for the full project philosophy and
+[![CI](https://github.com/JGalego/HyperionOS/actions/workflows/ci.yml/badge.svg)](https://github.com/JGalego/HyperionOS/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/JGalego/HyperionOS?style=flat-square&color=d9a54a&label=release)](https://github.com/JGalego/HyperionOS/releases)
+[![License](https://img.shields.io/github/license/JGalego/HyperionOS?style=flat-square&color=8c6220)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-x86__64%20%7C%20aarch64-e6bb6e?style=flat-square)](PRODUCTION_BOOT_PROMPT.md)
+
+</div>
+
+Hyperion is an intent-native operating system: humans express goals, and the system determines how
+those goals become reality. See [CLAUDE.md](CLAUDE.md) for the full project philosophy and
 [PRODUCTION_BOOT_PROMPT.md](PRODUCTION_BOOT_PROMPT.md) for the from-source build/boot roadmap and
 its current status.
 

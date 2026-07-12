@@ -1,0 +1,65 @@
+<svg width="1200" height="260" viewBox="0 0 1200 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Hyperion. The first intent-native operating system.">
+  <title>Hyperion</title>
+  <defs>
+    <!-- The website's own real brand palette (website/app/globals.css, .dark block), not an
+         invented one: bg #0b0a08, accent #d9a54a, accent-strong #e6bb6e, fg #f5f3ee,
+         fg-muted #a6a196. -->
+    <radialGradient id="glowBg" cx="600" cy="-26" r="750" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#d9a54a" stop-opacity="0.24"/>
+      <stop offset="70%" stop-color="#d9a54a" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="titleFill" x1="0%" y1="0%" x2="200%" y2="0%">
+      <stop offset="0%" stop-color="#e6bb6e"/>
+      <stop offset="25%" stop-color="#f5f3ee"/>
+      <stop offset="50%" stop-color="#d9a54a"/>
+      <stop offset="75%" stop-color="#f5f3ee"/>
+      <stop offset="100%" stop-color="#e6bb6e"/>
+      <animate attributeName="x1" values="0%;-200%" dur="6s" repeatCount="indefinite"/>
+      <animate attributeName="x2" values="200%;0%" dur="6s" repeatCount="indefinite"/>
+    </linearGradient>
+
+    <filter id="glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="3.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="260" fill="#0b0a08"/>
+  <rect width="1200" height="260" fill="url(#glowBg)"/>
+
+  <!-- ambient stars -->
+  <g fill="#f5f3ee" opacity="0.25">
+    <circle cx="90" cy="40" r="1.4"/>
+    <circle cx="1120" cy="60" r="1.6"/>
+    <circle cx="1050" cy="200" r="1.2"/>
+    <circle cx="60" cy="215" r="1.3"/>
+    <circle cx="1150" cy="150" r="1.1"/>
+    <circle cx="150" cy="95" r="1.1"/>
+  </g>
+
+  <!-- Rotating golden spiral (an Archimedean spiral, generated point-by-point, not hand-drawn):
+       a continuously rotating mark reads as "always thinking," and doubles as a nod to Hyperion
+       the Titan of light. Paired with the wordmark the same way
+       website/components/layout/NavBar.tsx pairs its own icon mark with site.name. -->
+  <g transform="translate(365,110)" filter="url(#glow)">
+    <path d="M 3.00,0.00 L 3.26,0.37 L 3.47,0.79 L 3.62,1.27 L 3.71,1.79 L 3.72,2.34 L 3.65,2.91 L 3.50,3.50 L 3.26,4.09 L 2.93,4.66 L 2.51,5.21 L 2.00,5.72 L 1.41,6.18 L 0.74,6.58 L 0.00,6.90 L -0.80,7.13 L -1.66,7.27 L -2.55,7.30 L -3.48,7.22 L -4.41,7.02 L -5.34,6.70 L -6.26,6.26 L -7.14,5.69 L -7.97,5.00 L -8.73,4.20 L -9.41,3.29 L -9.99,2.28 L -10.46,1.18 L -10.80,0.00 L -11.01,-1.24 L -11.07,-2.53 L -10.98,-3.84 L -10.73,-5.17 L -10.32,-6.49 L -9.75,-7.78 L -9.02,-9.02 L -8.12,-10.19 L -7.08,-11.27 L -5.89,-12.24 L -4.58,-13.09 L -3.15,-13.79 L -1.61,-14.33 L -0.00,-14.70 L 1.68,-14.88 L 3.40,-14.87 L 5.13,-14.66 L 6.86,-14.25 L 8.56,-13.63 L 10.21,-12.80 L 11.77,-11.77 L 13.24,-10.55 L 14.57,-9.15 L 15.75,-7.59 L 16.77,-5.87 L 17.59,-4.01 L 18.21,-2.05 L 18.60,-0.00 L 18.76,2.11 L 18.68,4.26 L 18.35,6.42 L 17.76,8.55 L 16.93,10.64 L 15.85,12.64 L 14.53,14.53 L 12.99,16.28 L 11.23,17.87 L 9.28,19.27 L 7.16,20.45 L 4.88,21.39 L 2.49,22.08 L 0.00,22.50 L -2.55,22.64 L -5.13,22.48 L -7.71,22.03 L -10.25,21.28 L -12.71,20.23 L -15.07,18.90 L -17.29,17.29 L -19.33,15.42 L -21.17,13.30 L -22.78,10.97 L -24.13,8.44 L -25.19,5.75 L -25.96,2.92 L -26.40,0.00 L -26.51,-2.99 L -26.28,-6.00 L -25.71,-9.00 L -24.79,-11.94 L -23.53,-14.79 L -21.95,-17.50 L -20.05,-20.05 L -17.85,-22.38 L -15.38,-24.48 L -12.66,-26.30 L -9.73,-27.81 L -6.62,-29.00 L -3.36,-29.83 L -0.00,-30.30 L 3.42,-30.39 L 6.87,-30.08 L 10.28,-29.39 L 13.63,-28.30 L 16.86,-26.84 L 19.93,-25.00 L 22.80,-22.80 L 25.43,-20.28 L 27.78,-17.45 L 29.81,-14.36 L 31.49,-11.02 L 32.80,-7.49 L 33.71,-3.80 L 34.20,-0.00 L 34.26,3.86 L 33.89,7.73 L 33.07,11.57 L 31.82,15.32 L 30.14,18.94 L 28.05,22.37 L 25.56,25.56 L 22.71,28.48 L 19.53,31.08 L 16.05,33.32 L 12.31,35.17 L 8.35,36.60 L 4.23,37.58 L 0.00,38.10 L -4.30,38.14 L -8.60,37.69 L -12.86,36.75 L -17.01,35.33 L -21.01,33.44 L -24.80,31.09 L -28.32,28.32 L -31.53,25.14 L -34.38,21.60 L -36.84,17.74 L -38.85,13.60 L -40.40,9.22 L -41.46,4.67 L -42.00,0.00"
+          fill="none" stroke="url(#titleFill)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <animateTransform attributeName="transform" type="rotate" from="0 0 0" to="360 0 0" dur="14s" repeatCount="indefinite" additive="sum"/>
+  </g>
+
+  <text x="437" y="157" font-family="'Segoe UI', Arial, Helvetica, sans-serif"
+        font-size="76" font-weight="700" letter-spacing="6" fill="url(#titleFill)">
+    HYPERION
+    <animate attributeName="opacity" from="0" to="1" begin="0s" dur="0.9s" fill="freeze"/>
+  </text>
+
+  <text x="600" y="222" text-anchor="middle" font-family="'Segoe UI', Arial, Helvetica, sans-serif"
+        font-size="20" fill="#a6a196" opacity="0">
+    The first intent-native operating system.
+    <animate attributeName="opacity" from="0" to="1" begin="0.5s" dur="0.9s" fill="freeze"/>
+  </text>
+</svg>
