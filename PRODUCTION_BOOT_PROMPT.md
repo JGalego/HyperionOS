@@ -609,6 +609,50 @@ separate work from proving the inference mechanism itself. Full gate confirmed g
 `cargo clippy --features candle` for both `hyperion-ai-runtime` and `hyperion-console` (also
 clean) -- the `candle` feature stays fully opt-in on both crates, exactly as designed.
 
+**M8 follow-up (2026-07-12): gap (3) above closed for real, on a real boot, with zero network
+access.** Driving a real interactively-booted x86_64 image (`--features candle`) surfaced that
+closing (3) needed two independent fixes, not one, each found by actually attempting it rather
+than assumed:
+
+1. **`hf-hub`'s own cache fast path never triggers for the default `"main"` ref.**
+   `download_file_to_cache` only skips the network when `revision` is already a 40-hex-char commit
+   hash -- a mutable ref like `"main"` always needs a live resolve first, even with an
+   already-fully-populated local cache. Fixed by pinning the exact commit each file was verified
+   against as new constants (`TINYLLAMAS_REVISION`, `LLAMA_TOKENIZER_REVISION` in
+   `candle_backend.rs`), only applied when `model_id` is the one well-known repo this crate itself
+   verified that commit against -- a caller-supplied `model_id` elsewhere still resolves `"main"`
+   live, unchanged.
+2. **Even with a pinned revision, `HFClientSync::new()` still failed with a real "builder error"
+   -- because it never got that far.** `hf-hub`'s HTTP client (`rustls-platform-verifier`) builds a
+   real TLS trust store *unconditionally at client construction time*, before any cache lookup
+   ever runs -- an empty trust store (this rootfs ships no `ca-certificates` package) makes
+   construction itself fail. No amount of cache pre-population reaches that fast path if the
+   client can't even be built. Traced with targeted `eprintln!` instrumentation confirming the
+   pinned revision and the on-disk snapshot were both genuinely correct at every layer up to this
+   point -- the failure was one level further out than either. Fixed by pointing
+   `rustls-native-certs` (which `rustls-platform-verifier` uses on Linux) at a real, baked-in CA
+   bundle via `SSL_CERT_FILE`, which it checks before any hardcoded distro-specific path.
+
+New `boot/scripts/bake-candle-cache.sh`: bakes both the pinned model/tokenizer files (reusing an
+already-downloaded host `hf-hub` cache if present, else fetching them for real) and a real host CA
+bundle into the x86_64 rootfs overlay. `hyperion-init` wires up `HF_HUB_CACHE`/`SSL_CERT_FILE` for
+the console only when those baked paths actually exist -- inert on an ordinary mock-backend image,
+same "only wire up what's actually here" convention `display_probe`/`storage_probe` already use.
+Verified end to end on a real boot with `-net none` (no network device attached at all): real
+generated text ("A dragon has big wings and a long tail...", genuinely different from the mock
+echo and matching the same native-run output verified earlier), proving the whole chain -- pinned
+revision, baked snapshot, baked CA bundle, zero network -- works together for real. Cross-compiling
+`--features candle` for musl also needed one more independent fix:
+`hyperion-ai-runtime/Cargo.toml`'s `tokenizers` dependency pulled in that crate's full default
+features (including `esaxx_fast`, a Unigram-tokenizer speed optimization needing a real C++
+toolchain this sandbox's musl cross-toolchain doesn't have); `candle-core` itself already uses
+`default-features = false, features = ["onig"]` for the same dependency, a pure-Rust-buildable
+choice matched here too. Not automated into `build-image.sh` itself: doing so needs a real,
+checked-in musl C(++) cross-toolchain provisioning story (this session's own working fix was a
+rootless-extraction-plus-hand-corrected-specs-file hack, sandbox-specific, not something to bake
+into shared infra unmodified) -- named as the next real piece of work if a fully automated
+candle-image build pipeline is wanted, not attempted here.
+
 **M9 completion note (2026-07-11):** new crate `hyperion-crypto` is the real primitive every one
 of the five named non-cryptographic checksum/hash stand-ins now depends on: real Ed25519
 signing/verification (`ed25519-dalek`), real BLAKE3 content hashing (this workspace's own

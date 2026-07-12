@@ -362,6 +362,23 @@ fn adopt_interactive_process(supervisor: &mut Supervisor, data_partition: Option
     }
 }
 
+/// A `candle`-enabled console's real `hf-hub` on-disk cache, pre-baked into a real image at build
+/// time (not present at all in an ordinary, mock-backend image -- inert, same as
+/// `display_probe`/`storage_probe`'s own "only wire up what's actually here" convention). Real
+/// Hugging Face Hub downloads (`CandleBackend::load`) resolve against this path if it's present,
+/// letting a pinned-commit model already baked in here (see
+/// `hyperion_ai_runtime::candle_backend`'s own `TINYLLAMAS_REVISION` doc comment) load with zero
+/// network access.
+const HF_CACHE_DIR: &str = "/usr/share/hyperion/hf-cache/hub";
+/// A real Mozilla CA root bundle, pre-baked alongside [`HF_CACHE_DIR`] for the same reason: this
+/// rootfs ships no `ca-certificates` package, but `hf-hub`'s own HTTP client
+/// (`rustls-platform-verifier`) builds a real TLS trust store *unconditionally at client
+/// construction time* -- before any cache lookup ever runs, so a pre-baked model cache alone
+/// isn't enough; an empty trust store makes client construction itself fail outright. Pointed at
+/// via `SSL_CERT_FILE`, which `rustls-native-certs` (the crate `rustls-platform-verifier` uses on
+/// Linux) reads before falling back to any hardcoded distro-specific path.
+const CA_BUNDLE_PATH: &str = "/usr/share/hyperion/tls/ca-certificates.crt";
+
 /// Forks and execs the real console, returning immediately with its pid -- reaping and
 /// restart-on-exit is `hyperion_supervisor::Supervisor`'s single, unified job (see that crate's
 /// own docs on why a second waiter would race it). Not attempted at all if the binary isn't
@@ -371,10 +388,14 @@ fn spawn_console(data_dir: &Path) -> std::io::Result<libc::pid_t> {
     if !Path::new(CONSOLE_PATH).exists() {
         return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
     }
-    spawn_interactive(
-        CONSOLE_PATH,
-        &[("HYPERION_CONSOLE_DATA_DIR", data_dir.display().to_string())],
-    )
+    let mut extra_env = vec![("HYPERION_CONSOLE_DATA_DIR", data_dir.display().to_string())];
+    if Path::new(HF_CACHE_DIR).exists() {
+        extra_env.push(("HF_HUB_CACHE", HF_CACHE_DIR.to_string()));
+    }
+    if Path::new(CA_BUNDLE_PATH).exists() {
+        extra_env.push(("SSL_CERT_FILE", CA_BUNDLE_PATH.to_string()));
+    }
+    spawn_interactive(CONSOLE_PATH, &extra_env)
 }
 
 fn spawn_shell_retry() -> std::io::Result<libc::pid_t> {

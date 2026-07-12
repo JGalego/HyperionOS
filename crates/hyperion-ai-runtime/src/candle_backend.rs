@@ -71,12 +71,27 @@ pub struct CandleBackend {
 // already `Send + Sync` in practice (both are used from multi-threaded servers upstream); no
 // unsafe code or manual trait impl is needed here.
 
+/// The exact commit `stories15M.bin` was verified against (this crate's own real, boot-tested
+/// download) -- pinned so a boot image that bakes this same file into `hf-hub`'s on-disk cache
+/// layout ahead of time (see [`Self::load`]'s own doc comment on the real network/TLS gap this
+/// solves) can resolve it with zero network access. `hf-hub`'s own cache fast path
+/// (`download_file_to_cache`) only ever skips the network for a pinned *commit hash*, never for
+/// a mutable ref like `"main"` -- a live boot with no real network yet up would otherwise always
+/// need to resolve `"main"` first, even with an already-fully-populated local cache.
+const TINYLLAMAS_REVISION: &str = "0bd21da7698eaf29a0d7de3992de8a46ef624add";
+/// As [`TINYLLAMAS_REVISION`], for the one fixed tokenizer repo [`CandleBackend::load_from_model_id`]
+/// always downloads regardless of which weights variant the caller asked for.
+const LLAMA_TOKENIZER_REVISION: &str = "d02ad6cb9dd2c2296a6332199fa2fdca5938fef0";
+
 /// Downloads (or reuses `hf-hub`'s own on-disk cache for) `filename` from the real Hugging Face
 /// Hub repo `model_id` (an `"owner/name"` id, e.g. `"karpathy/tinyllamas"`), via `hf-hub`'s real
-/// blocking client.
+/// blocking client. `revision`, when `Some`, pins an exact commit hash rather than resolving the
+/// default `"main"` ref -- see [`TINYLLAMAS_REVISION`]'s own doc comment for why that's the one
+/// thing that lets a pre-baked cache skip the network entirely.
 fn download_file(
     model_id: &str,
     filename: &str,
+    revision: Option<&str>,
     what: &'static str,
 ) -> Result<PathBuf, CandleBackendError> {
     let (owner, name) = model_id
@@ -95,6 +110,7 @@ fn download_file(
         .model(owner, name)
         .download_file()
         .filename(filename)
+        .maybe_revision(revision.map(str::to_string))
         .send()
         .map_err(|e| CandleBackendError::Download {
             what,
@@ -113,17 +129,27 @@ impl CandleBackend {
 
     /// As [`Self::load`], but for a caller that wants a different real checkpoint from the same
     /// karpathy/llama2.c-format family (e.g. `stories42M.bin`, `stories110M.bin` -- all real,
-    /// all hosted at the same repo) without editing this module.
+    /// all hosted at the same repo) without editing this module. Only pins
+    /// [`TINYLLAMAS_REVISION`] when `model_id` is the one well-known repo this crate itself
+    /// verified that commit against -- a caller-supplied `model_id` outside that repo still
+    /// resolves the default `"main"` ref live, exactly as before.
     pub fn load_from_model_id(
         model_id: &str,
         weights_filename: &str,
     ) -> Result<Self, CandleBackendError> {
         let device = candle_core::Device::Cpu;
 
-        let weights_path = download_file(model_id, weights_filename, "model weights")?;
+        let weights_revision = (model_id == "karpathy/tinyllamas").then_some(TINYLLAMAS_REVISION);
+        let weights_path = download_file(
+            model_id,
+            weights_filename,
+            weights_revision,
+            "model weights",
+        )?;
         let tokenizer_path = download_file(
             "hf-internal-testing/llama-tokenizer",
             "tokenizer.json",
+            Some(LLAMA_TOKENIZER_REVISION),
             "tokenizer",
         )?;
 
