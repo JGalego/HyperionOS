@@ -3,6 +3,10 @@ BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
 BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_18=y
 BR2_GLOBAL_PATCH_DIR="board/qemu/patches"
 BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
+# See hyperion_x86_64_efi_defconfig's own comment: real image build reproducibility needed both
+# this (build-timestamp/build-path determinism) and a pinned rootfs UUID (below) -- confirmed by
+# actually rebuilding identical source twice and diffing the real output hashes, not assumed.
+BR2_REPRODUCIBLE=y
 BR2_SYSTEM_DHCP="eth0"
 BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y
 BR2_ROOTFS_OVERLAY="board/hyperion-aarch64/rootfs-overlay"
@@ -18,4 +22,11 @@ BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF=y
 BR2_TARGET_ROOTFS_EXT2=y
 BR2_TARGET_ROOTFS_EXT2_4=y
 BR2_TARGET_ROOTFS_EXT2_SIZE="180M"
+# Pins the rootfs's own ext4 filesystem UUID (a different fixed value than the x86_64 board's own
+# so the two platforms' rootfs images never collide if ever mounted on the same real host at once)
+# AND its own directory hash seed -- mke2fs generates the hash seed randomly *independent* of -U,
+# deliberately, as an anti-hash-flooding security measure for htree directory lookups; found as a
+# second, separate non-reproducibility cause on the x86_64 board (see that defconfig's own
+# comment) and fixed identically here.
+BR2_TARGET_ROOTFS_EXT2_MKFS_OPTIONS="-O ^64bit -U 48000000-0000-0000-0000-000000000002 -E hash_seed=48000000-0000-0000-3000-000000000002"
 # BR2_TARGET_ROOTFS_TAR is not set

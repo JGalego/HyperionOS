@@ -894,18 +894,47 @@ correctly fails the hash check; the real image against a manifest with a fabrica
 correctly fails the signature check specifically (proving the signature check, not just the hash
 check, does real work).
 
-Named gap, found by actually testing the claim rather than assuming it: **this build is not
-currently reproducible.** Building the identical x86_64 source twice, back to back, produced two
-different SHA-256 image hashes (confirmed directly, not inferred). Root cause traced precisely,
-not left vague: `post-image.sh` reads the rootfs's own `mkfs.ext4`-assigned filesystem UUID (which
-that tool generates randomly by default, with no `-U` determinism flag set anywhere in this
-pipeline) and embeds it as `PARTUUID` into *both* GRUB's `root=PARTUUID=...` cmdline and the GPT
-partition table itself -- meaning the disk image's own bytes differ on every build even when the
-compiled binaries and rootfs contents are byte-identical. The well-understood fix (pin a
-deterministic filesystem UUID, e.g. via a hook into Buildroot's own rootfs-image-generation step)
-is real and scoped, but not attempted in this same pass given everything else this milestone
-already covered -- named explicitly, and `image_build_reproducible: false` reported honestly in
-this session's own real release manifest, rather than silently assumed or fabricated `true`.
+**Update (2026-07-12): image build reproducibility fixed and reverified for real, on both
+platforms.** Originally found and named as an open gap (below, preserved for the record); closed
+in a follow-up pass by actually chasing down every remaining cause via repeated rebuild-and-diff
+cycles, not just the first one found. Three independent, real, non-reproducibility causes existed
+simultaneously, each confirmed by a real rebuild-and-hash-compare before and after its own fix:
+
+1. **The rootfs's own `mkfs.ext4`-assigned filesystem UUID** (random by default) -- leaks into
+   both GRUB's `root=PARTUUID=...` cmdline and the GPT partition table on x86_64. Fixed via
+   `BR2_TARGET_ROOTFS_EXT2_MKFS_OPTIONS`'s own `-U <fixed-uuid>` (a real Buildroot-supported knob,
+   found by reading `fs/ext2/Config.in` directly rather than reaching for a post-build patch
+   script).
+2. **The rootfs's own ext4 directory hash seed** -- generated randomly by `mke2fs`
+   *independent* of `-U`, deliberately, as a real anti-hash-flooding security measure for htree
+   directory lookups. Fixing only the UUID was not sufficient (confirmed by a real rebuild that
+   still produced a different hash); found via a direct `dumpe2fs -h` diff between two builds'
+   superblocks, not guessed at. Fixed via the same `MKFS_OPTIONS` string's `-E
+   hash_seed=<fixed-uuid>`.
+3. **(x86_64 only) The EFI partition's own `mkdosfs`-assigned FAT volume ID** -- also
+   time-derived by default. Found the same way: after the rootfs.ext2 file itself became
+   byte-identical build to build, the full `disk.img` still differed; bisected component by
+   component (`bzImage` was already identical; `efi-part.vfat` was not) down to this specific
+   field. Fixed via genimage's own `vfat` image type's `extraargs = "-i <fixed-hex-id>"`.
+   genimage's own `disk-uuid` (GPT header) and the boot partition's own `partition-uuid` (both
+   genimage's own docs say "defaults to a random value" when unset) were pinned in the same pass,
+   found by reading genimage's actual README rather than assumed to already be covered by the
+   rootfs-level fixes.
+
+Verified reproducible for real on both platforms: two consecutive rebuilds of identical source
+now produce byte-identical `disk.img` (x86_64) and byte-identical `Image`+`rootfs.ext2`
+(aarch64), confirmed via direct SHA-256 comparison each time, not assumed after the first fix
+"looked right." A real boot-test was re-run against the fixed x86_64 image afterward to confirm
+none of these changes broke anything real.
+
+Original finding, preserved for the record: building the identical x86_64 source twice, back to
+back, produced two different SHA-256 image hashes (confirmed directly, not inferred) --
+`post-image.sh` reads the rootfs's own randomly-assigned filesystem UUID and embeds it as
+`PARTUUID` into both GRUB's cmdline and the GPT partition table, meaning the disk image's own
+bytes differed on every build even when the compiled binaries and rootfs contents were
+byte-identical. At the time, the fix was named as real and scoped but not attempted in the same
+pass; the follow-up above is that attempt, and it found two *more* independent causes beyond the
+one originally diagnosed.
 
 Named handoff, per this document's own explicit standing pause condition (§0a): **the literal M13
 exit criterion -- a real USB drive, written from this tagged release image, booting on both

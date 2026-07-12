@@ -7,6 +7,13 @@ image efi-part.vfat {
 		file bzImage {
 			image = "bzImage"
 		}
+
+		# Real image build reproducibility: mkdosfs's own volume ID defaults to a time-derived
+		# value unless set explicitly -- found as the third and final non-reproducibility cause
+		# (the rootfs's ext2 UUID + directory hash seed were both already pinned, and the kernel
+		# bzImage itself was already byte-identical build to build, but efi-part.vfat still
+		# differed until this was added too).
+		extraargs = "-i 48000003"
 	}
 
 	size = 16352K # 16MB - 32KB
@@ -15,11 +22,19 @@ image efi-part.vfat {
 image disk.img {
 	hdimage {
 		partition-table-type = "gpt"
+		# Real image build reproducibility: genimage's own docs say this "defaults to a random
+		# value" -- confirmed the hard way (two builds of identical source produced different
+		# disk.img hashes even after the rootfs's own ext2 UUID was pinned). Fixed here instead.
+		disk-uuid = 48000000-0000-0000-1000-000000000001
 	}
 
 	partition boot {
 		image = "efi-part.vfat"
 		partition-type-uuid = U
+		# Same reproducibility reasoning as disk-uuid above: genimage's own docs say this
+		# "defaults to a random value" too when left unset, unlike the root partition below
+		# (whose UUID always comes from the rootfs's own real, now-pinned, filesystem UUID).
+		partition-uuid = 48000000-0000-0000-2000-000000000001
 		offset = 32K
 		bootable = true
 	}

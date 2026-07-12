@@ -4,6 +4,14 @@ BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_12=y
 BR2_TARGET_GENERIC_GETTY_PORT="tty1"
 BR2_GLOBAL_PATCH_DIR="board/pc/patches"
 BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
+# Real image build reproducibility: BR2_REPRODUCIBLE removes build-timestamp/build-path
+# non-determinism from the toolchain/packaging steps themselves. It does NOT cover a filesystem's
+# own randomly-assigned UUID (mke2fs's own runtime randomness, a separate source this defconfig's
+# own MKFS_OPTIONS line below pins) -- confirmed the hard way: two back-to-back builds of identical
+# source produced two different disk.img SHA-256 hashes before this fix, traced to PARTUUID (read
+# from the rootfs's own random UUID) differing every build and landing in both GRUB's cmdline and
+# the GPT table.
+BR2_REPRODUCIBLE=y
 BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y
 BR2_ROOTFS_OVERLAY="board/hyperion-x86_64/rootfs-overlay"
 BR2_ROOTFS_POST_BUILD_SCRIPT="board/hyperion-x86_64/post-build.sh"
@@ -19,6 +27,13 @@ BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF=y
 BR2_TARGET_ROOTFS_EXT2=y
 BR2_TARGET_ROOTFS_EXT2_4=y
 BR2_TARGET_ROOTFS_EXT2_SIZE="180M"
+# Pins the rootfs's own ext4 filesystem UUID (leaks into GRUB's root=PARTUUID=... cmdline and the
+# GPT table -- the first non-reproducibility cause found) AND its own directory hash seed
+# (mke2fs generates this randomly *independent* of -U, deliberately, as an anti-hash-flooding
+# security measure for htree directory lookups -- found as the *second*, separate cause: the two
+# UUID-pinning fixes above alone were not sufficient, confirmed by two more back-to-back rebuilds
+# that still produced different hashes until this was added too).
+BR2_TARGET_ROOTFS_EXT2_MKFS_OPTIONS="-O ^64bit -U 48000000-0000-0000-0000-000000000001 -E hash_seed=48000000-0000-0000-3000-000000000001"
 # BR2_TARGET_ROOTFS_TAR is not set
 BR2_TARGET_GRUB2=y
 BR2_TARGET_GRUB2_X86_64_EFI=y
