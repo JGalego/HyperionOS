@@ -12,6 +12,18 @@
 //! the public half (`VerifyingKey`), so [`verify`] is a free function any caller holding a known
 //! public key can call without needing a `Keystore` of its own.
 //!
+//! "Phase 2: cloud providers" adds [`secret_store::SecretStore`], a real, encrypted-at-rest
+//! store for arbitrary secrets (cloud provider API keys) -- a new, separate type rather than an
+//! extension of `Keystore` itself, since `Keystore`'s own on-disk format (a bare 32-byte seed)
+//! and total absence of any AEAD cipher make it unsuitable for a second purpose.
+//! [`Keystore::derive_key`] is the one real bridge between them: a device-bound symmetric key
+//! derived via BLAKE3 from the same per-device Ed25519 identity, with the raw seed itself never
+//! leaving `Keystore`. Its AEAD is the pure-Rust RustCrypto `chacha20poly1305`, not `ring` --
+//! `ring` has real C source needing a real C cross-compiler, and this crate is foundational
+//! enough (every real device identity depends on it, including `hyperion-console` itself, which
+//! this workspace cross-compiles for musl unconditionally for the real boot image) that an
+//! unconditional `ring` dependency here actually broke that build, not just hypothetically.
+//!
 //! Deliberately deferred, and why:
 //! - **TPM/secure-enclave-backed sealing.** This sandbox has no TPM device (`/dev/tpm*` does not
 //!   exist here) -- confirmed directly, not assumed. docs/34's own text already frames hardware
@@ -32,8 +44,11 @@ use std::path::Path;
 use ed25519_dalek::{Signer, Verifier};
 use rand_core::OsRng;
 
+pub mod secret_store;
+
 pub use blake3::Hash;
 pub use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
+pub use secret_store::{SecretStore, SecretStoreError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum KeystoreError {
@@ -118,6 +133,17 @@ impl Keystore {
     /// A real Ed25519 signature over `bytes`.
     pub fn sign(&self, bytes: &[u8]) -> Signature {
         self.signing_key.sign(bytes)
+    }
+
+    /// Derives a real, 32-byte, device-bound symmetric key from this device's own signing
+    /// identity via BLAKE3's dedicated key-derivation mode -- `context` domain-separates callers
+    /// (e.g. [`crate::secret_store::SecretStore`]'s own encryption key) so no two purposes ever
+    /// derive the same bytes, without ever exposing the raw Ed25519 seed itself to any caller.
+    /// This is what lets a new subsystem get its own real, device-specific key with no new
+    /// passphrase or key-management UX -- the existing per-device identity is the one root of
+    /// trust everything else derives from.
+    pub fn derive_key(&self, context: &str) -> [u8; 32] {
+        blake3::derive_key(context, &self.signing_key.to_bytes())
     }
 }
 

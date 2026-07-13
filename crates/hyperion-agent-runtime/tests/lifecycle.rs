@@ -114,6 +114,48 @@ fn requestable_capability_blocks_on_consent_then_proceeds_once_approved() {
 }
 
 #[test]
+fn grant_capability_seeds_a_grant_with_no_live_pending_consent_request() {
+    // PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": proves the real seeding path a
+    // console uses at startup for a provider whose secret is already stored -- unlike
+    // `resolve_consent`, this never needs a live `PendingConsent` to have fired first.
+    let (monitor, token, runtime) = setup();
+    let id = runtime.spawn(&monitor, &token, manifest(), None).unwrap();
+
+    // No invoke of "document.draft" has happened yet -- no PendingConsent is pending.
+    runtime
+        .grant_capability(&monitor, &token, id, "document.draft")
+        .expect("seed a grant with no prior PendingConsent");
+
+    let outcome = runtime
+        .invoke(
+            &monitor,
+            &token,
+            id,
+            "document.draft",
+            json!({"topic": "roadmap"}),
+        )
+        .unwrap();
+    assert!(
+        matches!(outcome, InvokeOutcome::Result(_)),
+        "a directly-seeded grant must resolve Granted on the very first invoke, not \
+         PendingConsent, got: {outcome:?}"
+    );
+}
+
+#[test]
+fn resolve_consent_still_requires_a_live_pending_request() {
+    let (monitor, token, runtime) = setup();
+    let id = runtime.spawn(&monitor, &token, manifest(), None).unwrap();
+
+    let result = runtime.resolve_consent(&monitor, &token, id, true);
+    assert!(
+        result.is_err(),
+        "resolving consent with no live PendingConsent request must fail, not silently \
+         grant anything"
+    );
+}
+
+#[test]
 fn undeclared_capability_is_denied_unconditionally_no_prompt() {
     let (monitor, token, runtime) = setup();
     let id = runtime.spawn(&monitor, &token, manifest(), None).unwrap();

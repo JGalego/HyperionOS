@@ -53,6 +53,25 @@
 //! real, separate wiring gap (`hyperion-netstack` had zero real callers anywhere in this
 //! workspace before this milestone) rather than just a backend swap.
 //!
+//! PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers" adds three more real Capabilities the
+//! same way — `cloud.openai`/`cloud.anthropic`/`cloud.gemini` all dispatch through
+//! [`runtime::AgentRuntime::dispatch_assistant_respond`], the exact same function
+//! `assistant.respond` already uses (dispatch itself is backend-agnostic; only *which* real
+//! `InferenceBackend` `LocalAiRuntime` was last handed differs). What's genuinely new here is
+//! the *gate*: `hyperion-coordination`'s "assistant" manifest declares these three as
+//! `requestable_capabilities` (never baseline, unlike `assistant.respond`/`web.research`), so a
+//! real `GrantDecision::PendingConsent` round trip (§6.1) — real money, real data leaving the
+//! device — stands between a cloud-backed dispatch and ever actually running, where local/mock/
+//! self-hosted-engine use stays ungated exactly as before. [`AgentRuntime::grant_capability`] is
+//! the other new real piece: a direct grant with no live pending request needed first, which the
+//! console uses to make its own "connect my `<provider>`" flow not *also* demand an immediate,
+//! redundant re-confirmation the moment a real key is typed in. Deliberately NOT used to carry a
+//! grant across a restart, though — the console's own `SecretStore` holding a provider's key
+//! proves a real account *exists*, not that this new process has been told it may spend money on
+//! it; a fresh boot's first real cloud dispatch still goes through a genuine `PendingConsent`
+//! round trip once, so that real, tested path stays actually reachable through a real console
+//! session, not just provable in this crate's own isolated tests.
+//!
 //! Deliberately deferred, and why:
 //!
 //! - **Real sandboxed processes.** There is no `sandbox_class`/container/
@@ -84,9 +103,12 @@
 //!   multi-step reasoning *trace* to serialize: `assistant.respond` (M8, above) is one real
 //!   inference call in, one real generated string out, not an Agent that reasons over several
 //!   of its own turns and would need that turn history checkpointed.
-//! - **User consent UI** ([13 — Dynamic UI Runtime](../13-dynamic-ui-runtime.md),
-//!   Phase 5) — [`AgentRuntime::resolve_consent`] is a direct, caller-driven
-//!   API standing in for a real consent prompt round-trip.
+//! - ~~**User consent UI**~~ — now real for the one case that needed it (PRODUCTION_BOOT_PROMPT.md
+//!   "Phase 2: cloud providers"): `hyperion-console` drives a real, synchronous yes/no prompt on
+//!   a live `PendingConsent`, then calls [`AgentRuntime::resolve_consent`] with the real answer.
+//!   A full [13 — Dynamic UI Runtime](../13-dynamic-ui-runtime.md)-style graphical consent
+//!   surface (Phase 5) remains its own, separate, later scope — this is a real text-console
+//!   round trip, not that.
 //! - **`hyperion-explainability` integration.** This crate cannot depend
 //!   on `hyperion-explainability` directly — `hyperion-explainability`
 //!   depends on `hyperion-recovery`, which itself depends on this crate

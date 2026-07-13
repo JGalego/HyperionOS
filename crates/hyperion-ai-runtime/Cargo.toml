@@ -59,3 +59,12 @@ candle = [
 # (and OpenAI itself, later) by `base_url`/`model` alone. Off by default for the same reason
 # `candle` is: every host-side dev/test build stays fast and network-free on MockBackend.
 openai-compat = ["dep:reqwest", "dep:serde", "dep:serde_json"]
+# Real, feature-gated HTTP inference against Anthropic's own Messages API
+# (PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers") -- a genuinely different, non-OpenAI-
+# shaped wire protocol, so unlike `openai-compat` this needs its own dedicated backend rather than
+# a preset. Reuses the same optional reqwest/serde/serde_json deps `openai-compat` already
+# declares; off by default for the same reason every other real backend here is.
+anthropic = ["dep:reqwest", "dep:serde", "dep:serde_json"]
+# As `anthropic`, for Google's real Gemini API (PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud
+# providers") -- also its own genuinely different wire protocol.
+gemini = ["dep:reqwest", "dep:serde", "dep:serde_json"]

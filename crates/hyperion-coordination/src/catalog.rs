@@ -46,7 +46,19 @@ pub fn default_manifests() -> Vec<AgentManifest> {
         AgentManifest {
             specialization: "assistant".to_string(),
             baseline_capabilities: vec!["assistant.respond".to_string()],
-            requestable_capabilities: Vec::new(),
+            // PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": requestable, never baseline
+            // -- these three route to the exact same dispatch `assistant.respond` does
+            // (`hyperion_agent_runtime::runtime::AgentRuntime::dispatch_assistant_respond`), but
+            // only when the console's currently-active backend is the matching real cloud
+            // provider (see `hyperion_console::session::BackendKind::capability_ref`). Being
+            // requestable is what puts a real `GrantDecision::PendingConsent` between a cloud
+            // dispatch and ever actually running -- local/mock/self-hosted-engine use is
+            // untouched, since `assistant.respond` itself stays baseline.
+            requestable_capabilities: vec![
+                "cloud.openai".to_string(),
+                "cloud.anthropic".to_string(),
+                "cloud.gemini".to_string(),
+            ],
             trust_tier: TrustTier::System,
         },
     ]

@@ -31,6 +31,7 @@
 //!   real text output") -- wiring a real model call into a future Agent capability is real,
 //!   separate, follow-on work, most naturally motivated once M8 gives it something real to call.
 
+pub mod secret_input;
 mod session;
 
 pub use session::ConsoleSession;

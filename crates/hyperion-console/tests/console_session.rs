@@ -7,6 +7,9 @@
 
 use hyperion_console::ConsoleSession;
 
+#[cfg(feature = "openai-compat")]
+mod common;
+
 fn open_session() -> (tempfile::TempDir, ConsoleSession) {
     let dir = tempfile::tempdir().expect("create a real tempdir for this test's Knowledge Graph");
     let session = ConsoleSession::open(dir.path()).expect("open a real ConsoleSession");
@@ -306,111 +309,12 @@ fn engine_backend_argument_parsing_gives_clear_errors_for_missing_arguments() {
 #[cfg(feature = "openai-compat")]
 #[test]
 fn a_custom_engine_backend_switch_reaches_a_real_local_server_end_to_end() {
-    // A minimal, hand-rolled real HTTP/1.1 fixture server -- same move as
-    // hyperion-ai-runtime/tests/openai_compat_backend.rs, trimmed down here to prove this
-    // crate's own `/backend custom <base_url> <model>` command parsing and wiring reach a real
-    // backend end-to-end, not the backend's own HTTP mechanics again.
-    use std::io::{Read, Write};
-    use std::net::{TcpListener, TcpStream};
-    use std::thread;
-
-    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        haystack.windows(needle.len()).position(|w| w == needle)
-    }
-
-    fn respond_json(stream: &mut TcpStream, body: &str) {
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
-             Connection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        stream
-            .write_all(response.as_bytes())
-            .expect("write a real response to a real socket");
-    }
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a real ephemeral local port");
-    let addr = listener
-        .local_addr()
-        .expect("a real bound socket has a real local address");
-
-    thread::spawn(move || {
-        for _ in 0..2 {
-            let Ok((mut stream, _)) = listener.accept() else {
-                return;
-            };
-            let mut buf = Vec::new();
-            let mut chunk = [0u8; 4096];
-            let (path, body_text) = loop {
-                let n = stream
-                    .read(&mut chunk)
-                    .expect("read a real request off a real socket");
-                if n == 0 {
-                    break (String::new(), String::new());
-                }
-                buf.extend_from_slice(&chunk[..n]);
-                let Some(header_end) = find_subslice(&buf, b"\r\n\r\n") else {
-                    continue;
-                };
-                let headers = String::from_utf8_lossy(&buf[..header_end]).to_string();
-                let path = headers
-                    .lines()
-                    .next()
-                    .unwrap_or_default()
-                    .split_whitespace()
-                    .nth(1)
-                    .unwrap_or_default()
-                    .to_string();
-                let content_length: usize = headers
-                    .lines()
-                    .find_map(|l| {
-                        l.to_ascii_lowercase()
-                            .strip_prefix("content-length:")
-                            .map(|v| v.trim().to_string())
-                    })
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0);
-                let body_start = header_end + 4;
-                while buf.len() < body_start + content_length {
-                    let n = stream
-                        .read(&mut chunk)
-                        .expect("read the rest of a real request body off a real socket");
-                    if n == 0 {
-                        break;
-                    }
-                    buf.extend_from_slice(&chunk[..n]);
-                }
-                let body = String::from_utf8_lossy(
-                    &buf[body_start..buf.len().min(body_start + content_length)],
-                )
-                .to_string();
-                break (path, body);
-            };
-
-            if path == "/v1/models" {
-                respond_json(
-                    &mut stream,
-                    r#"{"object":"list","data":[{"id":"fixture-model","object":"model"}]}"#,
-                );
-            } else {
-                let request: serde_json::Value =
-                    serde_json::from_str(&body_text).unwrap_or_default();
-                let prompt = request["messages"][0]["content"]
-                    .as_str()
-                    .unwrap_or_default();
-                respond_json(
-                    &mut stream,
-                    &format!(
-                        r#"{{"choices":[{{"message":{{"content":"console fixture echo: {prompt}"}}}}]}}"#
-                    ),
-                );
-            }
-        }
-    });
+    let base_url = common::spawn_fixture_server(
+        2,
+        common::openai_compat_handler("fixture-model", "console fixture echo"),
+    );
 
     let (_dir, mut session) = open_session();
-    let base_url = format!("http://{addr}/v1");
 
     let switch = session
         .handle_utterance(&format!("/backend custom {base_url} fixture-model"))
@@ -428,4 +332,126 @@ fn a_custom_engine_backend_switch_reaches_a_real_local_server_end_to_end() {
         "expected the real fixture server's own response to come back through a real \
          assistant.respond dispatch, got: {answer:?}"
     );
+}
+
+/// PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": the whole real cloud-consent lifecycle,
+/// against a real local fixture server (`HYPERION_OPENAI_BASE_URL` redirects `OpenAiCompatBackend`
+/// away from the real `api.openai.com` -- see `ConsoleSession::try_connect_openai`'s own doc
+/// comment: a real feature, Azure OpenAI/a corporate proxy, not just a testing seam). All three
+/// sessions share this one test function deliberately: `HYPERION_OPENAI_BASE_URL` is real
+/// process-global state, and interleaving it with another test that also sets it would race.
+#[cfg(feature = "openai-compat")]
+#[test]
+fn cloud_consent_lifecycle_grants_in_session_but_reasks_fresh_after_a_restart() {
+    let base_url = common::spawn_fixture_server(
+        5,
+        common::openai_compat_handler("gpt-fixture", "openai fixture echo"),
+    );
+    std::env::set_var("HYPERION_OPENAI_BASE_URL", &base_url);
+
+    let dir = tempfile::tempdir().expect("create a real tempdir for this test's data_dir");
+
+    // --- Session 1: connect, then use it immediately -- no repeat consent prompt. ---
+    {
+        let mut session = ConsoleSession::open(dir.path()).expect("open a real ConsoleSession");
+
+        let prompt = session
+            .handle_utterance("connect my openai account")
+            .join("\n");
+        assert!(
+            prompt.contains("Paste your openai API key"),
+            "got: {prompt:?}"
+        );
+        assert!(session.awaiting_secret_input());
+
+        let stored = session.handle_utterance("sk-test-fixture-key").join("\n");
+        assert!(stored.contains("Connected"), "got: {stored:?}");
+        assert!(!session.awaiting_secret_input());
+
+        let switched = session
+            .handle_utterance("/backend openai gpt-fixture")
+            .join("\n");
+        assert!(
+            switched.starts_with("Switched to the openai"),
+            "got: {switched:?}"
+        );
+
+        let answer = session.handle_utterance("say hello").join("\n");
+        assert!(
+            answer.contains("openai fixture echo: say hello"),
+            "expected the connect flow's own immediate in-session grant to let this dispatch \
+             through with no PendingConsent prompt, got: {answer:?}"
+        );
+    }
+
+    // --- Session 2: a fresh process (same data_dir, same already-connected key) still asks for
+    // real consent on its own first real cloud use -- proving the grant genuinely does not carry
+    // across a restart, and that PendingConsent is reachable through a real console sequence, not
+    // just hyperion-agent-runtime's own isolated tests. ---
+    {
+        let mut session = ConsoleSession::open(dir.path()).expect("reopen the real ConsoleSession");
+
+        let switched = session
+            .handle_utterance("/backend openai gpt-fixture")
+            .join("\n");
+        assert!(
+            switched.starts_with("Switched to the openai"),
+            "the already-stored key must still let a fresh session switch to it, got: \
+             {switched:?}"
+        );
+
+        let prompted = session.handle_utterance("say hello again").join("\n");
+        assert!(
+            prompted.contains("real, paid, external openai") && prompted.contains("yes/no"),
+            "expected a fresh session's first real cloud use to hit a genuine consent prompt, \
+             got: {prompted:?}"
+        );
+
+        let answer = session.handle_utterance("yes").join("\n");
+        assert!(
+            answer.contains("openai fixture echo: say hello again"),
+            "expected confirming consent to re-invoke the original prompt for real, got: \
+             {answer:?}"
+        );
+    }
+
+    // --- Session 3: declining a fresh consent prompt must leave the session working normally
+    // afterward -- no crash, no stuck state, mock (or any other ungated backend) unaffected. ---
+    {
+        let mut session =
+            ConsoleSession::open(dir.path()).expect("reopen the real ConsoleSession again");
+
+        let switched = session
+            .handle_utterance("/backend openai gpt-fixture")
+            .join("\n");
+        assert!(
+            switched.starts_with("Switched to the openai"),
+            "got: {switched:?}"
+        );
+
+        let prompted = session
+            .handle_utterance("one more real question")
+            .join("\n");
+        assert!(prompted.contains("yes/no"), "got: {prompted:?}");
+
+        let declined = session.handle_utterance("no").join("\n");
+        assert!(
+            declined.contains("won't use that provider"),
+            "got: {declined:?}"
+        );
+
+        let switched_back = session.handle_utterance("/backend mock").join("\n");
+        assert!(
+            switched_back.starts_with("Switched to the mock"),
+            "got: {switched_back:?}"
+        );
+        let mock_answer = session.handle_utterance("still working?").join("\n");
+        assert!(
+            mock_answer.contains("echo: still working?"),
+            "declining a consent prompt must not break the session's normal pipeline \
+             afterward, got: {mock_answer:?}"
+        );
+    }
+
+    std::env::remove_var("HYPERION_OPENAI_BASE_URL");
 }

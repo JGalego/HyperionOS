@@ -26,6 +26,19 @@ const ASSISTANT_RESPOND_CAPABILITY: &str = "assistant.respond";
 /// PRODUCTION_BOOT_PROMPT.md M10's real Capability alongside `assistant.respond` -- see
 /// [`AgentRuntime::dispatch_web_research`]'s own doc comment.
 const WEB_RESEARCH_CAPABILITY: &str = "web.research";
+/// PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": the three real, requestable (never
+/// baseline -- see `hyperion-coordination::catalog::default_manifests`) Capabilities a real
+/// cloud dispatch is gated behind. Each routes to the exact same
+/// [`AgentRuntime::dispatch_assistant_respond`] as the baseline `assistant.respond` case below --
+/// dispatch itself is backend-agnostic (whatever `LocalAiRuntime`'s currently-active backend is),
+/// so only the *gate* differs between local and cloud use, not the dispatch function. The console
+/// picks which of these four literal strings to invoke under based on its own currently-active
+/// backend (`hyperion_console::session::BackendKind::capability_ref`) -- these stay private
+/// constants here, exactly as `ASSISTANT_RESPOND_CAPABILITY` already does, with the console
+/// hardcoding the matching literals rather than importing them.
+const CLOUD_OPENAI_CAPABILITY: &str = "cloud.openai";
+const CLOUD_ANTHROPIC_CAPABILITY: &str = "cloud.anthropic";
+const CLOUD_GEMINI_CAPABILITY: &str = "cloud.gemini";
 
 fn now() -> u64 {
     SystemTime::now()
@@ -267,7 +280,14 @@ impl AgentRuntime {
         instance.state = LifecycleState::Executing;
         instance.quota.calls_used_this_window += 1;
 
-        let dispatch_result = if capability_ref == ASSISTANT_RESPOND_CAPABILITY {
+        let dispatch_result = if [
+            ASSISTANT_RESPOND_CAPABILITY,
+            CLOUD_OPENAI_CAPABILITY,
+            CLOUD_ANTHROPIC_CAPABILITY,
+            CLOUD_GEMINI_CAPABILITY,
+        ]
+        .contains(&capability_ref)
+        {
             self.dispatch_assistant_respond(monitor, token, &args)
         } else if capability_ref == WEB_RESEARCH_CAPABILITY && self.netstack.is_some() {
             self.dispatch_web_research(monitor, token, instance_id, &args)
@@ -418,6 +438,36 @@ impl AgentRuntime {
             Self::audit(instance, "consent_denied", capability_ref);
         }
         instance.state = LifecycleState::Executing;
+        Ok(())
+    }
+
+    /// PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": grants `capability_ref` directly,
+    /// with no live [`GrantDecision::PendingConsent`] required first -- unlike
+    /// [`Self::resolve_consent`] (which only ever resolves a request `invoke` itself just made,
+    /// and errors if there isn't one), this is for seeding an *already-consented* capability at
+    /// session startup. The console calls this once per provider already present in its own
+    /// `SecretStore`: the user only ever gets a secret into that store via an explicit "connect
+    /// my `<provider>`" utterance, so its mere presence already proves consent -- re-prompting
+    /// for it on every restart would be real, unnecessary friction, not real caution.
+    pub fn grant_capability(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        instance_id: u64,
+        capability_ref: &str,
+    ) -> Result<(), AgentError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+
+        let mut instances = self.instances.lock().unwrap();
+        let instance = instances
+            .get_mut(&instance_id)
+            .ok_or(AgentError::NotFound)?;
+        instance.grants.push(CapabilityGrant {
+            capability_ref: capability_ref.to_string(),
+            scope: Vec::new(),
+            granted_at: now(),
+        });
+        Self::audit(instance, "consent_granted_direct", capability_ref);
         Ok(())
     }
 

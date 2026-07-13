@@ -707,6 +707,86 @@ gemma3:270m`, a real prompt ("say hello in exactly five words" -> "Hello!"; "wha
 "2 + 2 = 4"), `/backend mock`, back again, all in one running process. `cargo build/test/fmt/clippy`
 all pass across every feature combination (none / `candle` / `openai-compat` / both).
 
+**M8 follow-up (2026-07-13): "Phase 2: cloud providers" -- OpenAI, Anthropic, and Gemini, behind
+real encrypted secrets and a real consent gate.** Scoped deliberately narrower than it could have
+been, and why: no real Anthropic/Gemini/OpenAI API key exists in this sandbox, so the two
+genuinely new backends (Anthropic's Messages API, Gemini's `generateContent` API -- OpenAI itself
+needed no new backend at all, since its real API already speaks the `openai-compat` shape Phase 1
+built) are only proven here against hand-rolled local fixture servers, the same rigor as Phase 1's
+fixture tests but without a live-account-equivalent proof; real end-to-end verification against a
+real account is the user's own follow-up step, named rather than silently assumed. Fixing
+`hyperion-model-router`/`hyperion-api-gateway` being bypassed by the live console remains a
+separate, untouched, pre-existing gap.
+
+New `hyperion_crypto::secret_store::SecretStore`: `ring`'s ChaCha20-Poly1305 AEAD (already
+resolved in this workspace's `Cargo.lock` transitively via the `rustls` stack, so a direct
+dependency here adds zero new transitive crates) encrypting a small `HashMap<String, String>`
+(provider -> API key) with a symmetric key derived, via a new `Keystore::derive_key` method, from
+the same per-device Ed25519 identity M9 already established -- no new passphrase/key-management UX,
+and the raw signing key itself never leaves `Keystore`. Fixes the one real gap `Keystore::
+persist_new_key` itself still has (direct `fs::write` + separate `chmod`, no atomicity) for its
+own new file: temp-file + rename + `chmod 0600`. A wrong device key fails closed with a real
+authentication-tag mismatch, proven directly, not assumed.
+
+New `hyperion_ai_runtime::anthropic_backend::AnthropicBackend` and `::gemini_backend::
+GeminiBackend` (feature-gated `anthropic`/`gemini`), each following `CandleBackend`'s and
+`OpenAiCompatBackend`'s own conventions exactly (eager real connectivity proof at `connect()` time,
+every failure embedded as `"[backend error: ...]"` text since `generate()` can't return a
+`Result`). Both expose a `connect_at(base_url, ...)` alongside the real `connect(...)` that only
+ever targets the real API -- a real feature in its own right (Anthropic/Gemini don't have
+alternate endpoints today, but this matches `OpenAiCompatBackend`'s own already-real
+`HYPERION_OPENAI_BASE_URL`-style override story) as much as it's what lets this crate's own tests
+prove real HTTP/JSON wiring against a local fixture server rather than a real account.
+
+`hyperion-agent-runtime` gains three new requestable Capabilities (`cloud.openai`/
+`cloud.anthropic`/`cloud.gemini`, declared on the "assistant" manifest in `hyperion-coordination`'s
+`catalog.rs`, never baseline) routing through the exact same `dispatch_assistant_respond` the
+baseline `assistant.respond` already uses -- dispatch itself is backend-agnostic, only the *gate*
+differs, so local/mock/self-hosted-engine use stays completely ungated. A new `AgentRuntime::
+grant_capability` grants a capability directly with no live `PendingConsent` required first
+(`resolve_consent` itself still hard-requires one, confirmed by reading its real body, not
+assumed) -- used by the console's own "connect my `<provider>`" flow so typing a real key doesn't
+also demand an immediate, redundant re-confirmation.
+
+A real, previously-latent gap found (not introduced) during this work: `hyperion-console`'s
+`run_undecomposed_goal` spawned a fresh `AgentInstance` on *every utterance*, so no capability
+grant -- cloud consent included -- could ever survive past a single turn, even within one running
+session. Fixed by giving `ConsoleSession` one persistent `assistant_instance_id`, spawned once at
+`open()` and reused by every turn instead of respawned; the one named trade-off is that this
+instance's own `bound_intent` (scheduler bookkeeping only) is `None` forever now, since there's no
+single root `NodeId` at session-open time to bind it to -- cosmetic, not correctness-affecting for
+the real admission gate.
+
+The console's own consent policy, arrived at by first writing the more generous version and then
+catching the real problem with it: an earlier draft seeded every already-connected provider's
+grant automatically at every `open()`, which would have made the real `PendingConsent` machinery
+permanently unreachable through any real console sequence at all (every path to a `Cloud` backend
+requires a stored secret, and every stored secret would have already carried a grant) -- exactly
+the "real, tested, but never actually exercised" gap this workspace's own discipline rules out
+elsewhere. Fixed before shipping, not after: a stored secret now only proves a real account
+*exists*; "connect my `<provider>`" grants this *one running session* the right to use it
+immediately (no redundant re-confirmation right after typing the key), but a fresh boot's first
+real cloud dispatch genuinely re-asks, once per boot, through the real `PendingConsent` round trip
+-- proven with a real, three-session sequence (connect + immediate use; a fresh reopen against the
+same data_dir hitting a real consent prompt on first use; a fresh reopen declining consent and the
+session continuing normally afterward), not just `hyperion-agent-runtime`'s own isolated tests.
+
+Also new: a real no-echo secret-entry path (`hyperion-console/src/secret_input.rs`), bare
+`libc::termios` `tcgetattr`/`tcsetattr` clearing `ECHO` on stdin for exactly the follow-up API-key
+line, restored via `Drop` (so a panic mid-read still restores it) -- matching this workspace's one
+existing real libc/ioctl precedent (`hyperion-init::linux::spawn_interactive`'s `TIOCSCTTY` call)
+rather than a new dependency, and degrading to a harmless no-op (never a crash) if stdin isn't a
+real TTY.
+
+`cargo build/test/fmt/clippy` all pass across every new feature combination
+(`anthropic`/`gemini`/`openai-compat`, individually and together) for `hyperion-crypto`,
+`hyperion-ai-runtime`, `hyperion-agent-runtime`, `hyperion-coordination`, and `hyperion-console`.
+Not run combined with `candle` in the same invocation: this sandbox's own cached Candle model
+makes `--features candle` builds real-load successfully, which changes several pre-existing
+(Phase-1-and-earlier) tests' own assumed default backend -- a known, pre-existing interaction
+unrelated to this phase, confirmed by reproducing the same failures with `--features candle`
+alone.
+
 **M9 completion note (2026-07-11):** new crate `hyperion-crypto` is the real primitive every one
 of the five named non-cryptographic checksum/hash stand-ins now depends on: real Ed25519
 signing/verification (`ed25519-dalek`), real BLAKE3 content hashing (this workspace's own

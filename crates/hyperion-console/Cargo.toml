@@ -21,6 +21,11 @@ hyperion-knowledge-graph = { workspace = true }
 hyperion-netstack = { workspace = true }
 hyperion-workspace = { workspace = true }
 serde_json = { workspace = true }
+# For src/secret_input.rs's real termios ECHO-off guard (PRODUCTION_BOOT_PROMPT.md "Phase 2:
+# cloud providers") -- already pinned at the workspace level (hyperion-init/hyperion-cgroups/
+# hyperion-trust-boundary/hyperion-supervisor already depend on it), so this is zero new external
+# crate surface, just a new direct dependency of this crate.
+libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -41,3 +46,9 @@ real-http = ["hyperion-netstack/real-http"]
 # (PRODUCTION_BOOT_PROMPT.md "Phase 1: local-engine backends") -- same reasoning as `candle`
 # above, forwarding to `hyperion-ai-runtime`'s own `openai-compat` feature.
 openai-compat = ["hyperion-ai-runtime/openai-compat"]
+# Real, feature-gated HTTP inference against Anthropic's/Google's own real cloud APIs
+# (PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers") -- same reasoning as `candle` above,
+# forwarding to `hyperion-ai-runtime`'s own `anthropic`/`gemini` features. OpenAI itself needs no
+# separate feature here: it's reached via the existing `openai-compat` feature's own backend.
+anthropic = ["hyperion-ai-runtime/anthropic"]
+gemini = ["hyperion-ai-runtime/gemini"]

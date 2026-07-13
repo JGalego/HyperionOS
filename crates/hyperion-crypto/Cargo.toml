@@ -12,9 +12,20 @@ repository.workspace = true
 # build-or-boot dependency for any target this workspace cross-compiles for (PRODUCTION_BOOT_PROMPT.md M11
 # hit this directly: aarch64-unknown-linux-musl has no such toolchain in this sandbox).
 blake3 = { version = "1", features = ["serde", "pure"] }
+# Real ChaCha20-Poly1305 AEAD for src/secret_store.rs -- deliberately the pure-Rust RustCrypto
+# implementation, not `ring` (rejected after actually breaking a real musl cross-compile with it:
+# `ring` has real C source needing a real C cross-compiler for whatever target it's built for, and
+# `hyperion-crypto` is foundational enough -- every crate needing a real device identity depends
+# on it, including `hyperion-console` itself, which this workspace cross-compiles for musl
+# unconditionally for the real boot image -- that an unconditional `ring` dependency here broke
+# that build outright, confirmed by reproducing the exact failure, not assumed). Exactly the same
+# "no C toolchain, ever" constraint this crate's own `blake3`/"pure" choice above already exists
+# for.
+chacha20poly1305 = "0.10"
 ed25519-dalek = { version = "2", features = ["rand_core", "serde"] }
 rand_core = { version = "0.6", features = ["std"] }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

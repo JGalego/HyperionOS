@@ -3,6 +3,7 @@
 
 use std::io::{self, BufRead, Write};
 
+use hyperion_console::secret_input::RawEchoOff;
 use hyperion_console::ConsoleSession;
 
 fn main() {
@@ -32,15 +33,30 @@ fn main() {
             break;
         }
 
+        // A "connect my <provider> account" flow's follow-up API-key line must not be echoed to
+        // the terminal or left sitting in scrollback -- checked before the real read, since
+        // ECHO has to be off *during* it, not after `handle_utterance` already has the line.
+        let awaiting_secret = session.awaiting_secret_input();
         let mut line = String::new();
-        match input.read_line(&mut line) {
+        let read_result = if awaiting_secret {
+            let _guard = RawEchoOff::disable();
+            let result = input.read_line(&mut line);
+            println!(); // ECHO being off also swallowed the Enter keystroke's own visible newline.
+            result
+        } else {
+            input.read_line(&mut line)
+        };
+        match read_result {
             Ok(0) => break, // EOF: the terminal went away.
             Ok(_) => {}
             Err(_) => break,
         }
 
         let utterance = line.trim();
-        if utterance.is_empty() {
+        // An empty line while awaiting a secret is itself a real, legitimate answer (cancel
+        // connecting) that `ConsoleSession::handle_utterance` must still see -- only a genuinely
+        // empty *goal* utterance gets silently skipped.
+        if utterance.is_empty() && !awaiting_secret {
             continue;
         }
 

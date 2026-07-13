@@ -20,7 +20,7 @@ use hyperion_ai_runtime::{
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
 use hyperion_context::{Budget, ContextBundle, ExpertiseEstimate, ExpertiseLevel, Scope};
 use hyperion_coordination::CoordinationSession;
-use hyperion_crypto::Keystore;
+use hyperion_crypto::{Keystore, SecretStore};
 use hyperion_intent::{HandleOutcome, IntentEngine};
 use hyperion_knowledge_graph::{GraphError, KnowledgeGraph, NodeId};
 use hyperion_netstack::{DomainEgressGrant, NetstackHub};
@@ -58,8 +58,40 @@ pub struct ConsoleSession {
     /// `Arc`, with no way to reach back out to it.
     ai_runtime: Arc<LocalAiRuntime>,
     current_backend: BackendKind,
+    /// Spawned once in [`Self::open`] and reused by every [`Self::run_undecomposed_goal`] turn,
+    /// rather than a fresh `AgentInstance` per turn (this crate's own pre-Phase-2 behavior) --
+    /// required for ANY capability grant to survive past a single turn at all, cloud consent
+    /// included: `resolve_grant`'s per-instance `grants` are empty on every fresh spawn, so a
+    /// respawned instance would re-trigger `PendingConsent` forever. Named trade-off: this
+    /// instance's own `bound_intent` (scheduler bookkeeping only) is `None` forever now, since
+    /// there's no single root `NodeId` at session-open time to bind it to -- cosmetic, not
+    /// correctness-affecting for the real admission gate.
+    assistant_instance_id: u64,
+    /// Real, encrypted-at-rest cloud provider API keys -- see [`hyperion_crypto::SecretStore`].
+    /// A stored key proves a real account *exists* (the user only ever gets one in via an
+    /// explicit "connect my `<provider>`" utterance) -- deliberately NOT also a standing grant
+    /// to *use* it across restarts (see [`Self::open`]'s own doc comment on why): a fresh boot's
+    /// first real cloud dispatch still goes through a genuine `InvokeOutcome::PendingConsent`
+    /// round trip, once per boot.
+    secret_store: SecretStore,
+    /// Set while a "connect my `<provider>`" flow is awaiting its follow-up API-key line -- the
+    /// *next* call to [`Self::handle_utterance`] is captured as the real secret instead of
+    /// parsed as an utterance or meta-command. See [`Self::awaiting_secret_input`], which
+    /// `main.rs` checks before each real `read_line` so that one line isn't echoed to the
+    /// terminal.
+    pending_connect: Option<CloudProvider>,
+    /// Set while a live `InvokeOutcome::PendingConsent` is awaiting its yes/no confirmation --
+    /// the *next* utterance is captured as that answer rather than parsed normally.
+    pending_consent: Option<PendingCloudConsent>,
     workspace: WorkspaceCompiler,
     next_turn_id: u64,
+}
+
+/// The real prompt and capability this session is waiting to re-invoke once a live
+/// `InvokeOutcome::PendingConsent` is confirmed -- see [`ConsoleSession::pending_consent`].
+struct PendingCloudConsent {
+    capability_ref: String,
+    prompt: String,
 }
 
 /// Which real [`hyperion_ai_runtime::InferenceBackend`] is currently answering
@@ -85,6 +117,15 @@ enum BackendKind {
         base_url: String,
         model: String,
     },
+    /// A real, paid, external cloud provider -- see [`hyperion_ai_runtime::openai_compat_backend`]
+    /// (OpenAI itself, reused verbatim), [`hyperion_ai_runtime::anthropic_backend`], and
+    /// [`hyperion_ai_runtime::gemini_backend`]. Unlike `Engine` (self-hosted, never gated), every
+    /// dispatch under this variant goes through this provider's own requestable Capability (see
+    /// [`Self::capability_ref`]) -- a real consent prompt, not just a runtime switch.
+    Cloud {
+        provider: CloudProvider,
+        model: String,
+    },
 }
 
 impl BackendKind {
@@ -97,6 +138,56 @@ impl BackendKind {
                 base_url,
                 model,
             } => format!("{} (model {model:?} at {base_url})", engine.label()),
+            BackendKind::Cloud { provider, model } => {
+                format!("{} (model {model:?})", provider.label())
+            }
+        }
+    }
+
+    /// Which real Capability [`ConsoleSession::run_undecomposed_goal`] must invoke under: the
+    /// baseline `"assistant.respond"` for every local/mock/self-hosted-engine backend (never
+    /// gated), or this provider's own requestable `"cloud.<provider>"` string when a real cloud
+    /// backend is active -- so only cloud dispatch is ever gated behind a real user consent.
+    /// Kept as a hardcoded literal here, matching how this crate already hardcodes
+    /// `"assistant.respond"` rather than importing `hyperion-agent-runtime`'s own (private)
+    /// capability-ref constants.
+    fn capability_ref(&self) -> &'static str {
+        match self {
+            BackendKind::Cloud { provider, .. } => provider.capability_ref(),
+            _ => "assistant.respond",
+        }
+    }
+}
+
+/// One real, paid, external cloud provider -- see [`BackendKind::Cloud`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloudProvider {
+    OpenAi,
+    Anthropic,
+    Gemini,
+}
+
+impl CloudProvider {
+    /// Also this provider's key in [`ConsoleSession::secret_store`] -- one real, stable name
+    /// shared by both the human-facing label and the storage key, so there's no separate mapping
+    /// to keep in sync.
+    fn label(self) -> &'static str {
+        match self {
+            CloudProvider::OpenAi => "openai",
+            CloudProvider::Anthropic => "anthropic",
+            CloudProvider::Gemini => "gemini",
+        }
+    }
+
+    /// Matches the private capability-ref constants `hyperion-agent-runtime`'s own `runtime.rs`
+    /// declares (`CLOUD_OPENAI_CAPABILITY` etc.) -- kept as a hardcoded literal here rather than
+    /// importing them, exactly as this crate already hardcodes `"assistant.respond"` rather than
+    /// importing `ASSISTANT_RESPOND_CAPABILITY`.
+    fn capability_ref(self) -> &'static str {
+        match self {
+            CloudProvider::OpenAi => "cloud.openai",
+            CloudProvider::Anthropic => "cloud.anthropic",
+            CloudProvider::Gemini => "cloud.gemini",
         }
     }
 }
@@ -154,20 +245,47 @@ impl ConsoleSession {
     /// grounds against lives -- on the real booted image, M6's own dedicated persistent
     /// partition; in a test, any tempdir.
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, GraphError> {
-        let kg_path = PathBuf::from(data_dir.as_ref()).join("console_knowledge_graph.jsonl");
+        let data_dir = data_dir.as_ref();
+        let kg_path = PathBuf::from(data_dir).join("console_knowledge_graph.jsonl");
         let mut monitor = CapabilityMonitor::new();
         let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
         let graph = Arc::new(KnowledgeGraph::open(&kg_path)?);
         let context = Arc::new(hyperion_context::ContextEngine::new(graph.clone()));
         let netstack = Arc::new(Self::build_netstack(graph.clone()));
         let intent_engine = IntentEngine::new(graph, context.clone());
-        let (runtime, current_backend) = Self::build_ai_runtime(data_dir.as_ref());
+
+        let keystore = Keystore::open_or_create(&data_dir.join("device.key"))
+            .expect("open or create this session's real device signing key");
+        let (runtime, current_backend) = Self::build_ai_runtime(&keystore);
         let ai_runtime = Arc::new(runtime);
         let agent_runtime = Arc::new(AgentRuntime::new_with_netstack(
             ai_runtime.clone(),
             Some(netstack.clone()),
         ));
         let coordination = CoordinationSession::new(agent_runtime.clone());
+
+        let assistant_manifest = hyperion_coordination::default_manifests()
+            .into_iter()
+            .find(|m| m.specialization == "assistant")
+            .expect("default_manifests always includes the assistant specialization");
+        let assistant_instance_id = agent_runtime
+            .spawn(&monitor, &token, assistant_manifest, None)
+            .expect("spawn this session's own persistent assistant Agent instance");
+
+        // Deliberately NOT pre-seeded from an already-connected provider's own prior-session
+        // secret: doing so would make `InvokeOutcome::PendingConsent` permanently unreachable
+        // through any real console sequence at all (every path to a `Cloud` backend requires a
+        // stored secret, and every stored secret would already carry a grant) -- real, tested
+        // machinery that a real user could never actually see fire is exactly the "looks real,
+        // never actually exercised" gap this workspace's own discipline rules out elsewhere. A
+        // stored secret only proves a real account *exists*; [`Self::finish_connect`] grants
+        // consent to *use* it immediately within the session that just connected it (so
+        // connecting doesn't also demand an immediate, redundant re-confirmation), but a fresh
+        // boot's first real cloud dispatch genuinely re-asks -- once per boot, not once per
+        // message, and never silently bypassed.
+        let secret_store =
+            SecretStore::open_or_create(&data_dir.join("cloud_secrets.enc"), &keystore)
+                .expect("open or create this session's real encrypted cloud-secret store");
 
         // A real, permissive domain-egress grant for this session's own root token, minted once
         // here rather than per-call: a real interactive assistant can't pre-enumerate every real
@@ -198,6 +316,10 @@ impl ConsoleSession {
             agent_runtime,
             ai_runtime,
             current_backend,
+            assistant_instance_id,
+            secret_store,
+            pending_connect: None,
+            pending_consent: None,
             workspace: WorkspaceCompiler::new(),
             next_turn_id: 1,
         })
@@ -225,7 +347,7 @@ impl ConsoleSession {
     /// checksum stand-in -- by this session's own real device identity, a [`Keystore`] persisted
     /// under `data_dir` (the same real, dedicated partition M6 already gives the Knowledge Graph),
     /// so it's stable across reboots rather than a fresh, unverifiable identity every restart.
-    fn build_ai_runtime(data_dir: &Path) -> (LocalAiRuntime, BackendKind) {
+    fn build_ai_runtime(keystore: &Keystore) -> (LocalAiRuntime, BackendKind) {
         let (backend, current_backend) = if cfg!(feature = "candle") {
             match Self::try_load_candle() {
                 Ok(backend) => (backend, BackendKind::Candle),
@@ -248,8 +370,6 @@ impl ConsoleSession {
         };
 
         let runtime = LocalAiRuntime::new(backend, 8_000);
-        let keystore = Keystore::open_or_create(&data_dir.join("device.key"))
-            .expect("open or create this session's real device signing key");
         let mut descriptor = ModelDescriptor {
             model_id: 1,
             class: ModelClass::Slm,
@@ -263,7 +383,7 @@ impl ConsoleSession {
             }],
             signature: None,
         };
-        descriptor.signature = Some(sign(&descriptor, &keystore));
+        descriptor.signature = Some(sign(&descriptor, keystore));
         runtime
             .register_model(descriptor, &keystore.verifying_key())
             .expect("a descriptor this session just really signed always verifies");
@@ -323,6 +443,102 @@ impl ConsoleSession {
             .to_string())
     }
 
+    /// The `Cloud` backend-switch arm's real effect: looks up `provider`'s real API key in
+    /// [`Self::secret_store`], erroring with a clear next step if it isn't there yet, then
+    /// connects via that provider's own real backend.
+    fn try_connect_cloud(
+        &self,
+        provider: CloudProvider,
+        model: &str,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        let Some(api_key) = self.secret_store.get(provider.label()) else {
+            return Err(format!(
+                "you haven't connected your {} account yet -- try \"connect my {} account\"",
+                provider.label(),
+                provider.label()
+            ));
+        };
+
+        match provider {
+            CloudProvider::OpenAi => Self::try_connect_openai(api_key, model),
+            CloudProvider::Anthropic => Self::try_connect_anthropic(api_key, model),
+            CloudProvider::Gemini => Self::try_connect_gemini(api_key, model),
+        }
+    }
+
+    /// OpenAI's own real API already speaks the OpenAI-compatible shape
+    /// [`hyperion_ai_runtime::OpenAiCompatBackend`] covers -- no new backend needed, just its
+    /// real, fixed base URL.
+    #[cfg(feature = "openai-compat")]
+    fn try_connect_openai(
+        api_key: &str,
+        model: &str,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        // A real feature, not just a testing seam: an Azure OpenAI deployment or a corporate
+        // proxy in front of the real API speaks the same OpenAI-compatible shape at a different
+        // base URL. Defaults to the real API when unset, exactly as every real caller expects.
+        let base_url = std::env::var("HYPERION_OPENAI_BASE_URL")
+            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+        hyperion_ai_runtime::OpenAiCompatBackend::connect(
+            base_url,
+            model,
+            Some(api_key.to_string()),
+        )
+        .map(|backend| Box::new(backend) as Box<dyn hyperion_ai_runtime::InferenceBackend>)
+        .map_err(|e| format!("couldn't connect to the real OpenAI API: {e}"))
+    }
+
+    #[cfg(not(feature = "openai-compat"))]
+    fn try_connect_openai(
+        _api_key: &str,
+        _model: &str,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        Err(
+            "this build wasn't compiled with real OpenAI-compatible support \
+             (--features openai-compat)"
+                .to_string(),
+        )
+    }
+
+    #[cfg(feature = "anthropic")]
+    fn try_connect_anthropic(
+        api_key: &str,
+        model: &str,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        hyperion_ai_runtime::AnthropicBackend::connect(api_key, model)
+            .map(|backend| Box::new(backend) as Box<dyn hyperion_ai_runtime::InferenceBackend>)
+            .map_err(|e| format!("couldn't connect to the real Anthropic API: {e}"))
+    }
+
+    #[cfg(not(feature = "anthropic"))]
+    fn try_connect_anthropic(
+        _api_key: &str,
+        _model: &str,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        Err(
+            "this build wasn't compiled with real Anthropic support (--features anthropic)"
+                .to_string(),
+        )
+    }
+
+    #[cfg(feature = "gemini")]
+    fn try_connect_gemini(
+        api_key: &str,
+        model: &str,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        hyperion_ai_runtime::GeminiBackend::connect(api_key, model)
+            .map(|backend| Box::new(backend) as Box<dyn hyperion_ai_runtime::InferenceBackend>)
+            .map_err(|e| format!("couldn't connect to the real Gemini API: {e}"))
+    }
+
+    #[cfg(not(feature = "gemini"))]
+    fn try_connect_gemini(
+        _api_key: &str,
+        _model: &str,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        Err("this build wasn't compiled with real Gemini support (--features gemini)".to_string())
+    }
+
     /// The `/backend <name> [args...]` / `use backend <name> [args...]` meta-command's real
     /// effect: swaps [`Self::ai_runtime`]'s live backend in place via
     /// [`hyperion_ai_runtime::LocalAiRuntime::set_backend`] -- no restart, no new session, every
@@ -349,6 +565,12 @@ impl ConsoleSession {
                 Ok(backend) => backend,
                 Err(e) => return format!("I couldn't switch: {e}."),
             },
+            BackendKind::Cloud { provider, model } => {
+                match self.try_connect_cloud(*provider, model) {
+                    Ok(backend) => backend,
+                    Err(e) => return format!("I couldn't switch: {e}."),
+                }
+            }
         };
         self.ai_runtime.set_backend(backend);
         let label = kind.label();
@@ -371,6 +593,27 @@ impl ConsoleSession {
 
         if lower == "/help" {
             return Some(Self::help_text());
+        }
+
+        if lower.starts_with("connect") {
+            for provider in [
+                CloudProvider::OpenAi,
+                CloudProvider::Anthropic,
+                CloudProvider::Gemini,
+            ] {
+                if lower.contains(provider.label()) {
+                    self.pending_connect = Some(provider);
+                    return Some(vec![format!(
+                        "Paste your {} API key (it won't be echoed or logged):",
+                        provider.label()
+                    )]);
+                }
+            }
+            return Some(vec![
+                "Connect which provider? Try \"connect my openai account\", \"connect my \
+                 anthropic account\", or \"connect my gemini account\"."
+                    .to_string(),
+            ]);
         }
 
         let arg = if lower.starts_with("/backend") {
@@ -411,10 +654,31 @@ impl ConsoleSession {
                     Err(e) => return Some(vec![e]),
                 }
             }
+            "openai" | "anthropic" | "gemini" => {
+                let provider = match kind_name.as_str() {
+                    "openai" => CloudProvider::OpenAi,
+                    "anthropic" => CloudProvider::Anthropic,
+                    _ => CloudProvider::Gemini,
+                };
+                match rest.as_slice() {
+                    [model] => BackendKind::Cloud {
+                        provider,
+                        model: model.to_string(),
+                    },
+                    _ => {
+                        return Some(vec![format!(
+                            "\"{}\" needs a model name: /backend {} <model>",
+                            provider.label(),
+                            provider.label()
+                        )])
+                    }
+                }
+            }
             other => {
                 return Some(vec![format!(
                     "I don't know a \"{other}\" backend -- try \"candle\", \"mock\", \
-                     \"ollama\", \"vllm\", \"litellm\", or \"custom\"."
+                     \"ollama\", \"vllm\", \"litellm\", \"custom\", \"openai\", \"anthropic\", \
+                     or \"gemini\"."
                 )])
             }
         };
@@ -473,9 +737,15 @@ impl ConsoleSession {
             "  /backend custom <base_url> <model>         switch to any other \
              OpenAI-compatible server"
                 .to_string(),
+            "  /backend <openai|anthropic|gemini> <model>  switch to a real cloud provider \
+             (needs a connected account)"
+                .to_string(),
             "  /backend                                    show which backend is active right \
              now"
             .to_string(),
+            "  connect my <provider> account                store a real API key for openai, \
+             anthropic, or gemini"
+                .to_string(),
             "  /help                                        show this message".to_string(),
         ]
     }
@@ -530,6 +800,12 @@ impl ConsoleSession {
     /// expose technical errors directly" -- this is the boundary where that applies), not a
     /// panic or a propagated error a caller must handle.
     pub fn handle_utterance(&mut self, utterance: &str) -> Vec<String> {
+        if let Some(provider) = self.pending_connect.take() {
+            return self.finish_connect(provider, utterance);
+        }
+        if let Some(pending) = self.pending_consent.take() {
+            return self.finish_consent(pending, utterance);
+        }
         if let Some(reply) = self.handle_meta_command(utterance) {
             return reply;
         }
@@ -575,6 +851,89 @@ impl ConsoleSession {
         self.render_workspace(root, &turn_tag, &predicate, &outcomes)
     }
 
+    /// `true` while a "connect my `<provider>`" flow is awaiting its follow-up API-key line --
+    /// `main.rs` checks this before every real `read_line` so that one line (and only that one)
+    /// isn't echoed to the terminal or left in scrollback.
+    pub fn awaiting_secret_input(&self) -> bool {
+        self.pending_connect.is_some()
+    }
+
+    /// The real second half of "connect my `<provider>` account": `api_key_line` is the raw next
+    /// line the user typed (with no-echo already handled by the caller, per
+    /// [`Self::awaiting_secret_input`]) -- stores it for real in [`Self::secret_store`] and
+    /// immediately grants this *one running session* the right to use it (via
+    /// [`hyperion_agent_runtime::AgentRuntime::grant_capability`]), so typing the key doesn't
+    /// also demand an immediate, redundant `PendingConsent` round trip right after connecting.
+    /// This grant does NOT persist to the next boot -- see [`Self::secret_store`]'s own doc
+    /// comment on why a fresh restart still re-asks once, for real, on first real use.
+    fn finish_connect(&mut self, provider: CloudProvider, api_key_line: &str) -> Vec<String> {
+        let api_key = api_key_line.trim();
+        if api_key.is_empty() {
+            return vec![format!(
+                "No key entered -- not connecting your {} account.",
+                provider.label()
+            )];
+        }
+        if let Err(e) = self.secret_store.set(provider.label(), api_key) {
+            return vec![format!("I couldn't save that key: {e}")];
+        }
+        let _ = self.agent_runtime.grant_capability(
+            &self.monitor,
+            &self.token,
+            self.assistant_instance_id,
+            provider.capability_ref(),
+        );
+        vec![format!(
+            "Connected. I can use {} now when it's the best fit -- try \"/backend {} <model>\".",
+            provider.label(),
+            provider.label()
+        )]
+    }
+
+    /// The real other half of a live `InvokeOutcome::PendingConsent` -- `answer` is the raw next
+    /// utterance the user typed in response to [`Self::run_undecomposed_goal`]'s own consent
+    /// prompt. On a real "yes", resolves the consent for real
+    /// ([`hyperion_agent_runtime::AgentRuntime::resolve_consent`]) and re-invokes the exact same
+    /// prompt that originally triggered it, now `Granted`. Bypasses [`Self::render_workspace`]
+    /// entirely (like every other meta-command reply) -- this confirmation is its own turn, not
+    /// a continuation of the turn that first hit `PendingConsent`.
+    fn finish_consent(&mut self, pending: PendingCloudConsent, answer: &str) -> Vec<String> {
+        let approved = matches!(answer.trim().to_ascii_lowercase().as_str(), "yes" | "y");
+
+        if let Err(e) = self.agent_runtime.resolve_consent(
+            &self.monitor,
+            &self.token,
+            self.assistant_instance_id,
+            approved,
+        ) {
+            return vec![format!("Something went wrong resolving that: {e}")];
+        }
+        if !approved {
+            return vec!["Okay -- I won't use that provider for this.".to_string()];
+        }
+
+        let args = serde_json::json!({ "prompt": pending.prompt });
+        match self.agent_runtime.invoke(
+            &self.monitor,
+            &self.token,
+            self.assistant_instance_id,
+            &pending.capability_ref,
+            args,
+        ) {
+            Ok(InvokeOutcome::Result(value)) => {
+                let text = value.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                vec![format!("done -- {text}")]
+            }
+            Ok(InvokeOutcome::Denied) => vec!["denied".to_string()],
+            Ok(InvokeOutcome::PendingConsent) => {
+                vec!["something went wrong -- still pending consent after approving".to_string()]
+            }
+            Ok(InvokeOutcome::QuotaExceeded) => vec!["over quota right now".to_string()],
+            Ok(InvokeOutcome::Failed(reason)) => vec![format!("failed -- {reason}")],
+            Err(e) => vec![format!("failed -- {e}")],
+        }
+    }
+
     /// The one built-in HTN template ("launch my startup") is the only utterance shape that
     /// decomposes into real dependent sub-tasks today; everything else becomes a single,
     /// undecomposed root Intent with no children -- `hyperion-coordination::create_session`
@@ -611,38 +970,42 @@ impl ConsoleSession {
             return self.run_web_research(root, url);
         }
 
-        let manifest = hyperion_coordination::default_manifests()
-            .into_iter()
-            .find(|m| m.specialization == "assistant")
-            .expect("default_manifests always includes the assistant specialization");
-
-        let detail =
-            match self
-                .agent_runtime
-                .spawn(&self.monitor, &self.token, manifest, Some(root.0))
-            {
-                Ok(instance_id) => {
-                    let args = serde_json::json!({ "prompt": utterance });
-                    match self.agent_runtime.invoke(
-                        &self.monitor,
-                        &self.token,
-                        instance_id,
-                        "assistant.respond",
-                        args,
-                    ) {
-                        Ok(InvokeOutcome::Result(value)) => {
-                            let text = value.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                            format!("done -- {text}")
-                        }
-                        Ok(InvokeOutcome::Denied) => "denied".to_string(),
-                        Ok(InvokeOutcome::PendingConsent) => "needs your consent first".to_string(),
-                        Ok(InvokeOutcome::QuotaExceeded) => "over quota right now".to_string(),
-                        Ok(InvokeOutcome::Failed(reason)) => format!("failed -- {reason}"),
-                        Err(e) => format!("failed -- {e}"),
-                    }
-                }
-                Err(e) => format!("failed -- couldn't start an Agent: {e}"),
-            };
+        // PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": which real Capability this
+        // dispatches under depends on the currently-active backend -- the baseline
+        // `"assistant.respond"` for local/mock/self-hosted-engine use (never gated), or a real
+        // cloud provider's own requestable `"cloud.<provider>"` string, gated behind a real
+        // consent prompt below. Reuses `self.assistant_instance_id` (spawned once in
+        // `Self::open`) rather than spawning fresh -- required for any grant, cloud consent
+        // included, to ever survive past this one turn.
+        let capability_ref = self.current_backend.capability_ref();
+        let args = serde_json::json!({ "prompt": utterance });
+        let detail = match self.agent_runtime.invoke(
+            &self.monitor,
+            &self.token,
+            self.assistant_instance_id,
+            capability_ref,
+            args,
+        ) {
+            Ok(InvokeOutcome::Result(value)) => {
+                let text = value.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                format!("done -- {text}")
+            }
+            Ok(InvokeOutcome::Denied) => "denied".to_string(),
+            Ok(InvokeOutcome::PendingConsent) => {
+                let provider_label = self.current_backend.label();
+                self.pending_consent = Some(PendingCloudConsent {
+                    capability_ref: capability_ref.to_string(),
+                    prompt: utterance.to_string(),
+                });
+                format!(
+                    "This would send your message to a real, paid, external {provider_label} \
+                     API -- proceed? (yes/no)"
+                )
+            }
+            Ok(InvokeOutcome::QuotaExceeded) => "over quota right now".to_string(),
+            Ok(InvokeOutcome::Failed(reason)) => format!("failed -- {reason}"),
+            Err(e) => format!("failed -- {e}"),
+        };
 
         (
             "generic_goal".to_string(),

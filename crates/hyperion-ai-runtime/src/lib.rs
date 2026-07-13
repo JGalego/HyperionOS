@@ -28,6 +28,14 @@
 //! Ollama/vLLM/self-hosted-LiteLLM server exposes -- one implementation, parameterized by
 //! `base_url`/`model`, standing in for in-process Candle when a real local engine is preferred.
 //!
+//! "Phase 2: cloud providers" adds real OpenAI (a preset atop the same `OpenAiCompatBackend`,
+//! since OpenAI's own API already speaks that same shape) plus two genuinely new backends behind
+//! their own Cargo features, [`anthropic_backend::AnthropicBackend`] and
+//! [`gemini_backend::GeminiBackend`], for the two providers whose real wire protocols aren't
+//! OpenAI-shaped. Gated behind a real, console-level user consent -- see
+//! `hyperion-console::ConsoleSession`'s own docs on the capability-gated dispatch that enforces
+//! it -- since these send real data to a real, paid, external service.
+//!
 //! Deliberately deferred, and why:
 //!
 //! - **Real model execution** is no longer fully deferred -- see the M8 note above -- but
@@ -53,8 +61,12 @@
 //!   envelope-integrity checksum is a separate, not-yet-touched stand-in of the same shape —
 //!   named, not silently implied fixed by this crate's own upgrade.
 
+#[cfg(feature = "anthropic")]
+pub mod anthropic_backend;
 #[cfg(feature = "candle")]
 pub mod candle_backend;
+#[cfg(feature = "gemini")]
+pub mod gemini_backend;
 #[cfg(feature = "openai-compat")]
 pub mod openai_compat_backend;
 mod registry;
@@ -62,8 +74,12 @@ mod residency;
 mod runtime;
 mod types;
 
+#[cfg(feature = "anthropic")]
+pub use anthropic_backend::{AnthropicBackend, AnthropicError};
 #[cfg(feature = "candle")]
 pub use candle_backend::{CandleBackend, CandleBackendError};
+#[cfg(feature = "gemini")]
+pub use gemini_backend::{GeminiBackend, GeminiError};
 #[cfg(feature = "openai-compat")]
 pub use openai_compat_backend::{OpenAiCompatBackend, OpenAiCompatError};
 pub use registry::{sign, verify, MockBackend};
