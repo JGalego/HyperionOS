@@ -70,9 +70,15 @@ fn picks_the_lowest_latency_feasible_candidate() {
             1_000,
         )
         .unwrap();
+    // `document.draft` dispatches through a real `LocalAiRuntime::infer` call now (a real,
+    // previously-shipped bug: it used to be a canned stub string, discarded by every real caller
+    // anyway -- see `hyperion-agent-runtime`'s own doc comment). `MockBackend` deterministically
+    // echoes the whole prompt `AgentRuntime::dispatch_document_draft` built from this call's own
+    // `"topic"` arg, so this remains an exact, deterministic assertion, just against real content
+    // instead of a hand-written placeholder.
     assert_eq!(
         result["draft"],
-        serde_json::json!("Stub draft document about 'quarterly report'.")
+        serde_json::json!("[mock model 1] echo: Draft a concise, practical quarterly report.")
     );
     // Device 2 has the lower latency and should have been the one invoked;
     // there is no direct observable other than the successful result here,

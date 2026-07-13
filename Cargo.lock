@@ -1716,10 +1716,12 @@ version = "0.1.0"
 dependencies = [
  "hyperion-ai-runtime",
  "hyperion-capability",
+ "hyperion-crypto",
  "hyperion-netstack",
  "hyperion-scheduler",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -1843,6 +1845,7 @@ dependencies = [
  "hyperion-ai-runtime",
  "hyperion-capability",
  "hyperion-context",
+ "hyperion-crypto",
  "hyperion-explainability",
  "hyperion-intent",
  "hyperion-ipc",
@@ -1902,10 +1905,12 @@ dependencies = [
  "hyperion-agent-runtime",
  "hyperion-ai-runtime",
  "hyperion-capability",
+ "hyperion-crypto",
  "hyperion-explainability",
  "hyperion-observability",
  "hyperion-scheduler",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 

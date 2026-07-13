@@ -13,3 +13,10 @@ hyperion-scheduler = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# For tests/lifecycle.rs's own real, signed ModelDescriptor -- needed now that
+# document.draft/web.search dispatch through a real LocalAiRuntime::infer call (which requires a
+# real registered, signature-verified model), not stubs::dispatch's harmless canned string.
+hyperion-crypto = { workspace = true }
+tempfile = { workspace = true }

@@ -8,9 +8,13 @@
 use std::sync::Arc;
 
 use hyperion_agent_runtime::AgentRuntime;
+use hyperion_ai_runtime::{
+    sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
+};
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_context::ContextEngine;
 use hyperion_coordination::{ConflictResolution, CoordinationSession, TaskStatus};
+use hyperion_crypto::Keystore;
 use hyperion_intent::{HandleOutcome, IntentEngine};
 use hyperion_knowledge_graph::KnowledgeGraph;
 
@@ -26,10 +30,30 @@ fn setup() -> (
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent_engine = IntentEngine::new(graph, context);
-    let coordination = CoordinationSession::new(Arc::new(AgentRuntime::new(Arc::new(
-        hyperion_ai_runtime::LocalAiRuntime::new(Box::new(hyperion_ai_runtime::MockBackend), 8_000),
-    ))));
+    let intent_engine = IntentEngine::new(graph.clone(), context);
+    let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+
+    // A real, signed ModelDescriptor -- needed now that `document.draft`/`web.search` (this
+    // trace's own `market_research`/`business_model`/`branding`/`legal_formation` tasks) really
+    // call `LocalAiRuntime::infer`, which fails closed with no model registered.
+    let key_dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&key_dir.path().join("device.key")).unwrap();
+    let mut descriptor = ModelDescriptor {
+        model_id: 1,
+        class: ModelClass::Slm,
+        variants: vec![QuantizedVariant {
+            precision: Precision::Fp16,
+            footprint_mb: 100,
+            expected_tokens_per_sec: 10.0,
+        }],
+        signature: None,
+    };
+    descriptor.signature = Some(sign(&descriptor, &keystore));
+    ai_runtime
+        .register_model(descriptor, &keystore.verifying_key())
+        .expect("a descriptor this test just signed always verifies");
+
+    let coordination = CoordinationSession::new(Arc::new(AgentRuntime::new(ai_runtime)), graph);
     (dir, monitor, token, intent_engine, coordination)
 }
 
@@ -133,6 +157,58 @@ fn launch_trace_completes_all_tasks_across_ticks_respecting_dependencies() {
         plan.participants.len(),
         2,
         "one research + one writer instance, reused across tasks"
+    );
+}
+
+/// Regression coverage for a real, previously-shipped bug: `allocate` used to match
+/// `InvokeOutcome::Result(_)`, discarding a real capability's own real output the instant it came
+/// back — a completed task's own `TaskNode.result` stayed permanently `None`, so nothing
+/// downstream (this crate's own callers included) could ever see what a task actually produced,
+/// only that it succeeded. `MockBackend` deterministically echoes the whole prompt
+/// `dispatch_document_draft`/`dispatch_market_research` build from this session's own `"goal"`
+/// (the real utterance) and `"task"` (the predicate) args, so asserting on that echoed text
+/// proves genuine, task-specific content survived all the way to `get_plan`, not just that some
+/// value is present.
+#[test]
+fn a_completed_task_carries_its_own_real_capability_result_not_just_a_status() {
+    let (_dir, monitor, token, intent_engine, coordination) = setup();
+    let root = match intent_engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+    let session = coordination
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
+        .unwrap();
+
+    coordination.allocate(&monitor, &token, session).unwrap(); // market_research
+    let plan = coordination.get_plan(&monitor, &token, session).unwrap();
+    let market_research = task_named(&plan, "market_research");
+    assert_eq!(market_research.status, TaskStatus::Done);
+
+    let result = market_research
+        .result
+        .as_ref()
+        .expect("a Done task must carry the real value its capability dispatch returned");
+    let results = result["results"]
+        .as_array()
+        .expect("web.search's own real result shape");
+    let text = results[0].as_str().unwrap();
+    assert!(
+        text.contains("I need to launch my startup"),
+        "expected the real root utterance (this session's own 'goal' arg) to appear in the \
+         real, prompt-driven generation, got: {text:?}"
+    );
+    assert_eq!(
+        result["note"], "AI-generated research notes, not a live web search",
+        "the honesty caveat must survive all the way to a queryable TaskNode too"
     );
 }
 

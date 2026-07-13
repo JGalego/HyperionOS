@@ -72,6 +72,23 @@
 //! round trip once, so that real, tested path stays actually reachable through a real console
 //! session, not just provable in this crate's own isolated tests.
 //!
+//! **"Do we actually have everything we need to launch a startup already in place?"** No --
+//! traced end to end, `document.draft`/`web.search` (the two capabilities
+//! `hyperion-coordination`'s own built-in HTN template needs for `business_model`/`branding`/
+//! `legal_formation`/`market_research`) dispatched to [`stubs::dispatch`]'s two hand-written
+//! canned strings, and even that placeholder text was thrown away by every real caller
+//! (`hyperion-coordination::allocate` discarded `InvokeOutcome::Result`'s own value outright) --
+//! so a real "launch my startup" run produced zero real content anywhere. Fixed the same way
+//! `assistant.respond`/`web.research` were made real: [`runtime::AgentRuntime::
+//! dispatch_document_draft`]/[`runtime::AgentRuntime::dispatch_market_research`] now dispatch
+//! through the exact same real `LocalAiRuntime` call [`runtime::AgentRuntime::
+//! dispatch_assistant_respond`] already established, with a capability-appropriate prompt built
+//! from whatever real context the caller sent. `web.search`'s own result is honestly labeled (a
+//! `"note"` field) as AI-generated reasoning, not a live web search -- this workspace still has
+//! no real search-provider integration, and faking one here would trade one dishonest gap for
+//! another. `stubs::dispatch` itself is untouched -- `hyperion-federation`/`hyperion-api-gateway`
+//! both call it directly as a deterministic test fixture, unrelated to this fix.
+//!
 //! Deliberately deferred, and why:
 //!
 //! - **Real sandboxed processes.** There is no `sandbox_class`/container/
@@ -80,15 +97,15 @@
 //!   the same hosted-simulator translation every other crate in this
 //!   workspace already uses for a Trust Boundary.
 //! - **Real Capability dispatch / Plugin Framework** ([24 — Plugin
-//!   Framework](../24-plugin-framework.md), Phase 9) — `invoke()` dispatches
-//!   `web.search`/`document.draft` to [`stubs::dispatch`]'s two hand-written
-//!   stand-ins, not a real registry (`assistant.respond` is the one exception — see the M8
-//!   note above — and even it is a single fixed Capability this crate special-cases, not a
-//!   registry entry). A capability call can be made to *fail* deterministically
-//!   (pass `{"force_fail": true}` in `args`) specifically so the circuit
-//!   breaker and `hyperion-coordination`'s failure-containment logic (next
-//!   in this phase) have something real to react to without needing a real
-//!   Capability that can actually fail on its own.
+//!   Framework](../24-plugin-framework.md), Phase 9) — `invoke()` now dispatches
+//!   `assistant.respond`/`web.research`/`document.draft`/`web.search` (plus the three cloud
+//!   capabilities) through a real backend apiece; every *other*, undeclared capability still
+//!   falls through to [`stubs::dispatch`]'s catch-all echo, not a real registry lookup. A
+//!   capability call can be made to *fail* deterministically (pass `{"force_fail": true}` in
+//!   `args`) specifically so the circuit breaker and `hyperion-coordination`'s
+//!   failure-containment logic have something real to react to without needing a real Capability
+//!   that can actually fail on its own — both new real dispatch functions honor this the same way
+//!   [`stubs::dispatch`] always has.
 //! - **Proving the Scheduler gate can actually deny.** `invoke()` already
 //!   holds a single global lock across its own entire body, and releases
 //!   its Scheduler reservation the instant its (synchronous) dispatch

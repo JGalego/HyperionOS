@@ -39,6 +39,11 @@ const WEB_RESEARCH_CAPABILITY: &str = "web.research";
 const CLOUD_OPENAI_CAPABILITY: &str = "cloud.openai";
 const CLOUD_ANTHROPIC_CAPABILITY: &str = "cloud.anthropic";
 const CLOUD_GEMINI_CAPABILITY: &str = "cloud.gemini";
+/// Real now, alongside `assistant.respond`/`web.research` above -- see
+/// [`AgentRuntime::dispatch_document_draft`]'s own doc comment for what changed and why.
+const DOCUMENT_DRAFT_CAPABILITY: &str = "document.draft";
+/// See [`AgentRuntime::dispatch_market_research`]'s own doc comment.
+const WEB_SEARCH_CAPABILITY: &str = "web.search";
 
 fn now() -> u64 {
     SystemTime::now()
@@ -291,6 +296,10 @@ impl AgentRuntime {
             self.dispatch_assistant_respond(monitor, token, &args)
         } else if capability_ref == WEB_RESEARCH_CAPABILITY && self.netstack.is_some() {
             self.dispatch_web_research(monitor, token, instance_id, &args)
+        } else if capability_ref == DOCUMENT_DRAFT_CAPABILITY {
+            self.dispatch_document_draft(monitor, token, &args)
+        } else if capability_ref == WEB_SEARCH_CAPABILITY {
+            self.dispatch_market_research(monitor, token, &args)
         } else {
             stubs::dispatch(capability_ref, &args)
         };
@@ -345,21 +354,127 @@ impl AgentRuntime {
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
+        self.run_inference(monitor, token, prompt, "text")
+    }
+
+    /// The real shape every inference-backed dispatch function in this crate shares: a bounded
+    /// latency budget generous enough for a real tiny CPU-only model
+    /// (`hyperion_ai_runtime::LocalAiRuntime::estimate`'s own feasibility check assumes a
+    /// ~100-token response -- `hyperion-console`'s own registered `expected_tokens_per_sec: 10.0`
+    /// needs this budget comfortably above the resulting ~10s estimate, or every real call would
+    /// be rejected as infeasible before ever reaching the backend), and the real, currently-active
+    /// `InferenceBackend` (`ai_runtime`) rather than a hand-written stand-in. `result_key` is the
+    /// JSON key the real generated text is returned under, so each capability keeps its own
+    /// caller-facing shape (`assistant.respond`'s `"text"`, `document.draft`'s `"draft"`, ...)
+    /// without duplicating this call three times over.
+    fn run_inference(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        prompt: String,
+        result_key: &str,
+    ) -> Result<serde_json::Value, String> {
         let contract = CapabilityContract {
-            // `hyperion_ai_runtime::LocalAiRuntime::estimate`'s own feasibility check assumes a
-            // ~100-token response (see its `meets_latency_budget`); a real tiny CPU-only model
-            // (`hyperion-console`'s own registered `expected_tokens_per_sec: 10.0` -- see
-            // `ConsoleSession::build_ai_runtime`) needs this budget comfortably above the
-            // resulting ~10s estimate, or every real call would be rejected as infeasible before
-            // ever reaching the backend.
             latency_budget_ms: 15_000,
             always_on: false,
         };
         let request = InferenceRequest { prompt };
         self.ai_runtime
             .infer(monitor, token, ModelClass::Slm, &contract, &request)
-            .map(|result| serde_json::json!({ "text": result.text }))
+            .map(|result| serde_json::json!({ result_key: result.text }))
             .map_err(|e| e.to_string())
+    }
+
+    /// A real bug this crate's own doc comment now records: `document.draft` used to be one of
+    /// [`stubs::dispatch`]'s two hand-written stand-ins (a fixed `"Stub draft document about
+    /// '{topic}'."` string) -- and even that canned text was thrown away by every real caller
+    /// (`hyperion-coordination::allocate` discarded `InvokeOutcome::Result`'s own value outright).
+    /// Real now, via the exact same "run it through whichever `InferenceBackend` is currently
+    /// active" shape [`Self::dispatch_assistant_respond`] already established -- the real backend
+    /// was always one function call away, just never wired up for this capability.
+    ///
+    /// [`stubs::dispatch`] itself is deliberately untouched: `hyperion-federation` and
+    /// `hyperion-api-gateway` both call it *directly*, bypassing this crate's own `invoke`
+    /// entirely, as a deterministic fixture for their own, unrelated tests (placement scoring,
+    /// router fallback) -- changing its behavior out from under them would be a real regression
+    /// for no benefit. This dispatches through a parallel, real path instead, reached only via
+    /// [`Self::invoke`]'s own dispatch match below.
+    fn dispatch_document_draft(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        Self::check_force_fail(DOCUMENT_DRAFT_CAPABILITY, args)?;
+        let subject = Self::extract_subject(args);
+        let prompt = format!("Draft a concise, practical {subject}.");
+        self.run_inference(monitor, token, prompt, "draft")
+    }
+
+    /// See [`Self::dispatch_document_draft`]'s own doc comment -- same fix, same reasoning, for
+    /// `web.search`. Deliberately honest about what this still is *not*: a real generated summary
+    /// from whichever `InferenceBackend` is active, not a live query against a real search engine
+    /// -- this workspace has no search-provider integration at all (a real, separate, future
+    /// feature akin to PRODUCTION_BOOT_PROMPT.md's cloud-provider phase, not something to fake
+    /// here). The returned `"note"` field carries that caveat through to anything that renders
+    /// this result, so nothing downstream can mistake it for a verified web search.
+    fn dispatch_market_research(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        Self::check_force_fail(WEB_SEARCH_CAPABILITY, args)?;
+        let subject = Self::extract_subject(args);
+        let prompt = format!(
+            "Provide a concise research summary about {subject}. Be clear that this is your \
+             own reasoning, not verified live information."
+        );
+        let result = self.run_inference(monitor, token, prompt, "text")?;
+        let text = result
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        Ok(serde_json::json!({
+            "results": [text],
+            "note": "AI-generated research notes, not a live web search",
+        }))
+    }
+
+    /// `args = {"force_fail": true}` deterministically fails any capability -- see
+    /// [`stubs::dispatch`]'s own doc comment for why that test seam exists
+    /// (`hyperion-coordination`'s own retry/escalation tests inject it via
+    /// [`crate::AgentRuntime`]'s real dispatch, not only through the stub). Both new real
+    /// dispatch functions above need to honor it too, or those tests would silently start
+    /// exercising a real inference call instead of the deliberate failure they ask for.
+    fn check_force_fail(capability_ref: &str, args: &serde_json::Value) -> Result<(), String> {
+        if args
+            .get("force_fail")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            return Err(format!(
+                "capability '{capability_ref}' was forced to fail for testing"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whatever subject text is present in `args`, under any of these real key names -- a caller
+    /// built for the old stub (`"query"`/`"topic"`) and `hyperion-coordination`'s own richer args
+    /// (`"task"`/`"goal"`) both produce a real, meaningful prompt without either caller needing to
+    /// change what it sends.
+    fn extract_subject(args: &serde_json::Value) -> String {
+        let parts: Vec<&str> = ["query", "topic", "task", "goal"]
+            .iter()
+            .filter_map(|key| args.get(*key).and_then(|v| v.as_str()))
+            .filter(|s| !s.is_empty())
+            .collect();
+        if parts.is_empty() {
+            "the requested topic".to_string()
+        } else {
+            parts.join(" -- ")
+        }
     }
 
     /// PRODUCTION_BOOT_PROMPT.md M10's real Capability: dispatches to a real, caller-supplied

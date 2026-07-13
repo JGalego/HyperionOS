@@ -7,8 +7,11 @@ use std::sync::Arc;
 use hyperion_agent_runtime::{
     AgentManifest, AgentRuntime, InvokeOutcome, LifecycleState, TrustTier,
 };
-use hyperion_ai_runtime::{LocalAiRuntime, MockBackend};
+use hyperion_ai_runtime::{
+    sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
+};
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use serde_json::json;
 
 fn manifest() -> AgentManifest {
@@ -28,6 +31,28 @@ fn setup() -> (
     let mut monitor = CapabilityMonitor::new();
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+
+    // A real, signed ModelDescriptor -- needed now that `document.draft`/`web.search` really
+    // call `LocalAiRuntime::infer` (see `AgentRuntime::dispatch_document_draft`/
+    // `dispatch_market_research`), which fails closed with no model registered for the
+    // requested `ModelClass`, exactly like `assistant.respond` always required.
+    let dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    let mut descriptor = ModelDescriptor {
+        model_id: 1,
+        class: ModelClass::Slm,
+        variants: vec![QuantizedVariant {
+            precision: Precision::Fp16,
+            footprint_mb: 100,
+            expected_tokens_per_sec: 10.0,
+        }],
+        signature: None,
+    };
+    descriptor.signature = Some(sign(&descriptor, &keystore));
+    ai_runtime
+        .register_model(descriptor, &keystore.verifying_key())
+        .expect("a descriptor this test just signed always verifies");
+
     (monitor, token, AgentRuntime::new(ai_runtime))
 }
 
@@ -310,4 +335,103 @@ fn terminate_is_terminal_and_blocks_further_invocation() {
     assert!(runtime
         .invoke(&monitor, &token, id, "web.search", json!({}))
         .is_err());
+}
+
+/// Regression coverage for a real, previously-shipped bug: `document.draft`/`web.search` used to
+/// dispatch to `stubs::dispatch`'s two hand-written canned strings (`"Stub draft document about
+/// '...'."`/`"stub finding for query '...'"`) -- real now, via the same `LocalAiRuntime` call
+/// `assistant.respond` already used. These prove the *real* dispatch is genuinely reached, not
+/// just that some string comes back: `MockBackend::generate` echoes its whole prompt verbatim
+/// (`"[mock model N] echo: <prompt>"`), so the topic/subject text must show up inside a real,
+/// distinctly-shaped sentence -- something a canned stub could never produce.
+mod real_content_generation {
+    use super::*;
+
+    #[test]
+    fn document_draft_generates_real_content_via_the_real_inference_backend() {
+        let (monitor, token, runtime) = setup();
+        let id = runtime.spawn(&monitor, &token, manifest(), None).unwrap();
+        runtime
+            .grant_capability(&monitor, &token, id, "document.draft")
+            .unwrap();
+
+        let outcome = runtime
+            .invoke(
+                &monitor,
+                &token,
+                id,
+                "document.draft",
+                json!({"topic": "quarterly business model"}),
+            )
+            .unwrap();
+        let InvokeOutcome::Result(value) = outcome else {
+            panic!("expected Result, got {outcome:?}");
+        };
+        let draft = value["draft"].as_str().expect("a real \"draft\" string");
+        assert!(
+            draft.contains("Draft a concise, practical")
+                && draft.contains("quarterly business model"),
+            "expected real, prompt-driven generation (MockBackend echoes its own prompt), not a \
+             canned stub string, got: {draft:?}"
+        );
+        assert_ne!(
+            draft, "Stub draft document about 'quarterly business model'.",
+            "must not still be the old hand-written stub text"
+        );
+    }
+
+    #[test]
+    fn web_search_generates_real_content_and_is_honest_about_not_being_a_live_search() {
+        let (monitor, token, runtime) = setup();
+        let id = runtime.spawn(&monitor, &token, manifest(), None).unwrap();
+
+        let outcome = runtime
+            .invoke(
+                &monitor,
+                &token,
+                id,
+                "web.search",
+                json!({"query": "total addressable market for pet robots"}),
+            )
+            .unwrap();
+        let InvokeOutcome::Result(value) = outcome else {
+            panic!("expected Result, got {outcome:?}");
+        };
+        let result_text = value["results"][0]
+            .as_str()
+            .expect("a real \"results\" entry");
+        assert!(
+            result_text.contains("total addressable market for pet robots"),
+            "expected real, prompt-driven generation, got: {result_text:?}"
+        );
+        assert_eq!(
+            value["note"], "AI-generated research notes, not a live web search",
+            "this workspace has no real search-provider integration -- the result must say so \
+             plainly rather than let a caller mistake it for a verified live search"
+        );
+    }
+
+    #[test]
+    fn document_draft_still_honors_force_fail_for_the_circuit_breaker_test_seam() {
+        let (monitor, token, runtime) = setup();
+        let id = runtime.spawn(&monitor, &token, manifest(), None).unwrap();
+        runtime
+            .grant_capability(&monitor, &token, id, "document.draft")
+            .unwrap();
+
+        let outcome = runtime
+            .invoke(
+                &monitor,
+                &token,
+                id,
+                "document.draft",
+                json!({"force_fail": true}),
+            )
+            .unwrap();
+        assert!(
+            matches!(outcome, InvokeOutcome::Failed(_)),
+            "the real dispatch must still honor force_fail, or hyperion-coordination's own \
+             retry/escalation tests (which inject exactly this) would silently break"
+        );
+    }
 }

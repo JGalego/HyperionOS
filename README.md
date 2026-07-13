@@ -80,6 +80,16 @@ When a goal needs more than one specialist, this layer decides who does what, an
 Conversation, generated screens, and voice: the only parts of Hyperion you directly touch. The Dynamic UI Runtime assembles a Workspace on demand for whatever you're doing, then tears it down when you're done. Accessibility is built into that runtime.
 </details>
 
+#### Example: `"I need to launch my startup."`
+
+- <code>L6</code> The console captures it.
+- <code>L4</code> The Intent Engine splits it into sub-goals — market research, a business model, branding, legal formation.
+- <code>L5</code> Coordination assigns each sub-goal to a specialized agent.
+- <code>L4</code> Each agent gets its answer by invoking a capability, routed to whichever model fits.
+- <code>L3</code> Everything learned along the way is written into the knowledge graph, connected to everything else you know.
+- <code>L2</code>/<code>L1</code>/<code>L0</code> Every one of those steps was checked against a capability grant first, and scheduled safely underneath.
+- <code>L6</code> The results land back as one workspace — not four separate app windows.
+
 ## Getting started
 
 Every tagged release publishes ready-to-flash disk images for both reference platforms on the [Releases](https://github.com/JGalego/HyperionOS/releases) page:

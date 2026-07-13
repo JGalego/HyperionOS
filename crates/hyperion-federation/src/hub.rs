@@ -3,8 +3,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use hyperion_agent_runtime::{AgentManifest, AgentRuntime, InvokeOutcome};
-use hyperion_ai_runtime::{LocalAiRuntime, MockBackend};
+use hyperion_ai_runtime::{
+    sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
+};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_crypto::Keystore;
 use hyperion_explainability::{
     ControlState, ExplanationId, ExplanationRecord, ExplanationStore, ReasoningStep,
 };
@@ -139,10 +142,15 @@ impl FederationHub {
     /// docs/21 §Algorithms' "Federation join and trust": an ordinary
     /// capability grant, one distinct Trust Boundary — a real, separate
     /// `AgentRuntime` instance — per device, each with its own
-    /// `MockBackend`-fronted `LocalAiRuntime` (no capability this crate
-    /// dispatches ever calls `assistant.respond` today, so a real,
-    /// per-device backend choice is a real caller's decision to make when
-    /// one first does — see `hyperion-agent-runtime`'s own doc comment).
+    /// `MockBackend`-fronted `LocalAiRuntime`. A real, previously-dormant gap this crate's own
+    /// doc comment used to note ("no capability this crate dispatches ever calls
+    /// `assistant.respond` today") is no longer dormant: `hyperion-agent-runtime`'s own fix for
+    /// the "launch my startup produces zero real content" gap made `web.search` (this crate's own
+    /// baseline capability for every joined device) dispatch through a real `LocalAiRuntime::
+    /// infer` call too, which -- like `assistant.respond` always has -- fails closed with no
+    /// model registered. [`Self::register_simulated_model`] closes it the same way
+    /// `hyperion-console`'s own `build_ai_runtime` always has: a small, real, signed
+    /// `ModelDescriptor` registered before this device's runtime is ever handed out.
     pub fn join_device(
         &self,
         monitor: &CapabilityMonitor,
@@ -152,6 +160,7 @@ impl FederationHub {
     ) -> Result<(), FederationError> {
         self.require(monitor, token, RightsMask::WRITE)?;
         let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+        Self::register_simulated_model(&ai_runtime);
         self.devices
             .lock()
             .unwrap()
@@ -165,6 +174,38 @@ impl FederationHub {
             .unwrap()
             .insert(device_id, Arc::new(TelemetryCollector::new()));
         Ok(())
+    }
+
+    /// Registers one small, real, signed `ModelDescriptor` on a freshly-created device's own
+    /// `LocalAiRuntime` -- see [`Self::join_device`]'s own doc comment for why this exists now.
+    /// The signing key is a genuine, real Ed25519 key (`hyperion_ai_runtime::sign` hard-requires
+    /// one), generated fresh in its own uniquely-named temp directory (`tempfile::tempdir`, not a
+    /// fixed path -- this runs on every `join_device` call, including from parallel tests in the
+    /// same process, so it must never collide with another call's own key file) and dropped the
+    /// moment this function returns: this hub has no real, lasting per-device identity to reuse,
+    /// and doesn't need one just to prove a simulated device's own local inference is genuinely
+    /// callable. Degrades silently (not a panic) if even a throwaway temp file can't be written --
+    /// an extreme, environment-level failure this crate's own callers already have no path to
+    /// react to inside `join_device`'s existing, infallible-past-this-point signature.
+    fn register_simulated_model(ai_runtime: &LocalAiRuntime) {
+        let Ok(dir) = tempfile::tempdir() else {
+            return;
+        };
+        let Ok(keystore) = Keystore::open_or_create(&dir.path().join("device.key")) else {
+            return;
+        };
+        let mut descriptor = ModelDescriptor {
+            model_id: 1,
+            class: ModelClass::Slm,
+            variants: vec![QuantizedVariant {
+                precision: Precision::Fp16,
+                footprint_mb: 100,
+                expected_tokens_per_sec: 10.0,
+            }],
+            signature: None,
+        };
+        descriptor.signature = Some(sign(&descriptor, &keystore));
+        let _ = ai_runtime.register_model(descriptor, &keystore.verifying_key());
     }
 
     /// docs/21 §Security Considerations: "a compromised or stolen device's

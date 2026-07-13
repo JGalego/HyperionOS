@@ -1289,6 +1289,66 @@ and the real hardware boot it enables. This work makes that step a `git tag && g
 plus a browser download away, but still stops short of performing it, per this document's own
 standing pause condition.
 
+**M8 follow-up (2026-07-13): "does 'launch my startup' actually produce anything real?" -- no,
+and now it does.** Asked directly, by the user, after this session's own README addition described
+the flow in plain language ("everything learned gets written into the knowledge graph"). Traced
+end to end rather than assumed: `hyperion-coordination::catalog::required_capabilities_for` maps
+`business_model`/`branding`/`legal_formation` to `document.draft` and `market_research` to
+`web.search`; both dispatched to `hyperion-agent-runtime::stubs::dispatch`'s two hand-written
+canned strings (`"Stub draft document about '{topic}'."` / `"stub finding for query '{query}'"`);
+`hyperion-coordination::engine::allocate`'s own args never even sent the `topic`/`query` keys that
+stub read (`{"task": ..., "force_fail": ...}`); and worse, `allocate`'s own dispatch match was
+`InvokeOutcome::Result(_)` -- the underlined-in-retrospect `_` discarding a capability's real
+output outright, so not even that broken placeholder text ever reached anywhere a person or this
+console's own rendering could see it. A real "launch my startup" run produced four lines that
+each said `Done` and nothing else.
+
+Fixed at the root, not patched at the rendering layer: `hyperion-agent-runtime` gains two new real
+dispatch functions, `dispatch_document_draft`/`dispatch_market_research`, following the exact
+`dispatch_assistant_respond`/`dispatch_web_research` pattern M8/M10 already established -- a real
+`LocalAiRuntime::infer` call, refactored behind one shared `run_inference` helper. `web.search`'s
+own result carries an explicit `"note"` field ("AI-generated research notes, not a live web
+search"): this workspace still has no real search-provider integration (no API key, no consent
+gate, nothing) -- inventing one here would trade one dishonest gap for another; a real search
+provider (à la the OpenAI/Anthropic/Gemini phase) is its own, later, separate feature, named
+rather than faked. `stubs::dispatch` itself is untouched -- `hyperion-federation`/
+`hyperion-api-gateway` both call it *directly*, bypassing `AgentRuntime::invoke` entirely, as a
+deterministic fixture for their own, unrelated tests.
+
+`hyperion-coordination::engine::allocate` no longer discards the result: `TaskNode` gains a real
+`result: Option<serde_json::Value>` field, and a completed task's real output is also written into
+the Knowledge Graph as a new `"task_result"` node, linked back to the task's own Intent node via a
+real `"produced"` edge -- so `hyperion-console`'s own `/recall`/`/why`/`/related` (this session's
+immediately-preceding work) can actually surface it, not just the task's bare predicate name.
+`SharedPlan` gains `root_utterance` (captured once at `create_session`, from the root Intent's own
+`raw_utterance`), so each task's real capability dispatch gets genuine context -- what the user
+actually asked for -- via a new `"goal"` arg, not just its own predicate name. The console's own
+rendering (`ConsoleSession::render_task_detail`) now shows `"Done -- <real generated text>"`
+instead of a bare status word.
+
+Fixing the actual gap surfaced a second, real, previously-dormant one: `hyperion-federation`'s
+`FederationHub::join_device` constructs each simulated device's own `LocalAiRuntime` with no
+model ever registered (harmless while `web.search`/`document.draft` were canned stubs; a real,
+previously-unexercised requirement the instant they dispatch through real inference, exactly like
+`assistant.respond` always has). Fixed the same way `hyperion-console`'s own `build_ai_runtime`
+does: a small, real, signed `ModelDescriptor`, registered via a throwaway `tempfile::tempdir`-backed
+`Keystore` generated fresh per `join_device` call (this hub has no real, lasting per-device
+identity to reuse, and doesn't need one just to prove a simulated device's own local inference is
+genuinely callable) -- `tempfile`, not a fixed path, specifically so concurrent calls (parallel
+tests in the same process) can never collide over the same key file. One pre-existing test
+(`hyperion-federation`'s own `picks_the_lowest_latency_feasible_candidate`) asserted on the old
+canned stub's exact string; updated to assert on the new real, still-fully-deterministic
+`MockBackend`-echoed text instead.
+
+Proven for real, not just claimed: a live run of "I need to launch my startup" now shows real,
+task-specific generated text for all four sub-tasks (not a canned placeholder), `/recall`/
+`/related`/`/why` surface the real `"task_result"` node and its new `"produced"` edge (market_
+research's own connection count rose from 2 to 3, precisely because of this new edge), and the
+full workspace test suite (every crate, default features) passes with zero failures. The one
+thing this does *not* claim: `market_research`'s own output is real, model-generated reasoning,
+honestly labeled as such -- not a verified live web search, which remains explicitly future,
+separate work.
+
 ## 4. Milestones
 
 Each milestone below states what it delivers, what from the existing 31 crates is genuinely

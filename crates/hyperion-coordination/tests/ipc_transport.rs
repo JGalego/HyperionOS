@@ -46,13 +46,16 @@ fn a_propose_write_message_survives_a_real_ipc_hop_and_is_applied_for_real() {
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent_engine = IntentEngine::new(graph, context);
-    let coordination = Arc::new(CoordinationSession::new(Arc::new(AgentRuntime::new(
-        Arc::new(hyperion_ai_runtime::LocalAiRuntime::new(
-            Box::new(hyperion_ai_runtime::MockBackend),
-            8_000,
-        )),
-    ))));
+    let intent_engine = IntentEngine::new(graph.clone(), context);
+    let coordination = Arc::new(CoordinationSession::new(
+        Arc::new(AgentRuntime::new(Arc::new(
+            hyperion_ai_runtime::LocalAiRuntime::new(
+                Box::new(hyperion_ai_runtime::MockBackend),
+                8_000,
+            ),
+        ))),
+        graph,
+    ));
 
     let root = match intent_engine
         .handle_utterance(

@@ -4,8 +4,10 @@ use hyperion_agent_runtime::{AgentManifest, TrustTier};
 /// semantic contract (docs/12 §5.1) — this crate has no Capability
 /// Registry ([24 — Plugin Framework](../24-plugin-framework.md), Phase 9)
 /// to consult, so it maps `hyperion-intent`'s HTN predicate strings
-/// directly onto the two stub Capabilities `hyperion-agent-runtime`
-/// actually implements.
+/// directly onto `web.search`/`document.draft`, the two Capabilities
+/// `hyperion-agent-runtime` dispatches through a real `LocalAiRuntime::infer` call (real
+/// generated content now, not a hand-written canned stub — see that crate's own doc comment on
+/// the "launch my startup produces zero real content" gap this fixed).
 pub fn required_capabilities_for(predicate: &str) -> Vec<String> {
     match predicate {
         "market_research" => vec!["web.search".to_string()],

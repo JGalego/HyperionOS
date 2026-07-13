@@ -24,10 +24,16 @@ fn session_with_root() -> (
         hyperion_knowledge_graph::KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap(),
     );
     let context = Arc::new(hyperion_context::ContextEngine::new(graph.clone()));
-    let intent_engine = hyperion_intent::IntentEngine::new(graph, context);
-    let coordination = CoordinationSession::new(Arc::new(AgentRuntime::new(Arc::new(
-        hyperion_ai_runtime::LocalAiRuntime::new(Box::new(hyperion_ai_runtime::MockBackend), 8_000),
-    ))));
+    let intent_engine = hyperion_intent::IntentEngine::new(graph.clone(), context);
+    let coordination = CoordinationSession::new(
+        Arc::new(AgentRuntime::new(Arc::new(
+            hyperion_ai_runtime::LocalAiRuntime::new(
+                Box::new(hyperion_ai_runtime::MockBackend),
+                8_000,
+            ),
+        ))),
+        graph,
+    );
 
     let root = match intent_engine
         .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")

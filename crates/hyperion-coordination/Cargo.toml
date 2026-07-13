@@ -18,5 +18,8 @@ thiserror = { workspace = true }
 [dev-dependencies]
 hyperion-ai-runtime = { workspace = true }
 hyperion-context = { workspace = true }
+# For tests/worked_trace.rs's own real, signed ModelDescriptor -- needed now that
+# document.draft/web.search dispatch through a real LocalAiRuntime::infer call.
+hyperion-crypto = { workspace = true }
 hyperion-ipc = { workspace = true }
 tempfile = { workspace = true }

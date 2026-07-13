@@ -49,6 +49,38 @@ fn a_decomposable_utterance_produces_real_per_task_agent_outcomes_as_text() {
     );
 }
 
+/// A real, previously-shipped bug this regression-tests: every one of these four tasks used to
+/// render as just its own status word ("Done"), because `hyperion-coordination::allocate`
+/// discarded a real capability's own real output before this console ever saw it -- see that
+/// crate's own doc comment on the "launch my startup produces zero real content" gap. `document.
+/// draft`/`web.search` now dispatch through a real `LocalAiRuntime::infer` call
+/// (`hyperion-agent-runtime`'s own fix), and `MockBackend` deterministically echoes the whole
+/// prompt built from this task's own predicate and the real root utterance -- so the rendered
+/// text must carry real, task-specific substance, not just "Done."
+#[test]
+fn a_decomposed_plans_own_tasks_render_real_generated_content_not_just_a_status_word() {
+    let (_dir, mut session) = open_session();
+
+    let lines = session.handle_utterance("I need to launch my startup");
+    let joined = lines.join("\n");
+
+    assert!(
+        joined.contains("Done -- [mock model"),
+        "expected a completed task's real, prompt-driven content alongside its status, not a \
+         bare status word, got: {joined:?}"
+    );
+    assert!(
+        joined.contains("I need to launch my startup"),
+        "expected the real root utterance (passed as this session's own \"goal\" arg) to show \
+         up in the real, generated text, got: {joined:?}"
+    );
+    assert!(
+        joined.contains("AI-generated research notes, not a live web search"),
+        "market_research's own real result must carry its honesty caveat through to the \
+         rendered text, got: {joined:?}"
+    );
+}
+
 #[test]
 fn an_unmatched_utterance_still_produces_a_real_agent_invocation_as_text() {
     let (_dir, mut session) = open_session();
@@ -570,8 +602,12 @@ mod graph_exploration {
         // in the real graph -- not just shared membership in one Intent's `children` list.
         session.handle_utterance("I need to launch my startup");
 
+        // "planned task: market_research" (not the bare predicate) uniquely matches the task
+        // node itself -- `hyperion-coordination::allocate` now also writes a real "task_result"
+        // node holding market_research's own real, generated content, which would otherwise
+        // *also* match a bare "market_research" search (its own prompt names the task).
         let recalled = session
-            .handle_utterance("/recall market_research")
+            .handle_utterance("/recall planned task: market_research")
             .join("\n");
         assert!(
             recalled.contains("[1] a planned task: market_research"),
@@ -591,7 +627,7 @@ mod graph_exploration {
     fn why_distinguishes_a_planned_subtask_from_something_actually_said() {
         let (_dir, mut session) = open_session();
         session.handle_utterance("I need to launch my startup");
-        session.handle_utterance("/recall market_research");
+        session.handle_utterance("/recall planned task: market_research");
 
         let lines = session.handle_utterance("/why 1").join("\n");
         assert!(
@@ -604,13 +640,15 @@ mod graph_exploration {
     fn why_reports_a_real_connection_count_for_a_task_with_edges() {
         let (_dir, mut session) = open_session();
         session.handle_utterance("I need to launch my startup");
-        session.handle_utterance("/recall market_research");
+        session.handle_utterance("/recall planned task: market_research");
 
         let lines = session.handle_utterance("/why 1").join("\n");
         assert!(
-            lines.contains("connected to 2 other things"),
-            "market_research really is the target of two real depends_on edges (from \
-             business_model and branding), got: {lines:?}"
+            lines.contains("connected to 3 other things"),
+            "market_research is the target of two real depends_on edges (from business_model \
+             and branding) plus one real \"produced\" edge to its own real task_result node \
+             (hyperion-coordination::allocate no longer discards a capability's real output), \
+             got: {lines:?}"
         );
     }
 
@@ -618,7 +656,10 @@ mod graph_exploration {
     fn related_results_renumber_so_a_second_related_call_can_drill_further() {
         let (_dir, mut session) = open_session();
         session.handle_utterance("I need to launch my startup");
-        session.handle_utterance("/recall market_research");
+        // Not a bare "market_research" search: that would also match the real "task_result"
+        // node `hyperion-coordination::allocate` now writes (its own generated text names the
+        // task), and this test needs [1] to be the task itself.
+        session.handle_utterance("/recall planned task: market_research");
 
         let first_hop = session.handle_utterance("/related 1").join("\n");
         assert!(

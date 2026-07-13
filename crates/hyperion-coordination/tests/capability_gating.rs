@@ -21,10 +21,16 @@ fn create_session_and_allocate_require_write_rights() {
 
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent_engine = IntentEngine::new(graph, context);
-    let coordination = CoordinationSession::new(Arc::new(AgentRuntime::new(Arc::new(
-        hyperion_ai_runtime::LocalAiRuntime::new(Box::new(hyperion_ai_runtime::MockBackend), 8_000),
-    ))));
+    let intent_engine = IntentEngine::new(graph.clone(), context);
+    let coordination = CoordinationSession::new(
+        Arc::new(AgentRuntime::new(Arc::new(
+            hyperion_ai_runtime::LocalAiRuntime::new(
+                Box::new(hyperion_ai_runtime::MockBackend),
+                8_000,
+            ),
+        ))),
+        graph,
+    );
 
     let root = match intent_engine
         .handle_utterance(&monitor, &root_token, "I need to launch my startup", "s1")
@@ -50,10 +56,16 @@ fn revoking_a_token_blocks_further_access_re_checked_live() {
 
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
-    let intent_engine = IntentEngine::new(graph, context);
-    let coordination = CoordinationSession::new(Arc::new(AgentRuntime::new(Arc::new(
-        hyperion_ai_runtime::LocalAiRuntime::new(Box::new(hyperion_ai_runtime::MockBackend), 8_000),
-    ))));
+    let intent_engine = IntentEngine::new(graph.clone(), context);
+    let coordination = CoordinationSession::new(
+        Arc::new(AgentRuntime::new(Arc::new(
+            hyperion_ai_runtime::LocalAiRuntime::new(
+                Box::new(hyperion_ai_runtime::MockBackend),
+                8_000,
+            ),
+        ))),
+        graph,
+    );
 
     let root = match intent_engine
         .handle_utterance(&monitor, &delegate, "I need to launch my startup", "s1")

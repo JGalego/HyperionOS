@@ -19,7 +19,7 @@ use hyperion_ai_runtime::{
 };
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
 use hyperion_context::{Budget, ContextBundle, ExpertiseEstimate, ExpertiseLevel, Scope};
-use hyperion_coordination::CoordinationSession;
+use hyperion_coordination::{CoordinationSession, TaskNode};
 use hyperion_crypto::{Keystore, SecretStore};
 use hyperion_intent::{HandleOutcome, IntentEngine};
 use hyperion_knowledge_graph::{GraphError, KnowledgeGraph, NodeId};
@@ -276,7 +276,7 @@ impl ConsoleSession {
         let context = Arc::new(hyperion_context::ContextEngine::new(graph.clone()));
         let netstack = Arc::new(Self::build_netstack(graph.clone()));
         let graph_explorer = GraphExplorer::new(graph.clone());
-        let intent_engine = IntentEngine::new(graph, context.clone());
+        let intent_engine = IntentEngine::new(graph.clone(), context.clone());
 
         let keystore = Keystore::open_or_create(&data_dir.join("device.key"))
             .expect("open or create this session's real device signing key");
@@ -286,7 +286,7 @@ impl ConsoleSession {
             ai_runtime.clone(),
             Some(netstack.clone()),
         ));
-        let coordination = CoordinationSession::new(agent_runtime.clone());
+        let coordination = CoordinationSession::new(agent_runtime.clone(), graph);
 
         let assistant_manifest = hyperion_coordination::default_manifests()
             .into_iter()
@@ -1198,7 +1198,7 @@ impl ConsoleSession {
                 .iter()
                 .map(|node| TaskOutcome {
                     predicate: node.description.clone(),
-                    detail: format!("{:?}", node.status),
+                    detail: Self::render_task_detail(node),
                 })
                 .collect(),
             Err(e) => vec![TaskOutcome {
@@ -1208,6 +1208,25 @@ impl ConsoleSession {
         };
 
         ("plan".to_string(), outcomes)
+    }
+
+    /// `node.status` alone (`"Done"`) used to be the only real content this console could ever
+    /// show for a task: `hyperion-coordination::allocate` discarded a real capability's own real
+    /// output the instant it came back -- a real, previously-shipped bug, not a design choice
+    /// (see that crate's own doc comment on the "launch my startup produces zero real content"
+    /// gap this fixed). `TaskNode.result` now carries it, so a completed task's own real,
+    /// generated content is shown right alongside its status -- `"Done -- <text>"` rather than a
+    /// bare status word -- while every other status (still in progress, blocked, failed) renders
+    /// exactly as it always did.
+    fn render_task_detail(node: &TaskNode) -> String {
+        match node
+            .result
+            .as_ref()
+            .and_then(crate::graph_explorer::render_capability_result)
+        {
+            Some(text) => format!("{:?} -- {text}", node.status),
+            None => format!("{:?}", node.status),
+        }
     }
 
     /// The literal M7 deliverable: "drive `hyperion-workspace`'s compiled UI/accessibility trees

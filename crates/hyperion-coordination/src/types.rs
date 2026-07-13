@@ -30,6 +30,17 @@ pub struct TaskNode {
     /// How many times this task has been (re)allocated after a failure —
     /// docs/12 §5.4's bounded retry.
     pub attempts: u32,
+    /// The real capability dispatch's own returned value, once `status` reaches [`TaskStatus::
+    /// Done`] — `None` until then, and left `None` on failure/blocking. A real, previously-shipped
+    /// bug this field fixes: [`crate::CoordinationSession::allocate`] used to discard
+    /// `InvokeOutcome::Result`'s own value outright (`InvokeOutcome::Result(_)`), so a real
+    /// capability's real output (a drafted document, a research summary) was thrown away the
+    /// instant it came back — nothing downstream, not even this crate's own caller, could ever
+    /// see it. `Option<serde_json::Value>` rather than a typed shape because different
+    /// capabilities return different shapes (`document.draft`'s `"draft"`, `web.search`'s
+    /// `"results"`/`"note"`) and this crate has no per-capability output schema to type it against.
+    #[serde(default)]
+    pub result: Option<serde_json::Value>,
 }
 
 /// docs/12 §4.3's `ConflictRecord`.
@@ -74,6 +85,12 @@ pub struct Escalation {
 pub struct SharedPlan {
     pub session_id: u64,
     pub root_intent: NodeId,
+    /// The real utterance behind `root_intent` (`hyperion_intent::types::Intent::raw_utterance`),
+    /// captured once at [`crate::CoordinationSession::create_session`] time so
+    /// [`crate::CoordinationSession::allocate`] can give each task's real capability dispatch
+    /// genuine context to work with (what the user actually asked for), not just the bare task
+    /// predicate name it had before.
+    pub root_utterance: String,
     pub version: u64,
     pub nodes: Vec<TaskNode>,
     pub participants: Vec<u64>,

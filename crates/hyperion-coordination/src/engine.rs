@@ -9,7 +9,7 @@ use hyperion_explainability::{
     ControlState, ExplanationId, ExplanationRecord, ExplanationStore, ReasoningStep,
 };
 use hyperion_intent::{ExecutionTicket, IntentEngine};
-use hyperion_knowledge_graph::NodeId;
+use hyperion_knowledge_graph::{EdgeOrigin, KnowledgeGraph, NodeId};
 
 use crate::catalog::{best_fit_manifest, required_capabilities_for};
 use crate::types::{
@@ -51,6 +51,12 @@ pub enum CoordError {
 /// what's deferred.
 pub struct CoordinationSession {
     agent_runtime: Arc<AgentRuntime>,
+    /// Where [`Self::allocate`] records each real capability dispatch's own real result -- a new
+    /// `"task_result"` node, linked back to the task's own Intent node via a real `"produced"`
+    /// edge -- so what a capability actually produced is genuinely recorded, explorable, and
+    /// explainable, not thrown away the instant `invoke` returns (a real, previously-shipped bug
+    /// this crate's own doc comment now records).
+    graph: Arc<KnowledgeGraph>,
     plans: Mutex<HashMap<u64, SharedPlan>>,
     escalations: Mutex<HashMap<u64, Vec<Escalation>>>,
     /// Test/simulation seam: a `(session, task)` pair queued here forces
@@ -71,9 +77,10 @@ pub struct CoordinationSession {
 }
 
 impl CoordinationSession {
-    pub fn new(agent_runtime: Arc<AgentRuntime>) -> Self {
+    pub fn new(agent_runtime: Arc<AgentRuntime>, graph: Arc<KnowledgeGraph>) -> Self {
         CoordinationSession {
             agent_runtime,
+            graph,
             plans: Mutex::new(HashMap::new()),
             escalations: Mutex::new(HashMap::new()),
             pending_failures: Mutex::new(HashSet::new()),
@@ -120,6 +127,14 @@ impl CoordinationSession {
 
         let root = ticket.root;
         let intents = intent_engine.get_graph(monitor, token, root)?;
+        // The real utterance a person actually typed -- captured once here so `allocate` can
+        // give each task's real capability dispatch genuine context (docs/05's own root Intent
+        // record already carries it; this crate just wasn't reading it before).
+        let root_utterance = intents
+            .iter()
+            .find(|i| i.id == root)
+            .map(|i| i.raw_utterance.clone())
+            .unwrap_or_default();
         let mut nodes = Vec::new();
         for leaf in intents.iter().filter(|i| i.id != root) {
             let dependencies = intent_engine.depends_on_targets(monitor, token, leaf.id)?;
@@ -137,6 +152,7 @@ impl CoordinationSession {
                 dependencies,
                 base_version: 0,
                 attempts: 0,
+                result: None,
             });
         }
 
@@ -144,6 +160,7 @@ impl CoordinationSession {
         let plan = SharedPlan {
             session_id,
             root_intent: root,
+            root_utterance,
             version: 0,
             nodes,
             participants: Vec::new(),
@@ -301,8 +318,15 @@ impl CoordinationSession {
                 .lock()
                 .unwrap()
                 .remove(&(session_id, task_id));
-            let args =
-                serde_json::json!({"task": plan.nodes[idx].description, "force_fail": force_fail});
+            // `"goal"` is real, previously-missing context: a real capability dispatch (see
+            // `hyperion-agent-runtime::AgentRuntime::dispatch_document_draft`/
+            // `dispatch_market_research`) can now build a genuinely useful prompt from what the
+            // user actually asked for, not just this task's own bare predicate name.
+            let args = serde_json::json!({
+                "task": plan.nodes[idx].description,
+                "goal": plan.root_utterance,
+                "force_fail": force_fail,
+            });
             let capability = required_capabilities.first().cloned().unwrap_or_default();
 
             // docs/18's explain-then-commit, opened before the real
@@ -348,8 +372,34 @@ impl CoordinationSession {
                     .invoke(monitor, token, agent_id, &capability, args)?;
 
             let (control_state, outcome) = match invoke_outcome {
-                InvokeOutcome::Result(_) => {
+                InvokeOutcome::Result(value) => {
                     plan.nodes[idx].status = TaskStatus::Done;
+                    // A real, previously-shipped bug this fixes: this arm used to be
+                    // `InvokeOutcome::Result(_)`, discarding a real capability's own real output
+                    // the instant it came back -- nothing downstream (not even this crate's own
+                    // caller) could ever see what a task actually produced, only that it
+                    // succeeded. `TaskNode.result` now carries it directly; the graph write below
+                    // is a second, best-effort record (never fails the allocation over a graph
+                    // write hiccup) so `hyperion-console`'s `/recall`/`/why`/`/related` can
+                    // surface it too, linked back to the task itself.
+                    plan.nodes[idx].result = Some(value.clone());
+                    if let Ok(result_node) =
+                        self.graph
+                            .put_node(monitor, token, None, "task_result", None, value)
+                    {
+                        let _ = self.graph.link(
+                            monitor,
+                            token,
+                            task_id,
+                            "produced",
+                            result_node,
+                            1.0,
+                            EdgeOrigin::Explicit,
+                            None,
+                            "capability_dispatch",
+                            None,
+                        );
+                    }
                     plan.version += 1;
                     (ControlState::Completed, TaskStatus::Done)
                 }
