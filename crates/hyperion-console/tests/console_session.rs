@@ -5,7 +5,7 @@
 //! same session (see `session.rs`'s own docs on why), and both need to be proven, not just the
 //! one that happens to have a matching template.
 
-use hyperion_console::ConsoleSession;
+use hyperion_console::{ConsoleSession, TaskProgress};
 
 #[cfg(feature = "openai-compat")]
 mod common;
@@ -75,9 +75,90 @@ fn a_decomposed_plans_own_tasks_render_real_generated_content_not_just_a_status_
          up in the real, generated text, got: {joined:?}"
     );
     assert!(
-        joined.contains("AI-generated research notes, not a live web search"),
-        "market_research's own real result must carry its honesty caveat through to the \
-         rendered text, got: {joined:?}"
+        joined.contains("(see \"/result market_research\" for the full text)"),
+        "expected a short preview plus a concrete pointer to the full text, not the whole \
+         (potentially several-paragraph, for a real cloud model) result dumped inline, got: \
+         {joined:?}"
+    );
+
+    // The full text -- including market_research's own honesty caveat -- isn't lost, just not
+    // printed inline: /result finds it directly, via the real "produced" edge `allocate` records,
+    // not a text search (a real model's own prose doesn't always repeat a task's own predicate
+    // verbatim -- see `GraphExplorer::result`'s own doc comment).
+    let result = session
+        .handle_utterance("/result market_research")
+        .join("\n");
+    assert!(
+        result.contains("AI-generated research notes, not a live web search"),
+        "market_research's own real result must carry its honesty caveat, in full, when asked \
+         about directly via /result, got: {result:?}"
+    );
+}
+
+/// A real, previously-shipped UX gap this regression-tests: the console used to print nothing
+/// at all while a decomposed multi-task plan worked through several real capability dispatches,
+/// one tick at a time -- only the *final*, fully-converged result ever appeared, and there was no
+/// way to tell a task had even *started* before it finished. `Starting` must fire once per tick,
+/// naming every task about to run concurrently, *before* that tick's own blocking dispatch; `Done`
+/// fires once per task after.
+#[test]
+fn a_decomposed_plans_progress_callback_fires_starting_then_done_once_per_tick() {
+    let (_dir, mut session) = open_session();
+    let mut starting: Vec<Vec<String>> = Vec::new();
+    let mut done: Vec<String> = Vec::new();
+
+    let final_lines =
+        session.handle_utterance_with_progress("I need to launch my startup", &mut |event| {
+            match event {
+                TaskProgress::Starting(names) => starting.push(names),
+                TaskProgress::Done(line) => done.push(line),
+            }
+        });
+
+    // Three ticks: market_research alone; business_model + branding together; legal_formation
+    // alone -- see hyperion-intent/src/templates.rs's own dependency shape.
+    assert_eq!(
+        starting.len(),
+        3,
+        "one Starting event per tick, got: {starting:?}"
+    );
+    assert_eq!(starting[0], vec!["market_research".to_string()]);
+    let mut tick_two = starting[1].clone();
+    tick_two.sort();
+    assert_eq!(
+        tick_two,
+        vec!["branding".to_string(), "business_model".to_string()],
+        "business_model and branding become ready together, in the same Starting event"
+    );
+    assert_eq!(starting[2], vec!["legal_formation".to_string()]);
+
+    assert_eq!(done.len(), 4, "one Done event per task, got: {done:?}");
+    for predicate in [
+        "market_research",
+        "business_model",
+        "branding",
+        "legal_formation",
+    ] {
+        assert!(
+            done.iter().any(|line| line.contains(predicate)),
+            "got: {done:?}"
+        );
+    }
+    assert!(
+        done.iter().all(|line| line.contains("Done")),
+        "every real task in this fixture succeeds, so every Done event must say so, got: {done:?}"
+    );
+
+    // The plain `handle_utterance` path (used everywhere else in this file) must still return
+    // the exact same final result regardless of whether a caller also wanted live progress.
+    let plain_lines = {
+        let (_dir2, mut plain_session) = open_session();
+        plain_session.handle_utterance("I need to launch my startup")
+    };
+    assert_eq!(
+        final_lines.len(),
+        plain_lines.len(),
+        "the progress callback must not change the shape of the final rendered result"
     );
 }
 
@@ -699,5 +780,191 @@ mod graph_exploration {
             related.contains("needs a result number"),
             "got: {related:?}"
         );
+    }
+
+    #[test]
+    fn result_finds_a_tasks_real_output_directly_by_name_no_numbered_detour() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let result = session
+            .handle_utterance("/result business_model")
+            .join("\n");
+        assert!(
+            result.contains("\"business_model\"'s real result, recorded"),
+            "got: {result:?}"
+        );
+        assert!(
+            result.contains("Draft a concise, practical business_model"),
+            "expected the real, generated text itself, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn result_is_case_insensitive_on_the_task_name() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let result = session
+            .handle_utterance("/result Business_Model")
+            .join("\n");
+        assert!(
+            result.contains("Draft a concise, practical business_model"),
+            "got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn result_reports_honestly_on_an_unknown_task_name() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let result = session
+            .handle_utterance("/result not_a_real_task")
+            .join("\n");
+        assert!(
+            result.contains("I don't have a task called \"not_a_real_task\""),
+            "got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn result_rejects_a_bare_argument() {
+        let (_dir, mut session) = open_session();
+
+        let result = session.handle_utterance("/result").join("\n");
+        assert!(result.contains("needs a task name"), "got: {result:?}");
+    }
+}
+
+/// `/redo <task> <extra instructions>` -- the real "steer this task with more information" verb,
+/// backed by `hyperion_coordination::CoordinationSession::amend_task`. Every assertion here drives
+/// a real decomposed plan through a full run first, then redoes one of its own real tasks, so the
+/// regenerated content is genuinely new output from the same `MockBackend` echo, not a fixture.
+mod redo_and_steer {
+    use super::open_session;
+    use hyperion_console::TaskProgress;
+
+    #[test]
+    fn redo_with_no_prior_plan_says_so() {
+        let (_dir, mut session) = open_session();
+
+        let result = session
+            .handle_utterance("/redo market_research focus on Europe")
+            .join("\n");
+        assert!(result.contains("no plan to redo yet"), "got: {result:?}");
+    }
+
+    #[test]
+    fn redo_rejects_a_bare_task_name_argument() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let result = session.handle_utterance("/redo").join("\n");
+        assert!(result.contains("needs a task name"), "got: {result:?}");
+    }
+
+    #[test]
+    fn redo_reports_honestly_on_an_unknown_task_name() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let result = session
+            .handle_utterance("/redo not_a_real_task with more detail")
+            .join("\n");
+        assert!(
+            result.contains("I don't have a task called \"not_a_real_task\""),
+            "got: {result:?}"
+        );
+    }
+
+    /// The real, motivating scenario: a completed task's own real result gets regenerated with
+    /// the user's new steering text folded into the real prompt -- not just reset to `Unassigned`
+    /// and left there.
+    #[test]
+    fn redo_regenerates_a_completed_tasks_result_with_the_real_extra_context() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let redone = session
+            .handle_utterance("/redo market_research focus on the European market only")
+            .join("\n");
+        assert!(
+            redone.contains("Done"),
+            "the redone task must finish Done again, got: {redone:?}"
+        );
+
+        let result = session
+            .handle_utterance("/result market_research")
+            .join("\n");
+        assert!(
+            result.contains("focus on the European market only"),
+            "expected the real steering text to show up in the real, regenerated result, got: \
+             {result:?}"
+        );
+    }
+
+    #[test]
+    fn redo_is_case_insensitive_on_the_task_name() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let redone = session
+            .handle_utterance("/redo Market_Research focus on Asia")
+            .join("\n");
+        assert!(redone.contains("Done"), "got: {redone:?}");
+
+        let result = session
+            .handle_utterance("/result market_research")
+            .join("\n");
+        assert!(result.contains("focus on Asia"), "got: {result:?}");
+    }
+
+    /// Redoing never cascades automatically -- but the tasks that already depended on the old
+    /// result must be named, so the user knows to redo them too if they want them updated.
+    #[test]
+    fn redo_warns_about_dependents_that_already_used_the_old_result() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let redone = session
+            .handle_utterance("/redo market_research focus on Europe")
+            .join("\n");
+        assert!(
+            redone.contains("business_model") && redone.contains("branding"),
+            "business_model and branding both directly depend on market_research and were \
+             already Done, so both must be named as using the now-stale result, got: {redone:?}"
+        );
+        assert!(
+            redone.contains("won't be redone automatically"),
+            "got: {redone:?}"
+        );
+    }
+
+    /// `/redo` re-drives the plan's own real ticks, so a caller watching for live progress (e.g.
+    /// this console's own spinner) must still see it -- not just the plain `handle_utterance`
+    /// path's silent final result.
+    #[test]
+    fn redo_fires_the_same_real_progress_events_as_the_plans_first_run() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let mut starting: Vec<Vec<String>> = Vec::new();
+        let mut done: Vec<String> = Vec::new();
+        session.handle_utterance_with_progress(
+            "/redo market_research focus on Europe",
+            &mut |event| match event {
+                TaskProgress::Starting(names) => starting.push(names),
+                TaskProgress::Done(line) => done.push(line),
+            },
+        );
+
+        assert_eq!(
+            starting,
+            vec![vec!["market_research".to_string()]],
+            "got: {starting:?}"
+        );
+        assert_eq!(done.len(), 1, "got: {done:?}");
+        assert!(done[0].contains("market_research"), "got: {done:?}");
     }
 }

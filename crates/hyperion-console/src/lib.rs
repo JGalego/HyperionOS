@@ -35,4 +35,4 @@ mod graph_explorer;
 pub mod secret_input;
 mod session;
 
-pub use session::ConsoleSession;
+pub use session::{ConsoleSession, TaskProgress};

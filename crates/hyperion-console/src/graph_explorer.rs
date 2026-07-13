@@ -1,5 +1,5 @@
 //! Turns `hyperion-knowledge-graph`'s raw node/edge primitives into the console's
-//! `/recall`/`/why`/`/related` meta-commands -- three ways to explore whatever Hyperion has
+//! `/recall`/`/why`/`/related`/`/result` meta-commands -- ways to explore whatever Hyperion has
 //! actually recorded (every utterance's own "intent" node at minimum; memory and file nodes once
 //! those engines are wired into a live session) without ever showing a user a raw `NodeId`.
 //!
@@ -25,6 +25,13 @@ use hyperion_knowledge_graph::{
 /// The most results a single `/recall`/`/related` list shows -- generous enough to browse, small
 /// enough that a numbered list is still something a person can actually scan.
 const MAX_RESULTS: usize = 20;
+
+/// How much of a real, potentially long/multi-paragraph capability result [`preview`] shows in a
+/// list context -- a real cloud model's own real answer to "draft a business model" can run to
+/// several paragraphs, which would flood the terminal if shown in full inside a numbered list
+/// alongside everything else recalled. `/why` shows the untruncated text instead -- this is
+/// deliberately just a teaser pointing there, not the only place to ever see the real content.
+const PREVIEW_CHARS: usize = 100;
 
 pub struct GraphExplorer {
     graph: Arc<KnowledgeGraph>,
@@ -152,6 +159,14 @@ impl GraphExplorer {
                         relative_time(updated_at)
                     ));
                 }
+                // Unlike `describe()`'s list-context preview, `/why` is "tell me everything
+                // about this one thing" -- the real, untruncated text belongs here.
+                if node.object_type == "task_result" {
+                    if let Some(text) = render_capability_result(&node.metadata) {
+                        lines.push(String::new());
+                        lines.push(text);
+                    }
+                }
                 lines.push(match incident_edges.len() {
                     0 => "It isn't connected to anything else yet.".to_string(),
                     1 => "It's connected to 1 other thing -- try \"/related\".".to_string(),
@@ -165,6 +180,95 @@ impl GraphExplorer {
                     .to_string(),
             ],
             Err(e) => vec![format!("I couldn't look that up: {e}")],
+        }
+    }
+
+    /// `/result <task>` -- the real, complete text a named task's own capability dispatch
+    /// produced, found directly via its real `"produced"` edge rather than a numbered
+    /// `/recall`/`/related` detour. Deliberately matches the task's own real `predicate` field
+    /// exactly (case-insensitive), not a substring search over rendered text: a real model's own
+    /// generated prose often naturalizes a task's snake_case predicate into plain words (a real,
+    /// observed case: `legal_formation`'s own real result talks about "legal formation," never
+    /// the literal string `"legal_formation"`), so `/recall <task>` alone can miss the very
+    /// result a user is looking for.
+    pub fn result(
+        &mut self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        task_name: &str,
+    ) -> Vec<String> {
+        let task_name = task_name.trim();
+        let hits = match self.graph.query(monitor, token, &GraphQuery::default()) {
+            Ok(hits) => hits,
+            Err(e) => return vec![format!("I couldn't look that up: {e}")],
+        };
+
+        let mut tasks: Vec<(NodeId, NodeRecord)> = hits
+            .into_iter()
+            .map(|hit| (hit.node_id, hit.node))
+            .filter(|(_, node)| {
+                node.object_type == "intent"
+                    && node
+                        .metadata
+                        .get("predicate")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|p| p.eq_ignore_ascii_case(task_name))
+            })
+            .collect();
+        // `(updated_at, id)`, not `updated_at` alone: `now()`'s second granularity means two
+        // nodes written within the same real second tie on `updated_at`, and a plain reverse
+        // sort would then fall back to `hits`' own (arbitrary, not creation-order) iteration
+        // order -- a real, observed bug for `results` below, fixed the same defensive way here.
+        // `NodeId` is `hyperion_storage`'s own monotonically-assigned `next_object_id`, so it's a
+        // real, race-free "which one is newer" signal regardless of wall-clock resolution.
+        tasks.sort_by_key(|(id, node)| std::cmp::Reverse((node.updated_at, *id)));
+
+        let Some((task_id, _)) = tasks.into_iter().next() else {
+            return vec![format!("I don't have a task called \"{task_name}\".")];
+        };
+
+        let subgraph = match self.graph.traverse(monitor, token, task_id, None, 1) {
+            Ok(subgraph) => subgraph,
+            Err(e) => return vec![format!("I couldn't look that up: {e}")],
+        };
+        let mut results: Vec<(NodeId, NodeRecord)> = subgraph
+            .nodes
+            .into_iter()
+            .filter(|(id, node, hop)| {
+                *id != task_id && *hop > 0 && node.object_type == "task_result"
+            })
+            .map(|(id, node, _)| (id, node))
+            .collect();
+        // A real, previously-shipped bug this fixed: a `/redo` that completes within the same
+        // real wall-clock second as the task's first dispatch ties on `updated_at` alone (`now()`
+        // is second-granularity) against the now-stale original `task_result` node, and a plain
+        // reverse sort then keeps whichever the traversal happened to return first -- silently
+        // showing the *old* result right after a real redo. `NodeId` order breaks the tie for
+        // real: `task_result` nodes are only ever created fresh, never updated in place, so a
+        // higher id always means a newer real result.
+        results.sort_by_key(|(id, node)| std::cmp::Reverse((node.updated_at, *id)));
+
+        let Some((result_id, result_node)) = results.into_iter().next() else {
+            return vec![format!(
+                "\"{task_name}\" doesn't have a real result yet -- it may still be in progress."
+            )];
+        };
+
+        // A single-item numbered list -- so a follow-up "/related 1" can still explore onward
+        // from the real result itself, exactly as if it had been found via `/recall`.
+        self.refs = vec![result_id];
+        match render_capability_result(&result_node.metadata) {
+            Some(text) => vec![
+                format!(
+                    "\"{task_name}\"'s real result, recorded {}:",
+                    relative_time(result_node.created_at)
+                ),
+                String::new(),
+                text,
+            ],
+            None => vec![format!(
+                "\"{task_name}\" has a recorded result, but I couldn't render it."
+            )],
         }
     }
 
@@ -216,7 +320,7 @@ fn utterance_text(node: &NodeRecord) -> Option<&str> {
 fn describe(node: &NodeRecord) -> String {
     if node.object_type == "task_result" {
         if let Some(text) = render_capability_result(&node.metadata) {
-            return format!("a result: {text}");
+            return format!("a result: {}", preview(&text));
         }
     }
 
@@ -260,6 +364,21 @@ fn describe(node: &NodeRecord) -> String {
         node.object_type,
         summarize_value(&node.metadata)
     )
+}
+
+/// A single-line, length-capped teaser of `text` -- the first line, capped at
+/// [`PREVIEW_CHARS`], with a trailing `"..."` whenever anything was actually cut off (either the
+/// first line itself was too long, or there was real content after it). Shared by [`describe`]
+/// (list context) and `hyperion_console::session`'s own task-outcome rendering -- `/why` is where
+/// the same node's full, untruncated text lives instead.
+pub(crate) fn preview(text: &str) -> String {
+    let first_line = text.lines().next().unwrap_or(text);
+    let truncated: String = first_line.chars().take(PREVIEW_CHARS).collect();
+    if first_line.chars().count() > PREVIEW_CHARS || text.lines().count() > 1 {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 fn summarize_value(value: &serde_json::Value) -> String {

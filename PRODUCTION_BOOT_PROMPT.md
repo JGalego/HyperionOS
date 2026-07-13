@@ -1349,6 +1349,184 @@ thing this does *not* claim: `market_research`'s own output is real, model-gener
 honestly labeled as such -- not a verified live web search, which remains explicitly future,
 separate work.
 
+**M8 follow-up (2026-07-13): "it takes a while to get any kind of feedback" -- concurrent
+dispatch, live progress, and truncated previews.** Reported directly, by the user, after switching
+the console to a real cloud backend (`/backend openai ...`) and driving "launch my startup": every
+one of the four real capability dispatches the previous follow-up made real now also runs through
+a real network round trip when the active backend is a real cloud provider, and the console
+rendered nothing at all until the *entire* plan (all four tasks, across three ticks) converged.
+
+Traced to two real, previously-shipped bottlenecks, not assumed: `hyperion_agent_runtime::
+AgentRuntime::invoke` held `self.instances`' single global lock across the *entire* call,
+including the real capability dispatch -- so two independent tasks in the same tick (`business_
+model`/`branding`, both landing on the one reused writer instance -- see the "one research + one
+writer instance, reused across tasks" test) would serialize behind that lock no matter how many
+real OS threads a caller spawned to dispatch them. Fixed by splitting `invoke` into a locked
+"prepare" phase (lifecycle/Broker/Scheduler checks -- fast, in-memory) and an unlocked "dispatch"
+phase (the real capability call). One layer deeper, `hyperion_ai_runtime::LocalAiRuntime::infer`
+had the exact same shape of bug: it held the `backend` mutex across the entire real `generate`
+call. Fixed by storing `Arc<dyn InferenceBackend>` behind that mutex instead of a bare `Box`, so
+`infer` clones the `Arc` (a cheap refcount bump) and drops the lock before calling `generate`.
+Both fixes proven directly, not just inferred from reading the code: a real `SlowBackend` test
+fixture (`std::thread::sleep`, standing in for a real slow cloud round trip) drives two concurrent
+calls in each crate and asserts the real elapsed wall-clock time is close to *one* delay, not two
+-- these tests genuinely failed (~400ms) before the fix and pass (~200ms) after it.
+
+With both bottlenecks closed, `hyperion_coordination::CoordinationSession::allocate` now
+dispatches every ready task in a tick concurrently: a real three-phase split (prepare -- under
+`self.plans`' lock, sequential, since each task's own least-loaded-instance assignment must see
+the *previous* assignment in the same tick already reflected; dispatch -- no lock at all, via
+`std::thread::scope`; apply -- back under the lock, recording each real result). Its own public
+signature (and every existing call site) is unchanged. A new test proves a tick with two ready
+tasks (`business_model`+`branding`) completes in ~200ms against a real 200ms-per-call `SlowBackend`,
+not ~400ms.
+
+Separately, `hyperion-console` now gives real, live feedback instead of staying silent for the
+whole plan: `ConsoleSession::handle_utterance_with_progress` (the plain `handle_utterance` every
+existing test still uses is a thin wrapper with a no-op callback) calls a caller-supplied
+`on_progress` once per tick, naming each task that just completed -- `main.rs` wires this straight
+to a real `println!`, so a real user watching a real multi-tick plan sees each tick's own progress
+the moment it lands, not after the whole plan converges.
+
+Also fixed, per the same report: a real cloud model's own real answer (several paragraphs, for
+something like "draft a business model") used to print in full, inline, for every task -- shown in
+the screenshot that prompted this. `hyperion_console::graph_explorer::preview` (a new, shared
+helper) caps this to one line (first line only, truncated past 100 characters) everywhere a
+capability's result appears in a *list* context (`/recall`, `/related`, and the console's own
+per-task summary line, which now reads `"Done -- <preview> (see \"/recall <task>\" for the full
+text)"`) -- deliberately not the only place to ever see the real content: `/why` on a
+`"task_result"` node (found via that same `/recall`/`/related` pointer) still shows the complete,
+untruncated text, since that command's whole point is "tell me everything about this one thing."
+
+Verified: new real, timing-based concurrency tests in all three crates (`hyperion-ai-runtime`,
+`hyperion-agent-runtime`, `hyperion-coordination`); a new console test proving the progress
+callback fires per tick with the right task names, and that it never changes the final rendered
+result; a rewritten "no real content dumped inline" test proving the preview/pointer shape while
+still proving the full honesty-caveat text survives via `/recall` -> `/related` -> `/why`. Full
+workspace test suite (every crate, default features) passes with zero failures; `cargo clippy`/
+`cargo fmt --check` clean workspace-wide.
+
+**M8 follow-up (2026-07-13): a real spinner while each tick is still in flight.** Requested
+directly, by the user, as a follow-on to the progress-callback work directly above: `Done` alone,
+printed only once a tick's blocking dispatch had already returned, still gave no feedback *while*
+a real, slow capability call was actually running.
+
+Raised one real, deliberate design question before writing any code, since it's a genuine
+accessibility trade-off this project treats as architecture, not an afterthought: a `\r`-redrawing
+spinner is a well-documented bad pattern for screen readers even on a real interactive terminal
+(unlike a static banner, each redraw risks being re-announced as new content). Presented the
+options -- animated by default, animated with an explicit off-switch, or a static non-animated
+"working on X" line -- and the user chose animated-by-default, accepting that trade-off knowingly
+rather than having it decided silently.
+
+Required a real, previously-missing event, not just a UI change: `hyperion-console`'s own
+`TaskProgress` callback enum (`Starting(Vec<String>)` / `Done(String)`) replaces the plain `&str`
+progress callback from the follow-up directly above -- `Starting` fires with every task about to
+run in a tick, via a new `hyperion_coordination::CoordinationSession::ready_task_descriptions`
+read-only peek, called *before* that tick's own real, blocking `allocate` call, not only `Done`
+after it returns. `ready_task_descriptions` shares its own real "is this task ready" predicate with
+`allocate`'s existing internal one (extracted into one `is_ready` helper) rather than duplicating
+the filter logic somewhere it could quietly drift out of sync.
+
+`main.rs`'s own new `Spinner` (a real background thread, braille frames, `\r`-redrawn every 80ms,
+gated behind the same `IsTerminal` check the startup banner already established -- a piped or
+redirected caller never constructs one at all) starts on `Starting` and stops -- clearing its own
+line with plain spaces, not an ANSI escape sequence, matching this crate's existing no-ANSI
+convention -- on the matching `Done`; a plan that errors out of its own tick loop before a real
+`Done` ever fires is still caught (stopped once the whole utterance-handling call returns) so a
+spinner can never animate forever.
+
+Proven live, for real, not just by reading the code: a hand-rolled local HTTP fixture server (a
+real, deliberate 1.5s response delay, not `hyperion-ai-runtime`'s own deterministic `MockBackend`)
+driven through the console's own real `openai-compat` backend switch, captured over a genuine
+pseudo-terminal (`pty.openpty`, since this session's own tooling only ever sees piped, non-tty
+output) -- the raw byte capture shows real `\r`-prefixed spinner frames redrawing during the real
+1.5s wait, a clean clear (spaces + `\r`, no leftover characters) the instant the real, delayed HTTP
+response lands, and that same response's own real text flowing through to the final rendered line.
+New tests: `hyperion-coordination::ready_task_descriptions_previews_exactly_what_the_next_allocate_
+call_will_dispatch` (the peek matches each tick's real dispatch set exactly, across all three
+ticks); `hyperion-console`'s own progress test rewritten to assert `Starting`/`Done` fire in the
+right order with the right task names. Full workspace test suite (every crate, default features)
+passes with zero failures; `cargo clippy`/`cargo fmt --check` clean workspace-wide.
+
+**M8 follow-up (2026-07-13): `/result <task>` -- a direct, graph-edge-based path to a task's full
+result, plus "how do I access each task's result / edit or steer one with more information?"**
+Asked directly by the user after the progress/spinner work above: given `/recall market_research`
+etc. only ever found "a planned task: market_research" (never its real output), reaching a
+completed task's full text took a `/recall` -> `/why` -> `/related` -> `/why` detour, demonstrated
+live with `legal_formation` -- whose own real generated prose said "legal formation," never the
+literal snake_case string, so a plain `/recall <task>` text search couldn't even find it as a
+*result* (only as the task node itself, via its `predicate` metadata field). The user also asked
+where results are stored (already-real: `TaskNode.result`, plus a linked `"task_result"` Knowledge
+Graph node written by `hyperion-coordination::allocate`) and for a way to redo a task with more
+information.
+
+New `hyperion_console::graph_explorer::GraphExplorer::result(task_name)` (the `/result <task>`
+meta-command): finds the task node by **exact, case-insensitive `predicate` match** (not a text
+search), then traverses one real hop to its linked `"task_result"` node via the actual `"produced"`
+edge `allocate` already records, and shows the complete, untruncated text directly -- no numbered
+detour. `render_task_detail`'s own inline hint now points at `/result <task>` instead of
+`/recall <task>`, for the same reason.
+
+**The redo/steer half:** `hyperion_coordination::TaskNode` gained `extra_context: Option<String>`,
+threaded into `prepare_dispatches`'s own dispatch args and appended to the real prompt
+`hyperion_agent_runtime::AgentRuntime::dispatch_document_draft`/`dispatch_market_research` build
+(a new shared `append_extra_context` helper). New `CoordinationSession::amend_task(session_id,
+task_name, extra_context)`: resets the named task to `Unassigned` with `attempts` reset to `0` --
+deliberately not the same, separate, bounded `RETRY_LIMIT` an automatic failure retry consumes, so
+a user-initiated redo is never rate-limited by that budget -- clears its now-stale `result`, and
+un-blocks any dependent still marked `Blocked` because of it (`propagate_blocking` only ever adds
+that mark, never removes it, so nothing else would ever re-evaluate it otherwise). Returns the
+descriptions of any already-`Done` dependents, so a caller can warn they used the now-superseded
+result -- deliberately does **not** cascade an automatic redo to them: silently invalidating and
+re-running an entire downstream chain the user didn't ask about would be a surprising side effect,
+not real user control.
+
+`hyperion-console`'s `/redo <task> <extra instructions>` (wired into
+`handle_utterance_with_progress`, ahead of `handle_meta_command`, so it can still thread the real
+`TaskProgress` callback through -- unlike every other meta-command, a redo re-runs a real,
+potentially slow capability dispatch and deserves the same spinner/progress support a plan's first
+run gets): calls `amend_task`, then re-drives the plan's own ticks via a new
+`drive_ticks_to_completion` helper extracted from `run_decomposed_plan` (both call sites need the
+exact same tick-and-report loop, just starting from different plan state) -- the redone task has no
+unmet dependency (it just ran), so the very next tick picks it straight back up. `ConsoleSession`
+remembers the most recent plan's own session id (`last_plan_session_id`) so `/redo` knows which
+plan a task name belongs to; gives an honest "nothing to redo yet" reply, not a panic, before any
+plan has run.
+
+A real, previously-shipped bug found while writing this feature's own tests, not by reading code:
+`hyperion_ai_runtime::MockBackend::generate`'s deterministic echo truncated its prompt to 200
+characters -- a redo's own base prompt plus its `extra_context` suffix could exceed that, so the
+steering text (or the whole "Additional instructions from the user:" prefix) was silently cut off
+before ever reaching the echoed result, even though the real prompt built inside
+`dispatch_market_research` was proven correct at every step via targeted debug output. Fixed by
+raising the cap to 500 characters -- confirmed no existing test relied on the exact 200-character
+boundary.
+
+A second, more consequential real bug surfaced by the same test suite: `GraphExplorer::result`
+(and its sibling task-lookup) disambiguated between multiple same-named graph nodes using
+`updated_at` alone, which `hyperion_console::session::now()` stamps at one-second granularity -- a
+redo that completes within the same real wall-clock second as the task's original dispatch (every
+test, and any fast-enough real run) ties on `updated_at`, and a plain reverse sort then silently
+fell back to whichever node the graph traversal happened to return first, which was the **old,
+stale** result, not the new one -- confirmed live end-to-end with a real running console (`/redo`
+then `/result` immediately after) before landing the fix. Fixed by breaking ties on `NodeId`
+instead: `hyperion_storage::Engine::put_object` assigns `NodeId`s from a real, monotonically
+increasing counter for every freshly created node, so it's a race-free "which one is newer" signal
+regardless of wall-clock resolution, since a `"task_result"` node is only ever created fresh, never
+updated in place.
+
+Verified: `hyperion-coordination`'s own `amend_task_*` tests (reset + extra-context propagation,
+dependents warning, unknown-task rejection); `hyperion-console`'s new `redo_and_steer` test module
+(seven tests: no-prior-plan, bare argument, unknown task, real extra-context propagation through a
+full redo + `/result` round trip, case-insensitivity, dependents warning, and that `/redo` fires
+the same real `Starting`/`Done` progress events a plan's first run does) plus four new `/result`
+tests. Full workspace test suite (every crate, default features) passes with zero failures --
+524 tests, up from 515 before this follow-up; `cargo clippy`/`cargo fmt --check` clean on every
+touched crate. Live-verified end to end in a real running console binary: `/redo market_research
+focus on the European market only` followed by `/result market_research` shows the real,
+regenerated text with the steering text folded in, not the stale original.
+
 ## 4. Milestones
 
 Each milestone below states what it delivers, what from the existing 31 crates is genuinely

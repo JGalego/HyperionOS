@@ -41,6 +41,16 @@ pub struct TaskNode {
     /// `"results"`/`"note"`) and this crate has no per-capability output schema to type it against.
     #[serde(default)]
     pub result: Option<serde_json::Value>,
+    /// Extra, user-supplied steering text for this task's *next* real dispatch, set by
+    /// [`crate::CoordinationSession::amend_task`] -- `hyperion-console`'s own `/redo <task>
+    /// <extra instructions>` meta-command is the real caller. Threaded into
+    /// [`crate::CoordinationSession::prepare_dispatches`]'s own args and, from there, into the
+    /// real prompt `hyperion_agent_runtime::AgentRuntime::dispatch_document_draft`/
+    /// `dispatch_market_research` build -- not cleared after use, so a second redo without new
+    /// instructions still carries the last real steering text forward rather than silently
+    /// reverting to none.
+    #[serde(default)]
+    pub extra_context: Option<String>,
 }
 
 /// docs/12 §4.3's `ConflictRecord`.

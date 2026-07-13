@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use hyperion_agent_runtime::{AgentRuntime, InvokeOutcome, LifecycleState, TrustTier};
+use hyperion_agent_runtime::{AgentError, AgentRuntime, InvokeOutcome, LifecycleState, TrustTier};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_explainability::{
     ControlState, ExplanationId, ExplanationRecord, ExplanationStore, ReasoningStep,
@@ -45,6 +45,22 @@ pub enum CoordError {
     TaskNotFound,
     #[error("no built-in specialization fits the required capabilities")]
     NoFit,
+}
+
+/// One [`PreparedDispatch`]'s own real dispatch result, paired back up with it once
+/// [`CoordinationSession::allocate`]'s concurrent dispatch phase (`std::thread::scope`) joins.
+type DispatchOutcome = (PreparedDispatch, Result<InvokeOutcome, AgentError>);
+
+/// One real capability dispatch a tick decided to make, and everything
+/// [`CoordinationSession::apply_dispatch_results`] needs to record its real outcome once
+/// [`CoordinationSession::allocate`]'s own concurrent dispatch phase returns it.
+struct PreparedDispatch {
+    idx: usize,
+    task_id: NodeId,
+    agent_id: u64,
+    capability: String,
+    args: serde_json::Value,
+    explanation_id: ExplanationId,
 }
 
 /// docs/12 — Multi-Agent Coordination. See this crate's doc comment for
@@ -153,6 +169,7 @@ impl CoordinationSession {
                 base_version: 0,
                 attempts: 0,
                 result: None,
+                extra_context: None,
             });
         }
 
@@ -181,6 +198,41 @@ impl CoordinationSession {
             .find(|n| n.task_id == id)
             .map(|n| n.status == TaskStatus::Done)
             .unwrap_or(true)
+    }
+
+    /// A task is ready for [`Self::allocate`]'s own next real dispatch the moment it's
+    /// `Unassigned` with every dependency already `Done` -- shared by [`Self::prepare_dispatches`]
+    /// (which actually dispatches the ready set) and [`Self::ready_task_descriptions`] (a
+    /// read-only peek at the same set, for callers that want to announce what's about to run
+    /// *before* the real, potentially slow dispatch happens).
+    fn is_ready(plan: &SharedPlan, node: &TaskNode) -> bool {
+        node.status == TaskStatus::Unassigned
+            && node.dependencies.iter().all(|d| Self::is_done(plan, *d))
+    }
+
+    /// The real description (task predicate, e.g. `"market_research"`) of every task that would
+    /// become ready on the very next [`Self::allocate`] call -- a read-only peek `hyperion-console`
+    /// uses to announce which tasks are about to run *before* blocking on their real (potentially
+    /// slow) dispatch, not only after. Requires `WRITE`, not `READ`, because it runs the same
+    /// real `propagate_blocking` pass `allocate` itself does first (a failed task's dependents
+    /// only ever get marked `Blocked` here or there, never anywhere else) -- this must see and
+    /// apply that real state change consistently with `allocate`, not silently skip it.
+    pub fn ready_task_descriptions(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        session_id: u64,
+    ) -> Result<Vec<String>, CoordError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+        let mut plans = self.plans.lock().unwrap();
+        let plan = plans.get_mut(&session_id).ok_or(CoordError::NotFound)?;
+        Self::propagate_blocking(plan);
+        Ok(plan
+            .nodes
+            .iter()
+            .filter(|n| Self::is_ready(plan, n))
+            .map(|n| n.description.clone())
+            .collect())
     }
 
     /// docs/12 §5.4: a failed task's direct dependents are marked
@@ -233,9 +285,10 @@ impl CoordinationSession {
     /// see this crate's doc comment on why claim and execute are not
     /// separate steps here. Ready tasks (no unmet dependency) are matched
     /// against existing team participants first (least-loaded fit), else a
-    /// fresh instance is spawned; the assigned agent's stub capability is
-    /// then invoked synchronously and the result advances the task to
-    /// `Done` or, on failure, into docs/12 §5.4's containment path.
+    /// fresh instance is spawned; every ready task's assigned capability is
+    /// then dispatched concurrently (not one at a time -- see
+    /// [`Self::prepare_dispatches`]/[`Self::apply_dispatch_results`]), and each real result
+    /// advances its own task to `Done` or, on failure, into docs/12 §5.4's containment path.
     pub fn allocate(
         &self,
         monitor: &CapabilityMonitor,
@@ -244,6 +297,57 @@ impl CoordinationSession {
     ) -> Result<Vec<AllocationRecord>, CoordError> {
         self.require(monitor, token, RightsMask::WRITE)?;
 
+        let dispatches = self.prepare_dispatches(monitor, token, session_id)?;
+        if dispatches.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Phase 2 (unlocked, concurrent): the real capability dispatch for every task prepared
+        // above -- potentially real, slow network calls to a real cloud model, now genuinely
+        // able to overlap in wall-clock time. `self.plans`/`self.graph` are untouched here;
+        // `hyperion_agent_runtime::AgentRuntime::invoke`'s own doc comment explains the matching
+        // fix one layer down that makes this actually concurrent, not merely parallel-looking
+        // (holding its own instance lock across a real dispatch would still serialize everything
+        // behind it, however many real OS threads a caller spawns).
+        let dispatched: Vec<DispatchOutcome> = std::thread::scope(|scope| {
+            let handles: Vec<_> = dispatches
+                .into_iter()
+                .map(|d| {
+                    scope.spawn(move || {
+                        let args = d.args.clone();
+                        let outcome = self.agent_runtime.invoke(
+                            monitor,
+                            token,
+                            d.agent_id,
+                            &d.capability,
+                            args,
+                        );
+                        (d, outcome)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("a dispatch thread never panics"))
+                .collect()
+        });
+
+        self.apply_dispatch_results(monitor, token, session_id, dispatched)
+    }
+
+    /// [`Self::allocate`]'s phase 1: candidate selection/agent assignment for every ready task,
+    /// and opening each one's own Explanation Record -- all fast, in-memory bookkeeping.
+    /// Deliberately kept sequential (unlike phase 2): each assignment's own least-loaded-instance
+    /// calculation must see the *previous* assignment in this same tick already reflected (docs/
+    /// 12 §5.1's real load-balancing -- "one research + one writer instance, reused across
+    /// tasks" only holds if a tick's second task sees the first task's just-recorded load),
+    /// which concurrent assignment would silently break.
+    fn prepare_dispatches(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        session_id: u64,
+    ) -> Result<Vec<PreparedDispatch>, CoordError> {
         let mut plans = self.plans.lock().unwrap();
         let plan = plans.get_mut(&session_id).ok_or(CoordError::NotFound)?;
         Self::propagate_blocking(plan);
@@ -251,14 +355,11 @@ impl CoordinationSession {
         let ready: Vec<NodeId> = plan
             .nodes
             .iter()
-            .filter(|n| {
-                n.status == TaskStatus::Unassigned
-                    && n.dependencies.iter().all(|d| Self::is_done(plan, *d))
-            })
+            .filter(|n| Self::is_ready(plan, n))
             .map(|n| n.task_id)
             .collect();
 
-        let mut records = Vec::new();
+        let mut dispatches = Vec::new();
         for task_id in ready {
             let idx = plan
                 .nodes
@@ -322,11 +423,17 @@ impl CoordinationSession {
             // `hyperion-agent-runtime::AgentRuntime::dispatch_document_draft`/
             // `dispatch_market_research`) can now build a genuinely useful prompt from what the
             // user actually asked for, not just this task's own bare predicate name.
-            let args = serde_json::json!({
+            // `"extra_context"`, when [`Self::amend_task`] has set one, is the user's own real
+            // steering text for a redo -- included only when present, so a task's very first
+            // dispatch (never amended) sends exactly the same args shape as before this existed.
+            let mut args = serde_json::json!({
                 "task": plan.nodes[idx].description,
                 "goal": plan.root_utterance,
                 "force_fail": force_fail,
             });
+            if let Some(extra) = &plan.nodes[idx].extra_context {
+                args["extra_context"] = serde_json::Value::String(extra.clone());
+            }
             let capability = required_capabilities.first().cloned().unwrap_or_default();
 
             // docs/18's explain-then-commit, opened before the real
@@ -367,13 +474,40 @@ impl CoordinationSession {
                 ControlState::Executing,
             )?;
 
-            let invoke_outcome =
-                self.agent_runtime
-                    .invoke(monitor, token, agent_id, &capability, args)?;
+            dispatches.push(PreparedDispatch {
+                idx,
+                task_id,
+                agent_id,
+                capability,
+                args,
+                explanation_id,
+            });
+        }
 
+        Ok(dispatches)
+    }
+
+    /// [`Self::allocate`]'s phase 3: re-acquires `self.plans`' lock (released for the whole of
+    /// phase 2) and applies each real dispatch's real outcome back to the shared plan --
+    /// unchanged in substance from this function's own pre-concurrency shape, just now running
+    /// after every dispatch in the tick has already completed rather than interleaved one at a
+    /// time with each dispatch.
+    fn apply_dispatch_results(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        session_id: u64,
+        dispatched: Vec<DispatchOutcome>,
+    ) -> Result<Vec<AllocationRecord>, CoordError> {
+        let mut plans = self.plans.lock().unwrap();
+        let plan = plans.get_mut(&session_id).ok_or(CoordError::NotFound)?;
+
+        let mut records = Vec::new();
+        for (d, invoke_result) in dispatched {
+            let invoke_outcome = invoke_result?;
             let (control_state, outcome) = match invoke_outcome {
                 InvokeOutcome::Result(value) => {
-                    plan.nodes[idx].status = TaskStatus::Done;
+                    plan.nodes[d.idx].status = TaskStatus::Done;
                     // A real, previously-shipped bug this fixes: this arm used to be
                     // `InvokeOutcome::Result(_)`, discarding a real capability's own real output
                     // the instant it came back -- nothing downstream (not even this crate's own
@@ -382,7 +516,7 @@ impl CoordinationSession {
                     // is a second, best-effort record (never fails the allocation over a graph
                     // write hiccup) so `hyperion-console`'s `/recall`/`/why`/`/related` can
                     // surface it too, linked back to the task itself.
-                    plan.nodes[idx].result = Some(value.clone());
+                    plan.nodes[d.idx].result = Some(value.clone());
                     if let Ok(result_node) =
                         self.graph
                             .put_node(monitor, token, None, "task_result", None, value)
@@ -390,7 +524,7 @@ impl CoordinationSession {
                         let _ = self.graph.link(
                             monitor,
                             token,
-                            task_id,
+                            d.task_id,
                             "produced",
                             result_node,
                             1.0,
@@ -404,15 +538,15 @@ impl CoordinationSession {
                     (ControlState::Completed, TaskStatus::Done)
                 }
                 InvokeOutcome::Failed(_) => {
-                    self.handle_task_failure(plan, idx, session_id);
+                    self.handle_task_failure(plan, d.idx, session_id);
                     plan.version += 1;
-                    (ControlState::RolledBack, plan.nodes[idx].status)
+                    (ControlState::RolledBack, plan.nodes[d.idx].status)
                 }
                 InvokeOutcome::Denied => {
                     // No effect ever occurred — the closest real terminal
                     // state, not "interrupted" (nothing was running to
                     // interrupt).
-                    plan.nodes[idx].status = TaskStatus::Claimed;
+                    plan.nodes[d.idx].status = TaskStatus::Claimed;
                     (ControlState::RolledBack, TaskStatus::Claimed)
                 }
                 InvokeOutcome::PendingConsent | InvokeOutcome::QuotaExceeded => {
@@ -420,17 +554,17 @@ impl CoordinationSession {
                     // grant/quota stall as a task failure — genuinely
                     // "paused, waiting on something external," which is
                     // exactly what `Interrupted` means here.
-                    plan.nodes[idx].status = TaskStatus::Claimed;
+                    plan.nodes[d.idx].status = TaskStatus::Claimed;
                     (ControlState::Interrupted, TaskStatus::Claimed)
                 }
             };
             self.explanations
-                .transition(monitor, token, explanation_id, control_state)?;
+                .transition(monitor, token, d.explanation_id, control_state)?;
             records.push(AllocationRecord {
-                task_id,
-                agent_instance: agent_id,
+                task_id: d.task_id,
+                agent_instance: d.agent_id,
                 outcome,
-                explanation_id,
+                explanation_id: d.explanation_id,
             });
         }
 
@@ -453,6 +587,66 @@ impl CoordinationSession {
             .unwrap()
             .insert((session_id, task_id));
         Ok(())
+    }
+
+    /// The real "redo this with more information" verb `hyperion-console`'s own `/redo <task>
+    /// <extra instructions>` meta-command uses: resets the named task (matched against its own
+    /// real `description`, case-insensitively) back to [`TaskStatus::Unassigned`] with
+    /// `extra_context` recorded for its *next* real dispatch (see [`Self::prepare_dispatches`]),
+    /// clears its now-stale `result`, and resets `attempts` to `0` -- a deliberate, user-initiated
+    /// redo is not an automatic failure retry and must not consume (or be limited by) that
+    /// separate, real [`RETRY_LIMIT`] budget. Works regardless of the task's current status
+    /// (`Done`, `Failed`, `Blocked`) -- there's no reason redoing should be narrower than what a
+    /// real capability failure already recovers from on its own.
+    ///
+    /// Returns the real, already-`Done` descriptions of every other task that depends on this
+    /// one -- callers use this to warn that those tasks already used the *old*, now-superseded
+    /// result, since redoing never cascades to them automatically (a real, deliberate choice:
+    /// silently invalidating and re-running an entire downstream chain the user didn't ask about
+    /// would be a surprising, hard-to-predict side effect, not real user control).
+    pub fn amend_task(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        session_id: u64,
+        task_name: &str,
+        extra_context: String,
+    ) -> Result<Vec<String>, CoordError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+        let mut plans = self.plans.lock().unwrap();
+        let plan = plans.get_mut(&session_id).ok_or(CoordError::NotFound)?;
+        let idx = plan
+            .nodes
+            .iter()
+            .position(|n| n.description.eq_ignore_ascii_case(task_name))
+            .ok_or(CoordError::TaskNotFound)?;
+        let task_id = plan.nodes[idx].task_id;
+
+        plan.nodes[idx].status = TaskStatus::Unassigned;
+        plan.nodes[idx].assigned_agent = None;
+        plan.nodes[idx].result = None;
+        plan.nodes[idx].attempts = 0;
+        plan.nodes[idx].extra_context = Some(extra_context);
+        plan.version += 1;
+
+        // Redoing a `Failed` task can resolve the real reason a dependent got stuck `Blocked` in
+        // the first place -- but `propagate_blocking` (docs/12 §5.4) only ever adds that mark,
+        // never removes it once set, so nothing else in this crate would ever re-evaluate it.
+        // Giving it back to `Unassigned` is safe either way: if it's still blocked by something
+        // else, the very next real `propagate_blocking` pass re-marks it `Blocked` again.
+        for node in plan.nodes.iter_mut() {
+            if node.status == TaskStatus::Blocked && node.dependencies.contains(&task_id) {
+                node.status = TaskStatus::Unassigned;
+            }
+        }
+
+        let dependents = plan
+            .nodes
+            .iter()
+            .filter(|n| n.status == TaskStatus::Done && n.dependencies.contains(&task_id))
+            .map(|n| n.description.clone())
+            .collect();
+        Ok(dependents)
     }
 
     /// docs/12 §5.2's `proposeWrite`: optimistic concurrency on a named

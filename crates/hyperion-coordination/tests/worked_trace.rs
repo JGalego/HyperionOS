@@ -9,16 +9,29 @@ use std::sync::Arc;
 
 use hyperion_agent_runtime::AgentRuntime;
 use hyperion_ai_runtime::{
-    sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
+    sign, InferenceBackend, InferenceRequest, LocalAiRuntime, MockBackend, ModelClass,
+    ModelDescriptor, Precision, QuantizedVariant,
 };
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_context::ContextEngine;
-use hyperion_coordination::{ConflictResolution, CoordinationSession, TaskStatus};
+use hyperion_coordination::{ConflictResolution, CoordError, CoordinationSession, TaskStatus};
 use hyperion_crypto::Keystore;
 use hyperion_intent::{HandleOutcome, IntentEngine};
 use hyperion_knowledge_graph::KnowledgeGraph;
 
 fn setup() -> (
+    tempfile::TempDir,
+    CapabilityMonitor,
+    hyperion_capability::CapabilityToken,
+    IntentEngine,
+    CoordinationSession,
+) {
+    setup_with_backend(Box::new(MockBackend))
+}
+
+fn setup_with_backend(
+    backend: Box<dyn InferenceBackend>,
+) -> (
     tempfile::TempDir,
     CapabilityMonitor,
     hyperion_capability::CapabilityToken,
@@ -31,7 +44,7 @@ fn setup() -> (
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let context = Arc::new(ContextEngine::new(graph.clone()));
     let intent_engine = IntentEngine::new(graph.clone(), context);
-    let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+    let ai_runtime = Arc::new(LocalAiRuntime::new(backend, 8_000));
 
     // A real, signed ModelDescriptor -- needed now that `document.draft`/`web.search` (this
     // trace's own `market_research`/`business_model`/`branding`/`legal_formation` tasks) really
@@ -55,6 +68,20 @@ fn setup() -> (
 
     let coordination = CoordinationSession::new(Arc::new(AgentRuntime::new(ai_runtime)), graph);
     (dir, monitor, token, intent_engine, coordination)
+}
+
+/// A real `InferenceBackend` that takes a controlled, real amount of wall-clock time --
+/// standing in for a real, slow network round trip to a real cloud model. See
+/// `a_ticks_ready_tasks_dispatch_concurrently_not_sequentially` below.
+struct SlowBackend {
+    delay: std::time::Duration,
+}
+
+impl InferenceBackend for SlowBackend {
+    fn generate(&self, _model_id: u64, request: &InferenceRequest) -> String {
+        std::thread::sleep(self.delay);
+        format!("slow echo: {}", request.prompt)
+    }
 }
 
 fn task_named<'a>(
@@ -157,6 +184,117 @@ fn launch_trace_completes_all_tasks_across_ticks_respecting_dependencies() {
         plan.participants.len(),
         2,
         "one research + one writer instance, reused across tasks"
+    );
+}
+
+/// `hyperion-console`'s own real use case: knowing which tasks are *about* to run before the
+/// real (potentially slow) dispatch happens, not only after -- so it can announce/spin on them
+/// while `allocate` is still blocked on the real work.
+#[test]
+fn ready_task_descriptions_previews_exactly_what_the_next_allocate_call_will_dispatch() {
+    let (_dir, monitor, token, intent_engine, coordination) = setup();
+    let root = match intent_engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+    let session = coordination
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
+        .unwrap();
+
+    let ready = coordination
+        .ready_task_descriptions(&monitor, &token, session)
+        .unwrap();
+    assert_eq!(
+        ready,
+        vec!["market_research".to_string()],
+        "only market_research has no unmet dependency yet"
+    );
+
+    coordination.allocate(&monitor, &token, session).unwrap(); // tick 1
+
+    let mut ready = coordination
+        .ready_task_descriptions(&monitor, &token, session)
+        .unwrap();
+    ready.sort();
+    assert_eq!(
+        ready,
+        vec!["branding".to_string(), "business_model".to_string()],
+        "both become ready together once market_research is done"
+    );
+
+    coordination.allocate(&monitor, &token, session).unwrap(); // tick 2
+
+    let ready = coordination
+        .ready_task_descriptions(&monitor, &token, session)
+        .unwrap();
+    assert_eq!(ready, vec!["legal_formation".to_string()]);
+
+    coordination.allocate(&monitor, &token, session).unwrap(); // tick 3
+
+    let ready = coordination
+        .ready_task_descriptions(&monitor, &token, session)
+        .unwrap();
+    assert!(
+        ready.is_empty(),
+        "nothing left to dispatch once the whole plan is Done, got: {ready:?}"
+    );
+}
+
+/// Regression coverage for a real, previously-shipped bottleneck: `allocate` used to dispatch
+/// each ready task's real capability one at a time, in a sequential loop -- so a tick with two
+/// independent ready tasks (`business_model` and `branding`, this template's own real sibling
+/// pair, both depending only on `market_research`) took as long as two real dispatches back to
+/// back, however slow each one genuinely was (a real cloud call, in production). Fixed by
+/// `allocate`'s own three-phase split (prepare -- under lock, sequential; dispatch -- no lock,
+/// concurrent via `std::thread::scope`; apply -- under lock, sequential), which only actually
+/// helps because `hyperion_agent_runtime::AgentRuntime::invoke` (and, one layer further down,
+/// `hyperion_ai_runtime::LocalAiRuntime::infer`) no longer hold a lock across their own real
+/// dispatch either -- see both of those functions' own doc comments.
+#[test]
+fn a_ticks_ready_tasks_dispatch_concurrently_not_sequentially() {
+    let (_dir, monitor, token, intent_engine, coordination) =
+        setup_with_backend(Box::new(SlowBackend {
+            delay: std::time::Duration::from_millis(200),
+        }));
+    let root = match intent_engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+    let session = coordination
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
+        .unwrap();
+
+    coordination.allocate(&monitor, &token, session).unwrap(); // tick 1: market_research alone
+
+    let start = std::time::Instant::now();
+    let records = coordination.allocate(&monitor, &token, session).unwrap(); // tick 2: both ready
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        records.len(),
+        2,
+        "business_model and branding must both become ready in this one tick"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_millis(350),
+        "two real 200ms dispatches in one tick took {elapsed:?} -- expected them to genuinely \
+         overlap (~200ms total), not run back to back (~400ms total)"
     );
 }
 
@@ -427,5 +565,135 @@ fn unranked_contradiction_escalates_rather_than_guessing() {
             .unwrap()
             .len(),
         1
+    );
+}
+
+/// The real "redo this with more information" verb `hyperion-console`'s own `/redo` meta-command
+/// uses. Proves the real round trip end to end: a real, already-`Done` task resets, carries the
+/// real extra context into its *next* real dispatch, and comes back `Done` again with that real
+/// context genuinely reflected in the regenerated (`MockBackend`-echoed) text.
+#[test]
+fn amend_task_resets_a_done_task_and_carries_extra_context_into_its_next_real_dispatch() {
+    let (_dir, monitor, token, intent_engine, coordination) = setup();
+    let root = match intent_engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+    let session = coordination
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
+        .unwrap();
+
+    coordination.allocate(&monitor, &token, session).unwrap(); // tick 1: market_research Done
+    let plan = coordination.get_plan(&monitor, &token, session).unwrap();
+    assert_eq!(
+        task_named(&plan, "market_research").status,
+        TaskStatus::Done
+    );
+
+    let dependents = coordination
+        .amend_task(
+            &monitor,
+            &token,
+            session,
+            "market_research",
+            "focus on the European market only".to_string(),
+        )
+        .unwrap();
+    assert!(
+        dependents.is_empty(),
+        "nothing has run yet that depends on market_research, got: {dependents:?}"
+    );
+
+    let plan = coordination.get_plan(&monitor, &token, session).unwrap();
+    let reset = task_named(&plan, "market_research");
+    assert_eq!(reset.status, TaskStatus::Unassigned);
+    assert!(
+        reset.result.is_none(),
+        "the now-stale old result must be cleared, not left dangling"
+    );
+
+    // Redo it -- market_research has no unmet dependency, so the very next allocate() picks it
+    // straight back up.
+    let records = coordination.allocate(&monitor, &token, session).unwrap();
+    assert_eq!(records.len(), 1);
+    let plan = coordination.get_plan(&monitor, &token, session).unwrap();
+    let redone = task_named(&plan, "market_research");
+    assert_eq!(redone.status, TaskStatus::Done);
+    let text = redone.result.as_ref().unwrap()["results"][0]
+        .as_str()
+        .unwrap();
+    assert!(
+        text.contains("focus on the European market only"),
+        "the real extra context must show up in the real, regenerated prompt, got: {text:?}"
+    );
+}
+
+/// Redoing never cascades automatically -- but a caller needs to know which already-`Done` tasks
+/// used the now-superseded result, so it can warn (or the user can `/redo` them too).
+#[test]
+fn amend_task_reports_dependents_that_already_used_the_old_result() {
+    let (_dir, monitor, token, intent_engine, coordination) = setup();
+    let root = match intent_engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+    let session = coordination
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
+        .unwrap();
+
+    coordination.allocate(&monitor, &token, session).unwrap(); // tick 1: market_research
+    coordination.allocate(&monitor, &token, session).unwrap(); // tick 2: business_model + branding
+
+    let mut dependents = coordination
+        .amend_task(&monitor, &token, session, "market_research", String::new())
+        .unwrap();
+    dependents.sort();
+    assert_eq!(
+        dependents,
+        vec!["branding".to_string(), "business_model".to_string()],
+        "both already-Done tasks depend on market_research and must be named"
+    );
+}
+
+#[test]
+fn amend_task_rejects_an_unknown_task_name() {
+    let (_dir, monitor, token, intent_engine, coordination) = setup();
+    let root = match intent_engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+    let session = coordination
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
+        .unwrap();
+
+    let result =
+        coordination.amend_task(&monitor, &token, session, "not_a_real_task", String::new());
+    assert!(
+        matches!(result, Err(CoordError::TaskNotFound)),
+        "got: {result:?}"
     );
 }

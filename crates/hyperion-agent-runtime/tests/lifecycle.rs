@@ -8,7 +8,8 @@ use hyperion_agent_runtime::{
     AgentManifest, AgentRuntime, InvokeOutcome, LifecycleState, TrustTier,
 };
 use hyperion_ai_runtime::{
-    sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
+    sign, InferenceBackend, InferenceRequest, LocalAiRuntime, MockBackend, ModelClass,
+    ModelDescriptor, Precision, QuantizedVariant,
 };
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_crypto::Keystore;
@@ -28,9 +29,19 @@ fn setup() -> (
     hyperion_capability::CapabilityToken,
     AgentRuntime,
 ) {
+    setup_with_backend(Box::new(MockBackend))
+}
+
+fn setup_with_backend(
+    backend: Box<dyn InferenceBackend>,
+) -> (
+    CapabilityMonitor,
+    hyperion_capability::CapabilityToken,
+    AgentRuntime,
+) {
     let mut monitor = CapabilityMonitor::new();
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
-    let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+    let ai_runtime = Arc::new(LocalAiRuntime::new(backend, 8_000));
 
     // A real, signed ModelDescriptor -- needed now that `document.draft`/`web.search` really
     // call `LocalAiRuntime::infer` (see `AgentRuntime::dispatch_document_draft`/
@@ -54,6 +65,22 @@ fn setup() -> (
         .expect("a descriptor this test just signed always verifies");
 
     (monitor, token, AgentRuntime::new(ai_runtime))
+}
+
+/// A real `InferenceBackend` that takes a controlled, real amount of wall-clock time to
+/// `generate` -- standing in for a real, slow network round trip to a real cloud model, without
+/// this test needing one. See `concurrent_invokes_against_the_same_instance_genuinely_overlap_
+/// not_serialize` below, the one test in this file that actually needs real elapsed time to mean
+/// something.
+struct SlowBackend {
+    delay: std::time::Duration,
+}
+
+impl InferenceBackend for SlowBackend {
+    fn generate(&self, _model_id: u64, request: &InferenceRequest) -> String {
+        std::thread::sleep(self.delay);
+        format!("slow echo: {}", request.prompt)
+    }
 }
 
 #[test]
@@ -380,6 +407,33 @@ mod real_content_generation {
         );
     }
 
+    /// The real "redo this with more information" verb `hyperion-coordination::
+    /// CoordinationSession::amend_task` sets before a task's next real dispatch -- proves it
+    /// genuinely reaches the real prompt, not just that the args key exists.
+    #[test]
+    fn extra_context_when_present_shows_up_in_the_real_generated_prompt() {
+        let (monitor, token, runtime) = setup();
+        let id = runtime.spawn(&monitor, &token, manifest(), None).unwrap();
+        runtime
+            .grant_capability(&monitor, &token, id, "document.draft")
+            .unwrap();
+
+        let outcome = runtime
+            .invoke(
+                &monitor,
+                &token,
+                id,
+                "document.draft",
+                json!({"topic": "business model", "extra_context": "focus on Europe only"}),
+            )
+            .unwrap();
+        let InvokeOutcome::Result(value) = outcome else {
+            panic!("expected Result, got {outcome:?}");
+        };
+        let draft = value["draft"].as_str().unwrap();
+        assert!(draft.contains("focus on Europe only"), "got: {draft:?}");
+    }
+
     #[test]
     fn web_search_generates_real_content_and_is_honest_about_not_being_a_live_search() {
         let (monitor, token, runtime) = setup();
@@ -434,4 +488,49 @@ mod real_content_generation {
              retry/escalation tests (which inject exactly this) would silently break"
         );
     }
+}
+
+/// Regression coverage for a real, previously-shipped bottleneck: `invoke` used to hold
+/// `self.instances`' single global lock across the *entire* call, including the real capability
+/// dispatch -- so two concurrent `invoke` calls, even against two different instances, would
+/// serialize behind one lock the instant either reached a real, slow dispatch. Fixed by splitting
+/// `invoke` into a locked "prepare" phase and an unlocked "dispatch" phase (see that function's
+/// own doc comment). Proven here against the *same* instance specifically -- the harder, more
+/// realistic case `hyperion-coordination::allocate` actually hits (one writer instance handles
+/// `business_model`/`branding`/`legal_formation`; see that crate's own "one research + one writer
+/// instance, reused across tasks" test).
+#[test]
+fn concurrent_invokes_against_the_same_instance_genuinely_overlap_not_serialize() {
+    let (monitor, token, runtime) = setup_with_backend(Box::new(SlowBackend {
+        delay: std::time::Duration::from_millis(200),
+    }));
+    let id = runtime.spawn(&monitor, &token, manifest(), None).unwrap();
+    runtime
+        .grant_capability(&monitor, &token, id, "document.draft")
+        .unwrap();
+
+    let start = std::time::Instant::now();
+    std::thread::scope(|scope| {
+        for _ in 0..2 {
+            scope.spawn(|| {
+                runtime
+                    .invoke(
+                        &monitor,
+                        &token,
+                        id,
+                        "document.draft",
+                        json!({"topic": "x"}),
+                    )
+                    .unwrap();
+            });
+        }
+    });
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < std::time::Duration::from_millis(350),
+        "two real 200ms dispatches against the SAME agent instance took {elapsed:?} -- expected \
+         them to genuinely overlap (~200ms total if they run concurrently), not serialize behind \
+         one global lock (~400ms total if they don't)"
+    );
 }

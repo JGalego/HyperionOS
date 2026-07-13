@@ -44,7 +44,11 @@ pub fn verify(descriptor: &ModelDescriptor, verifying_key: &VerifyingKey) -> boo
 
 /// A deterministic, non-ML stand-in for a real forward pass — see this
 /// crate's doc comment. Returns a short, content-derived string so tests
-/// can assert on it without pretending it's a real model output.
+/// can assert on it without pretending it's a real model output. The 500-char
+/// cap (previously 200) needs headroom for a base prompt plus a real user's
+/// `extra_context` steering text appended after it (`hyperion-agent-runtime`'s
+/// `append_extra_context`) — 200 was tight enough that a redo's steering text
+/// could be silently cut off before it ever reached this echo.
 #[derive(Debug, Default)]
 pub struct MockBackend;
 
@@ -52,7 +56,7 @@ impl InferenceBackend for MockBackend {
     fn generate(&self, model_id: u64, request: &InferenceRequest) -> String {
         format!(
             "[mock model {model_id}] echo: {}",
-            request.prompt.chars().take(200).collect::<String>()
+            request.prompt.chars().take(500).collect::<String>()
         )
     }
 }

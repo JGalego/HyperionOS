@@ -57,6 +57,17 @@ fn now() -> u64 {
 const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
 const DEFAULT_QUOTA: u32 = 100;
 
+/// [`AgentRuntime::prepare_invoke`]'s own result -- see [`AgentRuntime::invoke`]'s doc comment
+/// for why this three-phase split exists at all.
+enum PreparedInvoke {
+    /// Already a final `InvokeOutcome` -- nothing left to dispatch (denied, pending consent, or
+    /// quota exceeded).
+    Resolved(InvokeOutcome),
+    /// Admitted; carries the real Scheduler ticket [`AgentRuntime::invoke`]'s own phase 3 must
+    /// `complete` once the real dispatch (phase 2, no lock held) returns.
+    Proceed(TaskId),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     #[error("capability does not authorize this operation")]
@@ -197,7 +208,23 @@ impl AgentRuntime {
     }
 
     /// docs/11 §7's `invoke` — routed through the Broker (§6.1) and quota/
-    /// circuit breaker (§6.2), then dispatched to a stub Capability.
+    /// circuit breaker (§6.2), then dispatched to a real or stub Capability.
+    ///
+    /// Deliberately three phases, not one lock held start to finish: a real, previously-shipped
+    /// bottleneck this split fixes -- `hyperion-coordination`'s own `allocate` dispatches every
+    /// *ready* task in one tick (e.g. `business_model` and `branding`, both real HTN-template
+    /// siblings that genuinely don't depend on each other), and since this crate's own allocator
+    /// reuses one Agent instance per specialization rather than spawning one per task (proven by
+    /// `hyperion-coordination`'s own "one research + one writer instance, reused across tasks"
+    /// test), two independent tasks routinely land on the *same* `instance_id`. Holding
+    /// `self.instances`' single global lock across the real capability dispatch -- which can now
+    /// be a real, slow network call to a real cloud model (see `dispatch_document_draft`/
+    /// `dispatch_market_research`'s own doc comments) -- would serialize every invocation in the
+    /// whole runtime behind it, defeating any concurrent dispatch a caller attempts no matter how
+    /// many real OS threads it spawns. [`Self::prepare_invoke`] (phase 1, locked) is the only part
+    /// that must serialize: lifecycle/Broker/Scheduler checks and the bookkeeping state
+    /// transition. The dispatch itself (phase 2) runs with **no lock held at all**. Phase 3
+    /// re-acquires the lock only to record the real outcome.
     pub fn invoke(
         &self,
         monitor: &CapabilityMonitor,
@@ -208,6 +235,75 @@ impl AgentRuntime {
     ) -> Result<InvokeOutcome, AgentError> {
         self.require(monitor, token, RightsMask::EXEC)?;
 
+        let ticket = match self.prepare_invoke(monitor, token, instance_id, capability_ref)? {
+            PreparedInvoke::Resolved(outcome) => return Ok(outcome),
+            PreparedInvoke::Proceed(ticket) => ticket,
+        };
+
+        // Phase 2: the real capability dispatch, with no lock held -- see this function's own
+        // doc comment.
+        let dispatch_result = if [
+            ASSISTANT_RESPOND_CAPABILITY,
+            CLOUD_OPENAI_CAPABILITY,
+            CLOUD_ANTHROPIC_CAPABILITY,
+            CLOUD_GEMINI_CAPABILITY,
+        ]
+        .contains(&capability_ref)
+        {
+            self.dispatch_assistant_respond(monitor, token, &args)
+        } else if capability_ref == WEB_RESEARCH_CAPABILITY && self.netstack.is_some() {
+            self.dispatch_web_research(monitor, token, instance_id, &args)
+        } else if capability_ref == DOCUMENT_DRAFT_CAPABILITY {
+            self.dispatch_document_draft(monitor, token, &args)
+        } else if capability_ref == WEB_SEARCH_CAPABILITY {
+            self.dispatch_market_research(monitor, token, &args)
+        } else {
+            stubs::dispatch(capability_ref, &args)
+        };
+
+        // Phase 3: re-acquire the lock only to record the real outcome.
+        let _ = self.scheduler.lock().unwrap().complete(ticket);
+        let mut instances = self.instances.lock().unwrap();
+        let instance = instances
+            .get_mut(&instance_id)
+            .ok_or(AgentError::NotFound)?;
+        match dispatch_result {
+            Ok(result) => {
+                instance.quota.consecutive_failures = 0;
+                Self::audit(instance, "invoked", capability_ref);
+                Ok(InvokeOutcome::Result(result))
+            }
+            Err(reason) => {
+                instance.quota.consecutive_failures += 1;
+                Self::audit(
+                    instance,
+                    "capability_failed",
+                    format!("{capability_ref}: {reason}"),
+                );
+                if instance.quota.consecutive_failures >= CIRCUIT_BREAKER_THRESHOLD {
+                    instance.state = LifecycleState::Suspended;
+                    Self::audit(instance, "suspended_runaway", capability_ref);
+                }
+                Ok(InvokeOutcome::Failed(reason))
+            }
+        }
+    }
+
+    /// [`Self::invoke`]'s phase 1 -- every check that must serialize against this instance's own
+    /// bookkeeping, all of it fast, in-memory work: lifecycle state, the Broker's grant decision,
+    /// and the real Scheduler admission gate (docs/04, replacing a private
+    /// `QuotaState.has_headroom()` counter that never touched the rest of the system's real
+    /// resource model). `PreparedInvoke::Resolved` covers every case that's already a final
+    /// `InvokeOutcome` before any real dispatch would even be attempted (denied, pending consent,
+    /// quota exceeded); `PreparedInvoke::Proceed` carries the admitted `TaskId` ticket `invoke`'s
+    /// own phase 3 needs to `complete`.
+    fn prepare_invoke(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        instance_id: u64,
+        capability_ref: &str,
+    ) -> Result<PreparedInvoke, AgentError> {
         let mut instances = self.instances.lock().unwrap();
         let instance = instances
             .get_mut(&instance_id)
@@ -229,22 +325,17 @@ impl AgentRuntime {
         match broker::resolve_grant(instance, capability_ref) {
             GrantDecision::Denied => {
                 Self::audit(instance, "denied", capability_ref);
-                return Ok(InvokeOutcome::Denied);
+                return Ok(PreparedInvoke::Resolved(InvokeOutcome::Denied));
             }
             GrantDecision::PendingConsent => {
                 instance.state = LifecycleState::WaitingOnCapability;
                 instance.pending_consent = Some(capability_ref.to_string());
                 Self::audit(instance, "pending_consent", capability_ref);
-                return Ok(InvokeOutcome::PendingConsent);
+                return Ok(PreparedInvoke::Resolved(InvokeOutcome::PendingConsent));
             }
             GrantDecision::Granted => {}
         }
 
-        // docs/04's real Scheduler admission gate, replacing a private
-        // `QuotaState.has_headroom()` counter that never touched the rest
-        // of the system's real resource model. `QuotaState` itself is
-        // still updated below for the circuit-breaker's own bookkeeping
-        // (unrelated to this gate) and observability.
         let task_id = TaskId(self.next_task_id.fetch_add(1, Ordering::Relaxed));
         let ticket = self
             .scheduler
@@ -279,52 +370,12 @@ impl AgentRuntime {
         if !admitted {
             let _ = self.scheduler.lock().unwrap().cancel(ticket);
             Self::audit(instance, "quota_exceeded", capability_ref);
-            return Ok(InvokeOutcome::QuotaExceeded);
+            return Ok(PreparedInvoke::Resolved(InvokeOutcome::QuotaExceeded));
         }
 
         instance.state = LifecycleState::Executing;
         instance.quota.calls_used_this_window += 1;
-
-        let dispatch_result = if [
-            ASSISTANT_RESPOND_CAPABILITY,
-            CLOUD_OPENAI_CAPABILITY,
-            CLOUD_ANTHROPIC_CAPABILITY,
-            CLOUD_GEMINI_CAPABILITY,
-        ]
-        .contains(&capability_ref)
-        {
-            self.dispatch_assistant_respond(monitor, token, &args)
-        } else if capability_ref == WEB_RESEARCH_CAPABILITY && self.netstack.is_some() {
-            self.dispatch_web_research(monitor, token, instance_id, &args)
-        } else if capability_ref == DOCUMENT_DRAFT_CAPABILITY {
-            self.dispatch_document_draft(monitor, token, &args)
-        } else if capability_ref == WEB_SEARCH_CAPABILITY {
-            self.dispatch_market_research(monitor, token, &args)
-        } else {
-            stubs::dispatch(capability_ref, &args)
-        };
-        let _ = self.scheduler.lock().unwrap().complete(ticket);
-
-        match dispatch_result {
-            Ok(result) => {
-                instance.quota.consecutive_failures = 0;
-                Self::audit(instance, "invoked", capability_ref);
-                Ok(InvokeOutcome::Result(result))
-            }
-            Err(reason) => {
-                instance.quota.consecutive_failures += 1;
-                Self::audit(
-                    instance,
-                    "capability_failed",
-                    format!("{capability_ref}: {reason}"),
-                );
-                if instance.quota.consecutive_failures >= CIRCUIT_BREAKER_THRESHOLD {
-                    instance.state = LifecycleState::Suspended;
-                    Self::audit(instance, "suspended_runaway", capability_ref);
-                }
-                Ok(InvokeOutcome::Failed(reason))
-            }
-        }
+        Ok(PreparedInvoke::Proceed(ticket))
     }
 
     /// The one Capability [`Self::invoke`] dispatches to a real backend rather than
@@ -407,7 +458,8 @@ impl AgentRuntime {
     ) -> Result<serde_json::Value, String> {
         Self::check_force_fail(DOCUMENT_DRAFT_CAPABILITY, args)?;
         let subject = Self::extract_subject(args);
-        let prompt = format!("Draft a concise, practical {subject}.");
+        let mut prompt = format!("Draft a concise, practical {subject}.");
+        Self::append_extra_context(&mut prompt, args);
         self.run_inference(monitor, token, prompt, "draft")
     }
 
@@ -426,10 +478,11 @@ impl AgentRuntime {
     ) -> Result<serde_json::Value, String> {
         Self::check_force_fail(WEB_SEARCH_CAPABILITY, args)?;
         let subject = Self::extract_subject(args);
-        let prompt = format!(
+        let mut prompt = format!(
             "Provide a concise research summary about {subject}. Be clear that this is your \
              own reasoning, not verified live information."
         );
+        Self::append_extra_context(&mut prompt, args);
         let result = self.run_inference(monitor, token, prompt, "text")?;
         let text = result
             .get("text")
@@ -474,6 +527,21 @@ impl AgentRuntime {
             "the requested topic".to_string()
         } else {
             parts.join(" -- ")
+        }
+    }
+
+    /// Appends real, user-supplied steering text to `prompt`, when the caller sent one -- the
+    /// real "redo this with more information" verb `hyperion-coordination::CoordinationSession::
+    /// amend_task` sets on a task before its next real dispatch. Absent for every task's first
+    /// (never-redone) dispatch, so this is purely additive: nothing changes for a caller that
+    /// never sends `"extra_context"` at all.
+    fn append_extra_context(prompt: &mut String, args: &serde_json::Value) {
+        if let Some(extra) = args
+            .get("extra_context")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            prompt.push_str(&format!(" Additional instructions from the user: {extra}"));
         }
     }
 

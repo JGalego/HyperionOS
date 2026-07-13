@@ -3,8 +3,8 @@
 //! locally signal when nothing fits.
 
 use hyperion_ai_runtime::{
-    sign, CapabilityContract, InferenceRequest, LocalAiRuntime, MockBackend, ModelClass,
-    ModelDescriptor, PowerMode, Precision, QuantizedVariant, RuntimeError,
+    sign, CapabilityContract, InferenceBackend, InferenceRequest, LocalAiRuntime, MockBackend,
+    ModelClass, ModelDescriptor, PowerMode, Precision, QuantizedVariant, RuntimeError,
 };
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_crypto::Keystore;
@@ -158,4 +158,69 @@ fn no_registered_model_for_the_class_is_infeasible_not_a_panic() {
         },
     );
     assert!(matches!(result, Err(RuntimeError::InfeasibleLocally)));
+}
+
+/// A real `InferenceBackend` that takes a controlled, real amount of wall-clock time -- standing
+/// in for a real, slow network round trip to a real cloud model. See the concurrency test below.
+struct SlowBackend {
+    delay: std::time::Duration,
+}
+
+impl InferenceBackend for SlowBackend {
+    fn generate(&self, _model_id: u64, request: &InferenceRequest) -> String {
+        std::thread::sleep(self.delay);
+        format!("slow echo: {}", request.prompt)
+    }
+}
+
+/// Regression coverage for a real, previously-shipped bottleneck: `infer` used to hold the
+/// `backend` mutex across the entire real `generate` call, so two concurrent `infer` calls would
+/// serialize behind it no matter how many real OS threads a caller spawned -- the same class of
+/// bug `hyperion_agent_runtime::AgentRuntime::invoke`'s own three-phase split fixes one layer up.
+/// Fixed by storing an `Arc<dyn InferenceBackend>` behind the mutex instead of a bare `Box`, so
+/// `infer` clones the `Arc` (cheap) and drops the lock before ever calling `generate`.
+#[test]
+fn concurrent_infer_calls_genuinely_overlap_not_serialize() {
+    let mut monitor = CapabilityMonitor::new();
+    let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let (_dir, keystore) = keystore();
+    let runtime = LocalAiRuntime::new(
+        Box::new(SlowBackend {
+            delay: std::time::Duration::from_millis(200),
+        }),
+        8_000,
+    );
+    runtime
+        .register_model(
+            descriptor_with_two_tiers(&keystore),
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    let contract = CapabilityContract {
+        latency_budget_ms: 5_000,
+        always_on: false,
+    };
+    let request = InferenceRequest {
+        prompt: "hello".to_string(),
+    };
+
+    let start = std::time::Instant::now();
+    std::thread::scope(|scope| {
+        for _ in 0..2 {
+            scope.spawn(|| {
+                runtime
+                    .infer(&monitor, &token, ModelClass::Slm, &contract, &request)
+                    .unwrap();
+            });
+        }
+    });
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < std::time::Duration::from_millis(350),
+        "two real 200ms infer calls took {elapsed:?} -- expected them to genuinely overlap \
+         (~200ms total if they run concurrently), not serialize behind the backend lock \
+         (~400ms total if they don't)"
+    );
 }

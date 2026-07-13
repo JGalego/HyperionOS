@@ -62,6 +62,19 @@ struct TaskOutcome {
     detail: String,
 }
 
+/// One real event [`ConsoleSession::handle_utterance_with_progress`]'s own callback fires while a
+/// decomposed multi-task plan works through a tick -- `main.rs` uses `Starting` to know which
+/// task names to show as in-flight (e.g. a spinner) and `Done` to know when to stop and print the
+/// real result instead.
+pub enum TaskProgress {
+    /// These tasks are about to be dispatched, concurrently, this tick -- named *before* the
+    /// real (potentially slow) capability call blocks this thread, not only after.
+    Starting(Vec<String>),
+    /// One task's own real, final line (e.g. `"  market_research: Done"`), once its tick's
+    /// blocking dispatch has actually returned.
+    Done(String),
+}
+
 pub struct ConsoleSession {
     monitor: CapabilityMonitor,
     token: CapabilityToken,
@@ -108,6 +121,13 @@ pub struct ConsoleSession {
     graph_explorer: GraphExplorer,
     workspace: WorkspaceCompiler,
     next_turn_id: u64,
+    /// The most recent decomposed plan's own `hyperion-coordination` session id, set at the end
+    /// of [`Self::run_decomposed_plan`] -- [`Self::redo_task`] (the `/redo <task> <extra
+    /// instructions>` meta-command) needs this to find the real plan a task name belongs to,
+    /// since `hyperion-coordination::CoordinationSession::amend_task` is keyed by session, not
+    /// by task name alone. `None` until this session's first real decomposed plan runs; `/redo`
+    /// gives an honest "nothing to redo yet" reply until then rather than guessing a session.
+    last_plan_session_id: Option<u64>,
 }
 
 /// The real prompt and capability this session is waiting to re-invoke once a live
@@ -347,6 +367,7 @@ impl ConsoleSession {
             graph_explorer,
             workspace: WorkspaceCompiler::new(),
             next_turn_id: 1,
+            last_plan_session_id: None,
         })
     }
 
@@ -649,6 +670,19 @@ impl ConsoleSession {
             });
         }
 
+        if lower.starts_with("/result") {
+            let task_name = trimmed["/result".len()..].trim();
+            if task_name.is_empty() {
+                return Some(vec![
+                    "\"/result\" needs a task name, e.g. \"/result market_research\".".to_string(),
+                ]);
+            }
+            return Some(
+                self.graph_explorer
+                    .result(&self.monitor, &self.token, task_name),
+            );
+        }
+
         if lower.starts_with("connect") {
             for provider in [
                 CloudProvider::OpenAi,
@@ -809,6 +843,12 @@ impl ConsoleSession {
             "  /related <n>                                show what's connected to a \
              \"/recall\"/\"/related\" result"
                 .to_string(),
+            "  /result <task>                              show a task's real, complete result \
+             directly, e.g. \"/result market_research\""
+                .to_string(),
+            "  /redo <task> <extra instructions>           redo a task from the last plan with \
+             more information, e.g. \"/redo market_research focus on Europe\""
+                .to_string(),
             "  /help                                        show this message".to_string(),
         ]
     }
@@ -862,12 +902,50 @@ impl ConsoleSession {
     /// along the way becomes a plain-language line in the returned text (CLAUDE.md's "never
     /// expose technical errors directly" -- this is the boundary where that applies), not a
     /// panic or a propagated error a caller must handle.
+    ///
+    /// A thin wrapper over [`Self::handle_utterance_with_progress`] with a no-op progress
+    /// callback -- this crate's own tests all use this, since a decomposed plan's *final*
+    /// rendered text is identical either way; only `main.rs` needs to see intermediate lines as
+    /// they happen.
     pub fn handle_utterance(&mut self, utterance: &str) -> Vec<String> {
+        self.handle_utterance_with_progress(utterance, &mut |_| {})
+    }
+
+    /// As [`Self::handle_utterance`], but calls `on_progress` with a real [`TaskProgress`] event
+    /// once per tick of a decomposed multi-task plan (see [`Self::run_decomposed_plan`]): a
+    /// `Starting` event naming every task about to be dispatched, *before* the real (potentially
+    /// slow) capability call blocks this thread, then one `Done` event per task once that same
+    /// blocking call returns. A real, previously-shipped UX gap this fixes: a real capability
+    /// dispatch can be a real, slow network call to a real cloud model, and this console used to
+    /// print nothing at all -- not even "this is running" -- while a multi-task plan
+    /// (`market_research` -> `{business_model, branding}` -> `legal_formation`, this workspace's
+    /// own built-in template) worked through several such calls in sequence.
+    pub fn handle_utterance_with_progress(
+        &mut self,
+        utterance: &str,
+        on_progress: &mut dyn FnMut(TaskProgress),
+    ) -> Vec<String> {
         if let Some(provider) = self.pending_connect.take() {
             return self.finish_connect(provider, utterance);
         }
         if let Some(pending) = self.pending_consent.take() {
             return self.finish_consent(pending, utterance);
+        }
+        let trimmed = utterance.trim();
+        if trimmed.to_ascii_lowercase().starts_with("/redo") {
+            let rest = trimmed["/redo".len()..].trim();
+            let (task_name, extra_context) = match rest.split_once(char::is_whitespace) {
+                Some((name, ctx)) => (name.trim(), ctx.trim()),
+                None => (rest, ""),
+            };
+            if task_name.is_empty() {
+                return vec![
+                    "\"/redo\" needs a task name, e.g. \"/redo market_research focus on the \
+                     European market only\"."
+                        .to_string(),
+                ];
+            }
+            return self.redo_task(task_name, extra_context.to_string(), on_progress);
         }
         if let Some(reply) = self.handle_meta_command(utterance) {
             return reply;
@@ -908,7 +986,7 @@ impl ConsoleSession {
         let (predicate, outcomes) = if ticket.ready_leaves.is_empty() {
             self.run_undecomposed_goal(root, utterance)
         } else {
-            self.run_decomposed_plan(&ticket)
+            self.run_decomposed_plan(&ticket, on_progress)
         };
 
         self.render_workspace(root, &turn_tag, &predicate, &outcomes)
@@ -1157,6 +1235,7 @@ impl ConsoleSession {
     fn run_decomposed_plan(
         &mut self,
         ticket: &hyperion_intent::ExecutionTicket,
+        on_progress: &mut dyn FnMut(TaskProgress),
     ) -> (String, Vec<TaskOutcome>) {
         let session_id = match self.coordination.create_session(
             &self.monitor,
@@ -1176,18 +1255,8 @@ impl ConsoleSession {
             }
         };
 
-        // Drive every dependency wave to completion -- each `allocate` call is one real tick;
-        // an empty result means every task is Done, Failed, or Blocked with nothing left ready.
-        loop {
-            match self
-                .coordination
-                .allocate(&self.monitor, &self.token, session_id)
-            {
-                Ok(records) if records.is_empty() => break,
-                Ok(_) => continue,
-                Err(_) => break,
-            }
-        }
+        self.last_plan_session_id = Some(session_id);
+        self.drive_ticks_to_completion(session_id, on_progress);
 
         let outcomes = match self
             .coordination
@@ -1210,21 +1279,164 @@ impl ConsoleSession {
         ("plan".to_string(), outcomes)
     }
 
+    /// Drives every dependency wave of `session_id`'s own real plan to completion -- each
+    /// `allocate` call is one real tick (its own ready tasks dispatched concurrently, not one at
+    /// a time -- see `hyperion_coordination::CoordinationSession::allocate`'s own doc comment);
+    /// an empty result means every task is Done, Failed, or Blocked with nothing left ready.
+    /// Shared by [`Self::run_decomposed_plan`] (a plan's first run) and [`Self::redo_task`] (a
+    /// `/redo`'d task's own re-run) -- both need the exact same tick-and-report loop, just
+    /// starting from a different plan state.
+    ///
+    /// `on_progress` fires `Starting` *before* each tick's real (potentially slow, blocking)
+    /// dispatch -- naming every task this tick is about to run concurrently, via the real
+    /// `ready_task_descriptions` peek -- and `Done` once per task after that same blocking call
+    /// returns. A real, previously-shipped UX gap this fixes: this console used to stay
+    /// completely silent (not even "this is running") until the *entire* plan converged -- a
+    /// real user actually hit and reported this.
+    fn drive_ticks_to_completion(
+        &mut self,
+        session_id: u64,
+        on_progress: &mut dyn FnMut(TaskProgress),
+    ) {
+        loop {
+            match self
+                .coordination
+                .ready_task_descriptions(&self.monitor, &self.token, session_id)
+            {
+                Ok(ready) if !ready.is_empty() => on_progress(TaskProgress::Starting(ready)),
+                _ => {}
+            }
+
+            match self
+                .coordination
+                .allocate(&self.monitor, &self.token, session_id)
+            {
+                Ok(records) if records.is_empty() => break,
+                Ok(records) => {
+                    if let Ok(plan) =
+                        self.coordination
+                            .get_plan(&self.monitor, &self.token, session_id)
+                    {
+                        for record in &records {
+                            if let Some(node) =
+                                plan.nodes.iter().find(|n| n.task_id == record.task_id)
+                            {
+                                on_progress(TaskProgress::Done(format!(
+                                    "  {}: {:?}",
+                                    node.description, node.status
+                                )));
+                            }
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    /// The real second half of `/redo <task> <extra instructions>`: resets `task_name` back to
+    /// `Unassigned` with `extra_context` recorded for its next dispatch (via
+    /// `hyperion_coordination::CoordinationSession::amend_task`), then re-drives this plan's real
+    /// ticks to completion exactly as its first run did -- `task_name` has no unmet dependency
+    /// (it just ran), so the very next tick picks it straight back up. Requires
+    /// [`Self::last_plan_session_id`] to already be set -- gives an honest "nothing to redo yet"
+    /// reply, not a panic or a silently-ignored command, if no decomposed plan has run this
+    /// session.
+    fn redo_task(
+        &mut self,
+        task_name: &str,
+        extra_context: String,
+        on_progress: &mut dyn FnMut(TaskProgress),
+    ) -> Vec<String> {
+        let Some(session_id) = self.last_plan_session_id else {
+            return vec![
+                "There's no plan to redo yet -- run a multi-task goal first (e.g. \"I need to \
+                 launch my startup\")."
+                    .to_string(),
+            ];
+        };
+
+        let dependents = match self.coordination.amend_task(
+            &self.monitor,
+            &self.token,
+            session_id,
+            task_name,
+            extra_context,
+        ) {
+            Ok(dependents) => dependents,
+            Err(hyperion_coordination::CoordError::TaskNotFound) => {
+                return vec![format!(
+                    "I don't have a task called \"{task_name}\" in the last plan."
+                )]
+            }
+            Err(e) => return vec![format!("I couldn't redo \"{task_name}\": {e}")],
+        };
+
+        self.drive_ticks_to_completion(session_id, on_progress);
+
+        let mut lines = match self
+            .coordination
+            .get_plan(&self.monitor, &self.token, session_id)
+        {
+            Ok(plan) => match plan
+                .nodes
+                .iter()
+                .find(|n| n.description.eq_ignore_ascii_case(task_name))
+            {
+                Some(node) => vec![format!(
+                    "  {}: {}",
+                    node.description,
+                    Self::render_task_detail(node)
+                )],
+                None => vec![format!(
+                    "Redone, but couldn't find \"{task_name}\" in the plan afterward."
+                )],
+            },
+            Err(e) => vec![format!("Redone, but couldn't read the plan back: {e}")],
+        };
+
+        if !dependents.is_empty() {
+            lines.push(format!(
+                "Note: {} already used the old result and won't be redone automatically -- \
+                 \"/redo\" them too if you want them updated.",
+                dependents.join(", ")
+            ));
+        }
+
+        lines
+    }
+
     /// `node.status` alone (`"Done"`) used to be the only real content this console could ever
     /// show for a task: `hyperion-coordination::allocate` discarded a real capability's own real
     /// output the instant it came back -- a real, previously-shipped bug, not a design choice
     /// (see that crate's own doc comment on the "launch my startup produces zero real content"
     /// gap this fixed). `TaskNode.result` now carries it, so a completed task's own real,
-    /// generated content is shown right alongside its status -- `"Done -- <text>"` rather than a
-    /// bare status word -- while every other status (still in progress, blocked, failed) renders
-    /// exactly as it always did.
+    /// generated content is shown right alongside its status -- `"Done -- <preview>"` rather than
+    /// a bare status word -- while every other status (still in progress, blocked, failed)
+    /// renders exactly as it always did.
+    ///
+    /// Deliberately a short preview, not the full text: a real cloud model's own real answer to
+    /// "draft a business model" can run to several paragraphs, and printing every task's full
+    /// text inline would flood the terminal the moment a real plan with several tasks completes.
+    /// The full text isn't lost -- `/result <task>` shows it directly, since `allocate` already
+    /// records it as its own real, linked `"task_result"` node. Deliberately points at `/result`,
+    /// not `/recall <task>` -> `/why <n>`: a real model's own generated prose often naturalizes a
+    /// task's snake_case predicate into plain words (e.g. `legal_formation`'s own real result
+    /// talks about "legal formation," never the literal string), so a plain text search can miss
+    /// the very result a user is looking for -- `/result` finds it via the real graph edge
+    /// instead.
     fn render_task_detail(node: &TaskNode) -> String {
         match node
             .result
             .as_ref()
             .and_then(crate::graph_explorer::render_capability_result)
         {
-            Some(text) => format!("{:?} -- {text}", node.status),
+            Some(text) => format!(
+                "{:?} -- {} (see \"/result {}\" for the full text)",
+                node.status,
+                crate::graph_explorer::preview(&text),
+                node.description
+            ),
             None => format!("{:?}", node.status),
         }
     }

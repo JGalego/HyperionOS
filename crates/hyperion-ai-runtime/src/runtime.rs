@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
@@ -45,7 +45,14 @@ pub struct LocalAiRuntime {
     registry: Mutex<ModelRegistry>,
     residency: Mutex<ResidencyManager>,
     power_mode: Mutex<PowerMode>,
-    backend: Mutex<Box<dyn InferenceBackend>>,
+    /// `Arc`, not a bare `Box`, specifically so [`Self::infer`] can clone the *currently* active
+    /// backend out from behind this lock and call its real (potentially slow -- a real network
+    /// round trip to a real cloud model) `generate` with no lock held at all. A real,
+    /// previously-shipped bottleneck this fixes: holding this lock across `generate` itself would
+    /// serialize every concurrent `infer` call in the whole runtime behind it, no matter how many
+    /// real OS threads a caller spawned to dispatch independent work -- the same class of bug
+    /// [`hyperion_agent_runtime::AgentRuntime::invoke`]'s own three-phase split fixes one layer up.
+    backend: Mutex<Arc<dyn InferenceBackend>>,
     total_capacity_mb: u32,
     next_request_id: AtomicU64,
 }
@@ -56,7 +63,7 @@ impl LocalAiRuntime {
             registry: Mutex::new(ModelRegistry::default()),
             residency: Mutex::new(ResidencyManager::default()),
             power_mode: Mutex::new(PowerMode::Performance),
-            backend: Mutex::new(backend),
+            backend: Mutex::new(Arc::from(backend)),
             total_capacity_mb,
             next_request_id: AtomicU64::new(1),
         }
@@ -67,7 +74,7 @@ impl LocalAiRuntime {
     /// Takes effect starting with the very next [`Self::infer`] call; registered models,
     /// residency, and power mode are untouched.
     pub fn set_backend(&self, backend: Box<dyn InferenceBackend>) {
-        *self.backend.lock().unwrap() = backend;
+        *self.backend.lock().unwrap() = Arc::from(backend);
     }
 
     /// Registers a model artifact after checking its real Ed25519 signature — docs/22
@@ -195,7 +202,12 @@ impl LocalAiRuntime {
         };
 
         self.load(model_id, &variant)?;
-        let text = self.backend.lock().unwrap().generate(model_id, request);
+        // Clone the `Arc` (cheap: a refcount bump, not a copy of the backend itself) and drop
+        // the lock immediately -- `generate` below runs with no lock held, so it can be a real,
+        // slow network call without serializing any other concurrent `infer` call. See this
+        // struct's own `backend` field doc comment.
+        let backend = self.backend.lock().unwrap().clone();
+        let text = backend.generate(model_id, request);
         self.residency.lock().unwrap().touch(model_id, now());
         let _request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
 
