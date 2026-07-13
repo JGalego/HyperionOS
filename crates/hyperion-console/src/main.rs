@@ -1,10 +1,15 @@
 //! The real stdin/stdout loop around [`hyperion_console::ConsoleSession`] -- all the real logic
 //! lives there and is tested directly; this binary is only real terminal I/O plumbing.
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 
 use hyperion_console::secret_input::RawEchoOff;
 use hyperion_console::ConsoleSession;
+
+const BANNER: &str = r#" _  ___   _____ ___ ___ ___ ___  _  _
+| || \ \ / / _ \ __| _ \_ _/ _ \| \| |
+| __ |\ V /|  _/ _||   /| | (_) | .` |
+|_||_| |_| |_| |___|_|_\___\___/|_|\_|"#;
 
 fn main() {
     let data_dir = std::env::var("HYPERION_CONSOLE_DATA_DIR")
@@ -21,8 +26,14 @@ fn main() {
         }
     };
 
+    // Only for a real interactive terminal -- a screen reader, a pipe, or a redirected/scripted
+    // caller gets straight to the one line that actually matters, not decorative noise before it.
+    if io::stdout().is_terminal() {
+        println!();
+        println!("{BANNER}");
+    }
     println!();
-    println!("Hyperion -- tell me what you'd like to do.");
+    println!("You ask. I understand.");
     println!();
 
     let stdin = io::stdin();

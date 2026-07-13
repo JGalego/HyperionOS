@@ -455,3 +455,30 @@ fn cloud_consent_lifecycle_grants_in_session_but_reasks_fresh_after_a_restart() 
 
     std::env::remove_var("HYPERION_OPENAI_BASE_URL");
 }
+
+/// A real bug report motivated this: a user's real OpenAI key kept failing with a real 401 even
+/// though they believed it was correct, with no way to verify what actually got stored short of
+/// exposing the real secret. Doesn't need `openai-compat` -- this only exercises the storage/
+/// confirmation step, never a real connection.
+#[test]
+fn connect_strips_stray_control_characters_and_shows_a_masked_preview_not_the_real_secret() {
+    let (_dir, mut session) = open_session();
+
+    session.handle_utterance("connect my openai account");
+    // A real, observed terminal-artifact class: a stray embedded control character (here, a
+    // literal NUL) that `.trim()` alone doesn't catch, since it only trims *leading/trailing*
+    // Unicode whitespace, not a character sitting in the middle of the line.
+    let dirty_key = "sk-real\u{0}keyvalue1234";
+    let stored = session.handle_utterance(dirty_key).join("\n");
+
+    assert!(stored.contains("Connected"), "got: {stored:?}");
+    assert!(
+        !stored.contains("sk-realkeyvalue1234") && !stored.contains(dirty_key),
+        "the confirmation must never show the real secret (cleaned or as-typed), got: {stored:?}"
+    );
+    assert!(
+        stored.contains("sk-r...1234"),
+        "expected a masked preview reflecting the real, control-character-stripped key, got: \
+         {stored:?}"
+    );
+}

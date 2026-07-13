@@ -36,6 +36,21 @@ fn now() -> u64 {
         .as_secs()
 }
 
+/// A safe, non-revealing preview of a real secret -- just enough (a real prefix/suffix, the same
+/// convention every real API-key management UI already uses) for a user to visually confirm what
+/// actually got stored, without this crate ever displaying the real secret itself anywhere. Used
+/// by [`ConsoleSession::finish_connect`] so a corrupted paste (a stray control character, a
+/// terminal artifact) is visible immediately, not discovered later as an opaque real 401.
+fn mask_secret(secret: &str) -> String {
+    let chars: Vec<char> = secret.chars().collect();
+    if chars.len() <= 8 {
+        return "*".repeat(chars.len());
+    }
+    let prefix: String = chars[..4].iter().collect();
+    let suffix: String = chars[chars.len() - 4..].iter().collect();
+    format!("{prefix}...{suffix}")
+}
+
 /// One real outcome (an HTN task, or the single undecomposed goal) about to be rendered as one
 /// real Workspace panel.
 struct TaskOutcome {
@@ -867,14 +882,24 @@ impl ConsoleSession {
     /// This grant does NOT persist to the next boot -- see [`Self::secret_store`]'s own doc
     /// comment on why a fresh restart still re-asks once, for real, on first real use.
     fn finish_connect(&mut self, provider: CloudProvider, api_key_line: &str) -> Vec<String> {
-        let api_key = api_key_line.trim();
+        // A real API key never legitimately contains a control character -- stripping them
+        // defends against a real, observed failure mode: some terminals wrap pasted text in
+        // escape sequences (bracketed-paste markers) or leave a stray `\r`, which `.trim()`
+        // alone doesn't catch (it only trims Unicode *whitespace*, and ESC/CR aren't
+        // whitespace). A key silently corrupted this way looks fine to type but fails real
+        // authentication with a real, honest 401 -- exactly the report that motivated this.
+        let api_key: String = api_key_line
+            .trim()
+            .chars()
+            .filter(|c| !c.is_control())
+            .collect();
         if api_key.is_empty() {
             return vec![format!(
                 "No key entered -- not connecting your {} account.",
                 provider.label()
             )];
         }
-        if let Err(e) = self.secret_store.set(provider.label(), api_key) {
+        if let Err(e) = self.secret_store.set(provider.label(), &api_key) {
             return vec![format!("I couldn't save that key: {e}")];
         }
         let _ = self.agent_runtime.grant_capability(
@@ -884,7 +909,10 @@ impl ConsoleSession {
             provider.capability_ref(),
         );
         vec![format!(
-            "Connected. I can use {} now when it's the best fit -- try \"/backend {} <model>\".",
+            "Connected ({}, {} characters). I can use {} now when it's the best fit -- try \
+             \"/backend {} <model>\".",
+            mask_secret(&api_key),
+            api_key.chars().count(),
             provider.label(),
             provider.label()
         )]
