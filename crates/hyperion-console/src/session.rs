@@ -64,22 +64,87 @@ pub struct ConsoleSession {
 
 /// Which real [`hyperion_ai_runtime::InferenceBackend`] is currently answering
 /// `assistant.respond` calls -- tracked here (not in `hyperion-ai-runtime` itself) because
-/// "candle" vs "mock" are console-level, human-facing labels for backends this crate is the one
-/// that actually constructs; the runtime crate only knows the trait object, never these names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// "candle"/"mock"/a local engine's own label are console-level, human-facing labels for
+/// backends this crate is the one that actually constructs; the runtime crate only knows the
+/// trait object, never these names. Not `Copy` (unlike its first two variants alone would allow)
+/// because `Engine` carries real, runtime-chosen connection details.
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum BackendKind {
     /// A real, small, CPU-only Candle model -- see [`hyperion_ai_runtime::CandleBackend`].
     Candle,
     /// The deterministic echo stub -- see [`MockBackend`]. Never a real answer, only ever a
     /// dev/test fallback or explicit choice.
     Mock,
+    /// A real OpenAI-compatible local engine or proxy -- see
+    /// [`hyperion_ai_runtime::OpenAiCompatBackend`]. `base_url` never has a trailing slash
+    /// (normalized in [`ConsoleSession::parse_engine_args`]), so `PartialEq`-based no-op
+    /// detection in [`ConsoleSession::switch_backend`] isn't fooled by a trailing-slash-only
+    /// difference.
+    Engine {
+        engine: EngineKind,
+        base_url: String,
+        model: String,
+    },
 }
 
 impl BackendKind {
-    fn name(self) -> &'static str {
+    fn label(&self) -> String {
         match self {
-            BackendKind::Candle => "candle",
-            BackendKind::Mock => "mock",
+            BackendKind::Candle => "candle".to_string(),
+            BackendKind::Mock => "mock".to_string(),
+            BackendKind::Engine {
+                engine,
+                base_url,
+                model,
+            } => format!("{} (model {model:?} at {base_url})", engine.label()),
+        }
+    }
+}
+
+/// One well-known OpenAI-compatible local engine/proxy preset, plus `Custom` for anything else
+/// speaking the same protocol -- see [`hyperion_ai_runtime::openai_compat_backend`]'s own doc
+/// comment on why one backend implementation covers all of these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EngineKind {
+    Ollama,
+    VLlm,
+    LiteLlm,
+    /// No preset default base URL -- the caller must give one explicitly.
+    Custom,
+}
+
+impl EngineKind {
+    fn label(self) -> &'static str {
+        match self {
+            EngineKind::Ollama => "ollama",
+            EngineKind::VLlm => "vllm",
+            EngineKind::LiteLlm => "litellm",
+            EngineKind::Custom => "custom",
+        }
+    }
+
+    /// Each preset's own well-known documented default port; `None` for `Custom`, which has no
+    /// such convention and must always be given a real base URL explicitly.
+    fn default_base_url(self) -> Option<&'static str> {
+        match self {
+            EngineKind::Ollama => Some("http://localhost:11434/v1"),
+            EngineKind::VLlm => Some("http://localhost:8000/v1"),
+            EngineKind::LiteLlm => Some("http://localhost:4000/v1"),
+            EngineKind::Custom => None,
+        }
+    }
+
+    /// The env var this engine's optional bearer key (if its server needs one at all -- Ollama
+    /// and vLLM typically don't; a self-hosted LiteLLM proxy often does) is read from --
+    /// namespaced per engine so one provider's key can never leak onto another's connection.
+    /// Only used by [`ConsoleSession::try_connect_engine`]'s real (`openai-compat`-gated) arm.
+    #[cfg(feature = "openai-compat")]
+    fn api_key_env_var(self) -> &'static str {
+        match self {
+            EngineKind::Ollama => "HYPERION_OLLAMA_API_KEY",
+            EngineKind::VLlm => "HYPERION_VLLM_API_KEY",
+            EngineKind::LiteLlm => "HYPERION_LITELLM_API_KEY",
+            EngineKind::Custom => "HYPERION_CUSTOM_API_KEY",
         }
     }
 }
@@ -225,17 +290,50 @@ impl ConsoleSession {
         )
     }
 
-    /// The `/backend <name>` / `use backend <name>` meta-command's real effect: swaps
-    /// [`Self::ai_runtime`]'s live backend in place via
+    /// As [`Self::try_load_candle`], for the `openai-compat` feature's real
+    /// [`hyperion_ai_runtime::OpenAiCompatBackend`] -- shared by [`Self::switch_backend`]'s
+    /// `Engine` arm. Unlike Candle there's no startup-time counterpart: an engine backend is
+    /// only ever reached via an explicit `/backend`/`use backend` switch after boot, never
+    /// auto-selected (see [`Self::build_ai_runtime`], which stays candle-or-mock-only).
+    #[cfg(feature = "openai-compat")]
+    fn try_connect_engine(
+        engine: EngineKind,
+        base_url: &str,
+        model: &str,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        let api_key = std::env::var(engine.api_key_env_var()).ok();
+        hyperion_ai_runtime::OpenAiCompatBackend::connect(base_url, model, api_key)
+            .map(|backend| Box::new(backend) as Box<dyn hyperion_ai_runtime::InferenceBackend>)
+            .map_err(|e| {
+                format!(
+                    "couldn't connect to the real {} server: {e}",
+                    engine.label()
+                )
+            })
+    }
+
+    #[cfg(not(feature = "openai-compat"))]
+    fn try_connect_engine(
+        _engine: EngineKind,
+        _base_url: &str,
+        _model: &str,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        Err("this build wasn't compiled with real local-engine support \
+             (--features openai-compat)"
+            .to_string())
+    }
+
+    /// The `/backend <name> [args...]` / `use backend <name> [args...]` meta-command's real
+    /// effect: swaps [`Self::ai_runtime`]'s live backend in place via
     /// [`hyperion_ai_runtime::LocalAiRuntime::set_backend`] -- no restart, no new session, every
     /// other piece of state (Knowledge Graph, capability token, registered model descriptor)
     /// untouched. A no-op (with its own honest reply) if `kind` is already active, so repeating
     /// the command is always safe.
     fn switch_backend(&mut self, kind: BackendKind) -> String {
         if kind == self.current_backend {
-            return format!("Already using the {} backend.", kind.name());
+            return format!("Already using the {} backend.", kind.label());
         }
-        let backend = match kind {
+        let backend = match &kind {
             BackendKind::Mock => {
                 Box::new(MockBackend) as Box<dyn hyperion_ai_runtime::InferenceBackend>
             }
@@ -243,10 +341,19 @@ impl ConsoleSession {
                 Ok(backend) => backend,
                 Err(e) => return format!("I couldn't switch: {e}."),
             },
+            BackendKind::Engine {
+                engine,
+                base_url,
+                model,
+            } => match Self::try_connect_engine(*engine, base_url, model) {
+                Ok(backend) => backend,
+                Err(e) => return format!("I couldn't switch: {e}."),
+            },
         };
         self.ai_runtime.set_backend(backend);
+        let label = kind.label();
         self.current_backend = kind;
-        format!("Switched to the {} backend.", kind.name())
+        format!("Switched to the {label} backend.")
     }
 
     /// Recognizes the console's small set of meta-commands -- session/runtime controls, not
@@ -277,21 +384,78 @@ impl ConsoleSession {
         if arg.is_empty() {
             return Some(vec![format!(
                 "Currently using the {} backend.",
-                self.current_backend.name()
+                self.current_backend.label()
             )]);
         }
 
-        let kind = match arg.to_ascii_lowercase().as_str() {
+        let mut tokens = arg.split_whitespace();
+        let kind_name = tokens.next().unwrap_or_default().to_ascii_lowercase();
+        let rest: Vec<&str> = tokens.collect();
+
+        let kind = match kind_name.as_str() {
             "candle" | "real" | "llama" => BackendKind::Candle,
             "mock" | "echo" => BackendKind::Mock,
+            "ollama" | "vllm" | "litellm" | "custom" => {
+                let engine = match kind_name.as_str() {
+                    "ollama" => EngineKind::Ollama,
+                    "vllm" => EngineKind::VLlm,
+                    "litellm" => EngineKind::LiteLlm,
+                    _ => EngineKind::Custom,
+                };
+                match Self::parse_engine_args(engine, &rest) {
+                    Ok((base_url, model)) => BackendKind::Engine {
+                        engine,
+                        base_url,
+                        model,
+                    },
+                    Err(e) => return Some(vec![e]),
+                }
+            }
             other => {
                 return Some(vec![format!(
-                    "I don't know a \"{other}\" backend -- try \"candle\" or \"mock\"."
+                    "I don't know a \"{other}\" backend -- try \"candle\", \"mock\", \
+                     \"ollama\", \"vllm\", \"litellm\", or \"custom\"."
                 )])
             }
         };
 
         Some(vec![self.switch_backend(kind)])
+    }
+
+    /// Parses the `<model> [base_url]` shape (preset engines, `base_url` optional -- see
+    /// [`EngineKind::default_base_url`]) or `<base_url> <model>` shape (`custom`, no preset,
+    /// both required) for one engine kind. `base_url` is normalized (trailing slash trimmed)
+    /// here, the one place both call paths (preset and custom) funnel through.
+    fn parse_engine_args(engine: EngineKind, args: &[&str]) -> Result<(String, String), String> {
+        match engine {
+            EngineKind::Custom => match args {
+                [base_url, model] => Ok((
+                    base_url.trim_end_matches('/').to_string(),
+                    model.to_string(),
+                )),
+                _ => Err("\"custom\" needs both a base URL and a model name: \
+                     /backend custom <base_url> <model>"
+                    .to_string()),
+            },
+            _ => match args {
+                [model] => Ok((
+                    engine
+                        .default_base_url()
+                        .expect("preset engines always have a default base_url")
+                        .to_string(),
+                    model.to_string(),
+                )),
+                [model, base_url] => Ok((
+                    base_url.trim_end_matches('/').to_string(),
+                    model.to_string(),
+                )),
+                _ => Err(format!(
+                    "\"{}\" needs a model name: /backend {} <model> [base_url]",
+                    engine.label(),
+                    engine.label()
+                )),
+            },
+        }
     }
 
     fn help_text() -> Vec<String> {
@@ -300,11 +464,19 @@ impl ConsoleSession {
                 .to_string(),
             String::new(),
             "A couple of things you can also ask directly:".to_string(),
-            "  /backend <candle|mock>   switch which inference backend answers you (also: \
+            "  /backend <candle|mock>                     switch to a built-in backend (also: \
              \"use backend <name>\")"
                 .to_string(),
-            "  /backend                 show which backend is active right now".to_string(),
-            "  /help                    show this message".to_string(),
+            "  /backend <ollama|vllm|litellm> <model> [base_url]".to_string(),
+            "                                              switch to a real local engine or proxy"
+                .to_string(),
+            "  /backend custom <base_url> <model>         switch to any other \
+             OpenAI-compatible server"
+                .to_string(),
+            "  /backend                                    show which backend is active right \
+             now"
+            .to_string(),
+            "  /help                                        show this message".to_string(),
         ]
     }
 

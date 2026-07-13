@@ -252,3 +252,180 @@ fn help_command_lists_the_backend_meta_command() {
         "/help must not also fall through to a real Agent invocation, got: {joined:?}"
     );
 }
+
+// This build's own switch attempt would otherwise make a real network call -- if
+// `--features openai-compat` is enabled, "not compiled with this feature" isn't the real
+// behavior to expect anymore (see `a_custom_engine_backend_switch_reaches_a_real_local_server_
+// end_to_end` for that build's own real-connection coverage instead).
+#[cfg(not(feature = "openai-compat"))]
+#[test]
+fn a_local_engine_switch_on_a_non_openai_compat_build_gives_an_honest_error() {
+    let (_dir, mut session) = open_session();
+
+    let failed = session
+        .handle_utterance("/backend ollama llama3.2")
+        .join("\n");
+    assert!(
+        failed.contains("--features openai-compat"),
+        "a non-openai-compat build must give a clear, honest reason it can't switch, got: \
+         {failed:?}"
+    );
+    assert!(
+        !failed.contains("generic_goal"),
+        "a meta-command reply must not also render a goal outcome, got: {failed:?}"
+    );
+}
+
+#[test]
+fn engine_backend_argument_parsing_gives_clear_errors_for_missing_arguments() {
+    let (_dir, mut session) = open_session();
+
+    let missing_model = session.handle_utterance("/backend ollama").join("\n");
+    assert!(
+        missing_model.contains("needs a model name"),
+        "expected a clear error when a preset engine is given no model, got: {missing_model:?}"
+    );
+
+    let missing_args = session
+        .handle_utterance("/backend custom http://localhost:9000/v1")
+        .join("\n");
+    assert!(
+        missing_args.contains("needs both a base URL and a model name"),
+        "expected a clear error when \"custom\" is given only one argument, got: {missing_args:?}"
+    );
+
+    let unknown = session
+        .handle_utterance("/backend sagemaker some-model")
+        .join("\n");
+    assert!(
+        unknown.contains("I don't know a"),
+        "expected a clear error for a completely unrecognized backend name, got: {unknown:?}"
+    );
+}
+
+#[cfg(feature = "openai-compat")]
+#[test]
+fn a_custom_engine_backend_switch_reaches_a_real_local_server_end_to_end() {
+    // A minimal, hand-rolled real HTTP/1.1 fixture server -- same move as
+    // hyperion-ai-runtime/tests/openai_compat_backend.rs, trimmed down here to prove this
+    // crate's own `/backend custom <base_url> <model>` command parsing and wiring reach a real
+    // backend end-to-end, not the backend's own HTTP mechanics again.
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+
+    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack.windows(needle.len()).position(|w| w == needle)
+    }
+
+    fn respond_json(stream: &mut TcpStream, body: &str) {
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write a real response to a real socket");
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a real ephemeral local port");
+    let addr = listener
+        .local_addr()
+        .expect("a real bound socket has a real local address");
+
+    thread::spawn(move || {
+        for _ in 0..2 {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let (path, body_text) = loop {
+                let n = stream
+                    .read(&mut chunk)
+                    .expect("read a real request off a real socket");
+                if n == 0 {
+                    break (String::new(), String::new());
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                let Some(header_end) = find_subslice(&buf, b"\r\n\r\n") else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&buf[..header_end]).to_string();
+                let path = headers
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_string();
+                let content_length: usize = headers
+                    .lines()
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().to_string())
+                    })
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                let body_start = header_end + 4;
+                while buf.len() < body_start + content_length {
+                    let n = stream
+                        .read(&mut chunk)
+                        .expect("read the rest of a real request body off a real socket");
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let body = String::from_utf8_lossy(
+                    &buf[body_start..buf.len().min(body_start + content_length)],
+                )
+                .to_string();
+                break (path, body);
+            };
+
+            if path == "/v1/models" {
+                respond_json(
+                    &mut stream,
+                    r#"{"object":"list","data":[{"id":"fixture-model","object":"model"}]}"#,
+                );
+            } else {
+                let request: serde_json::Value =
+                    serde_json::from_str(&body_text).unwrap_or_default();
+                let prompt = request["messages"][0]["content"]
+                    .as_str()
+                    .unwrap_or_default();
+                respond_json(
+                    &mut stream,
+                    &format!(
+                        r#"{{"choices":[{{"message":{{"content":"console fixture echo: {prompt}"}}}}]}}"#
+                    ),
+                );
+            }
+        }
+    });
+
+    let (_dir, mut session) = open_session();
+    let base_url = format!("http://{addr}/v1");
+
+    let switch = session
+        .handle_utterance(&format!("/backend custom {base_url} fixture-model"))
+        .join("\n");
+    assert!(
+        switch.starts_with("Switched to the custom") && switch.contains("fixture-model"),
+        "expected a real connection to the real fixture server to succeed, got: {switch:?}"
+    );
+
+    let answer = session
+        .handle_utterance("what does the real fixture say")
+        .join("\n");
+    assert!(
+        answer.contains("console fixture echo: what does the real fixture say"),
+        "expected the real fixture server's own response to come back through a real \
+         assistant.respond dispatch, got: {answer:?}"
+    );
+}

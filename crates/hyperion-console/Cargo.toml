@@ -36,3 +36,8 @@ candle = ["hyperion-ai-runtime/candle"]
 # (PRODUCTION_BOOT_PROMPT.md M10) -- same reasoning as `candle` above, forwarding to
 # `hyperion-netstack`'s own `real-http` feature.
 real-http = ["hyperion-netstack/real-http"]
+# Real, feature-gated HTTP inference against any OpenAI-compatible local engine (Ollama, vLLM,
+# a self-hosted LiteLLM proxy) via the console's own `/backend`/`use backend` meta-command
+# (PRODUCTION_BOOT_PROMPT.md "Phase 1: local-engine backends") -- same reasoning as `candle`
+# above, forwarding to `hyperion-ai-runtime`'s own `openai-compat` feature.
+openai-compat = ["hyperion-ai-runtime/openai-compat"]

@@ -22,6 +22,12 @@
 //! [`InferenceBackend`] running a real, small Candle-loaded model on CPU. `MockBackend` remains
 //! the default for every existing test and every caller that doesn't opt in.
 //!
+//! "Phase 1: local-engine backends" adds a second, independent real backend: behind the
+//! `openai-compat` Cargo feature (also off by default), [`openai_compat_backend::
+//! OpenAiCompatBackend`] speaks the OpenAI-compatible `/v1/chat/completions` REST shape any
+//! Ollama/vLLM/self-hosted-LiteLLM server exposes -- one implementation, parameterized by
+//! `base_url`/`model`, standing in for in-process Candle when a real local engine is preferred.
+//!
 //! Deliberately deferred, and why:
 //!
 //! - **Real model execution** is no longer fully deferred -- see the M8 note above -- but
@@ -49,6 +55,8 @@
 
 #[cfg(feature = "candle")]
 pub mod candle_backend;
+#[cfg(feature = "openai-compat")]
+pub mod openai_compat_backend;
 mod registry;
 mod residency;
 mod runtime;
@@ -56,6 +64,8 @@ mod types;
 
 #[cfg(feature = "candle")]
 pub use candle_backend::{CandleBackend, CandleBackendError};
+#[cfg(feature = "openai-compat")]
+pub use openai_compat_backend::{OpenAiCompatBackend, OpenAiCompatError};
 pub use registry::{sign, verify, MockBackend};
 pub use runtime::{InferenceBackend, LocalAiRuntime, RuntimeError};
 pub use types::{

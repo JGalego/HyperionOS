@@ -21,6 +21,20 @@ hf-hub = { version = "1.0", optional = true, features = ["blocking"] }
 # (PRODUCTION_BOOT_PROMPT.md's boot image) has no such toolchain available; matching candle-core's
 # own restraint here avoids a C++ dependency this crate's own real caller never needed.
 tokenizers = { version = "0.23", optional = true, default-features = false, features = ["onig"] }
+# Not in the root workspace [workspace.dependencies] table (unlike serde/serde_json below), so
+# this is a direct versioned dep -- matches how hyperion-netstack's own `real-http` feature
+# declares it. `rustls-tls-webpki-roots` bundles a Mozilla root store *into the binary*, avoiding
+# the CA-bundle-baking problem `candle`'s own `hf-hub` dependency needed
+# boot/scripts/bake-candle-cache.sh to solve (see that script's doc comment): this new client
+# never needs the OS's own trust store to be present at all. "json" adds the thin
+# `RequestBuilder::json()`/`Response::json()` convenience wrappers over serde_json.
+reqwest = { version = "0.12", optional = true, default-features = false, features = [
+    "blocking",
+    "json",
+    "rustls-tls-webpki-roots",
+] }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
@@ -39,3 +53,9 @@ candle = [
     "dep:hf-hub",
     "dep:tokenizers",
 ]
+# Real, feature-gated HTTP inference against any OpenAI-compatible server (PRODUCTION_BOOT_PROMPT.md
+# "Phase 1: local-engine backends") -- Ollama, vLLM, and a self-hosted LiteLLM proxy all speak (or
+# can speak) the same `/v1/chat/completions`+`/v1/models` shape, so one backend covers all three
+# (and OpenAI itself, later) by `base_url`/`model` alone. Off by default for the same reason
+# `candle` is: every host-side dev/test build stays fast and network-free on MockBackend.
+openai-compat = ["dep:reqwest", "dep:serde", "dep:serde_json"]

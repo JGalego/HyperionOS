@@ -653,6 +653,60 @@ rootless-extraction-plus-hand-corrected-specs-file hack, sandbox-specific, not s
 into shared infra unmodified) -- named as the next real piece of work if a fully automated
 candle-image build pipeline is wanted, not attempted here.
 
+**M8 follow-up (2026-07-12, undocumented until now): a runtime backend switch.** `LocalAiRuntime`'s
+single `backend` field became a `Mutex<Box<dyn InferenceBackend>>` with a `set_backend` swap, and
+`hyperion-console` gained a `/backend <name>` / `use backend <name>` (deliberately the full three
+words, never the bare `use <name>` -- "candle"/"mock" are ordinary enough words that a shorter
+phrase could collide with a real goal utterance) meta-command, checked ahead of the intent engine
+since it's a runtime control, not a goal. Lets a running console move between `CandleBackend` and
+`MockBackend` with no restart. `/help` added alongside it.
+
+**M8 follow-up (2026-07-13): "Phase 1: local-engine backends" -- Ollama, vLLM, and LiteLLM.** The
+user asked Hyperion to reach "all major model providers/engines/proxies"; scoped deliberately to
+local engines first (no API keys, no real money, no consent-gate friction), with cloud providers
+(OpenAI/Anthropic/Gemini, needing real secret storage and a real consent gate) an explicit, later,
+separate phase -- see this session's own design-review findings on why: today's `hyperion-crypto::
+Keystore` is a single hard-coded 32-byte Ed25519 seed with no encryption-at-rest and no generic
+secret-slot API (unsuitable for provider keys as-is), while the consent mechanism a cloud phase
+would reuse already exists and works (`hyperion-agent-runtime`'s `PendingConsent`/`resolve_consent`
+round trip) -- and `hyperion-model-router`'s real `cloud_consent` gate is fed a hardcoded `true` at
+its one real call site (`router_bridge.rs`) today, a seam for that later phase to close, not this
+one. Also confirmed and deliberately not touched here: the live console bypasses
+`hyperion-model-router`/`hyperion-api-gateway` entirely (`dispatch_assistant_respond` calls
+`LocalAiRuntime::infer` directly with a hardcoded `ModelClass`) -- a large, pre-existing,
+separate gap.
+
+Ollama, vLLM, and a self-hosted LiteLLM proxy all speak (or can speak) the same OpenAI-compatible
+`/v1/chat/completions`+`/v1/models` REST shape, so one new backend --
+`hyperion_ai_runtime::openai_compat_backend::OpenAiCompatBackend`, feature-gated behind a new
+`openai-compat` Cargo feature (off by default, same convention as `candle`) -- covers all three via
+`base_url`/`model` alone, rather than three bespoke clients. Its `connect()` does a real, eager
+`GET {base_url}/models` at construction time (mirroring `CandleBackend::load()`'s own real-work-
+eagerly precedent): `generate()` can't return a `Result` (the trait's own contract embeds every
+failure as `"[backend error: ...]"` text instead), so deferring the check would let the console's
+own backend-switch meta-command falsely report success and only surface a real failure garbled
+into the next answer. Uses `rustls-tls-webpki-roots` (a bundled root store, like
+`hyperion-netstack`'s own `real-http` feature) rather than repeating `hf-hub`'s CA-bundle-baking
+problem from the M8 follow-up above.
+
+`hyperion-console`'s `/backend`/`use backend` grammar extends (doesn't replace) the existing
+`candle`/`mock` zero-arg form: `/backend <ollama|vllm|litellm> <model> [base_url]` (each preset's
+own well-known default port used when `base_url` is omitted) and `/backend custom <base_url>
+<model>` (no preset, both required) for any other OpenAI-compatible server. An optional per-engine
+bearer key (Ollama/vLLM typically need none; a self-hosted LiteLLM proxy often does) is read from
+a namespaced env var (`HYPERION_OLLAMA_API_KEY` etc.) so one provider's key can never leak onto
+another's connection.
+
+Tested two ways, both real: (1) a hand-rolled, minimal HTTP/1.1 fixture server on an ephemeral
+local port (`std::net::TcpListener`, no new dependency) proving a genuine request/response round
+trip without needing a real engine installed in CI/sandbox -- the same move `real_web_fetch.rs`'s
+own doc comment records this workspace already made once, replacing a flaky remote test host with
+a fully local, deterministic one; and (2) live, against a real Ollama instance this sandbox
+happened to already have running (`gemma3:270m`, real weights, real generation): `/backend ollama
+gemma3:270m`, a real prompt ("say hello in exactly five words" -> "Hello!"; "what is 2 plus 2" ->
+"2 + 2 = 4"), `/backend mock`, back again, all in one running process. `cargo build/test/fmt/clippy`
+all pass across every feature combination (none / `candle` / `openai-compat` / both).
+
 **M9 completion note (2026-07-11):** new crate `hyperion-crypto` is the real primitive every one
 of the five named non-cryptographic checksum/hash stand-ins now depends on: real Ed25519
 signing/verification (`ed25519-dalek`), real BLAKE3 content hashing (this workspace's own
