@@ -757,6 +757,46 @@ instance's own `bound_intent` (scheduler bookkeeping only) is `None` forever now
 single root `NodeId` at session-open time to bind it to -- cosmetic, not correctness-affecting for
 the real admission gate.
 
+**M8 follow-up (2026-07-13): "explore the Knowledge Graph" -- `/recall`, `/why`, `/related`.** The
+user wanted user-friendly slash commands to browse whatever the console's own, real
+`hyperion-knowledge-graph` has recorded -- confirmed the console already opens a real
+`KnowledgeGraph` at `open()` (`console_knowledge_graph.jsonl`) and it's genuinely populated in
+normal use (`hyperion-intent::engine` writes a real `"intent"` node on every utterance, decomposed
+or not), but nothing before this exposed it -- it only ever fed `ContextEngine`/`NetstackHub`
+internally. New `crates/hyperion-console/src/graph_explorer.rs::GraphExplorer` wraps the three
+read-only calls this needed (`KnowledgeGraph::query`/`traverse`/`explain`/`get`, all already
+`RightsMask::READ`-gated and satisfied by this session's own root token) behind session-local
+numbered references (`[1]`, `[2]`...) -- no raw `NodeId` is ever shown, matching CLAUDE.md's
+"never expose... internals" and "progressive complexity": `/recall [text]` searches (bare, lists
+everything recent), `/why <n>` explains a result's own provenance (CLAUDE.md's Explainability
+questions -- why, how, how connected -- applied to one recorded thing), `/related <n>` shows what's
+connected to it and re-numbers so results chain.
+
+Deliberately `/`-only, with **no** plain-English alias unlike `/backend`/`use backend` -- named as
+the one real judgment call: phrases like "what do you know about X" or "remember X" are exactly
+what a future real memory-recall Intent should own, and hard-coding them here as a meta-command
+would squat on that surface before that Intent exists. Also deliberately honest about scope:
+`/recall`'s search is a plain, case-insensitive text match over rendered node descriptions, not
+semantic search -- no embedding pipeline is wired into this console (`hyperion-ai-runtime` exposes
+no `embed()` call at all today), so pretending otherwise would overclaim a capability that isn't
+real.
+
+Rendering required actually reading what `hyperion-intent` writes, not assuming a shape: a
+decomposed goal's own child tasks (e.g. "market_research") share the same `"intent"` object type
+as the real root utterance but carry an empty `raw_utterance` (`hyperion_intent::engine::decompose`
+never sets one, since nobody actually said "market_research") -- both `describe()` (the numbered-
+list line) and `friendly_type()` (`/why`'s own opening line) branch on that, falling back to the
+task's own `predicate` field. A real bug in an early version of this work had only `describe()`
+make that distinction; `friendly_type()` still called every task "something you asked" -- found by
+actually driving the built-in "launch my startup" HTN template through a live process
+(`/recall market_research` -> `/why 1`), not by reading the code, and fixed by extracting a shared
+`utterance_text()` helper both functions now call. Proven for real end-to-end: the built-in HTN
+template's own real `depends_on` edges (`business_model`/`branding` both really depend on
+`market_research` -- `hyperion-intent/src/templates.rs`) let `/related` show genuine graph
+traversal results, not fixture data, and a live run confirmed unknown references (`/why 99`) and
+non-numeric arguments (`/related abc`) degrade to a plain-language message rather than a panic or
+a silent no-op. `cargo build/test/fmt/clippy` all pass across every feature combination.
+
 The console's own consent policy, arrived at by first writing the more generous version and then
 catching the real problem with it: an earlier draft seeded every already-connected provider's
 grant automatically at every `open()`, which would have made the real `PendingConsent` machinery

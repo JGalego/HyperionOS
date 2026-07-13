@@ -251,6 +251,10 @@ fn help_command_lists_the_backend_meta_command() {
         "expected /help to mention the /backend meta-command, got: {joined:?}"
     );
     assert!(
+        joined.contains("/recall"),
+        "expected /help to mention the /recall meta-command, got: {joined:?}"
+    );
+    assert!(
         !joined.contains("generic_goal"),
         "/help must not also fall through to a real Agent invocation, got: {joined:?}"
     );
@@ -481,4 +485,178 @@ fn connect_strips_stray_control_characters_and_shows_a_masked_preview_not_the_re
         "expected a masked preview reflecting the real, control-character-stripped key, got: \
          {stored:?}"
     );
+}
+
+/// `/recall`/`/why`/`/related` -- exploring the real, live Knowledge Graph this session's own
+/// Intent Engine writes to on every utterance. Every assertion here is against real data these
+/// tests themselves caused to be recorded, not fixtures -- the same "prove non-vacuously"
+/// discipline this file already applies to the rest of the pipeline.
+mod graph_exploration {
+    use super::open_session;
+
+    #[test]
+    fn recall_with_nothing_recorded_yet_says_so() {
+        let (_dir, mut session) = open_session();
+
+        let lines = session.handle_utterance("/recall").join("\n");
+        assert!(
+            lines.contains("anything recorded yet"),
+            "a brand-new session's graph really is empty, got: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn recall_finds_a_recorded_intent_by_its_own_words() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("what is the weather like today");
+
+        let lines = session.handle_utterance("/recall weather").join("\n");
+        assert!(
+            lines.contains("[1] you asked: \"what is the weather like today\""),
+            "expected the real utterance just recorded to come back, got: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn recall_bare_lists_everything_recorded_so_far() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("what is the weather like today");
+
+        let lines = session.handle_utterance("/recall").join("\n");
+        assert!(
+            lines.contains("you asked: \"what is the weather like today\""),
+            "a bare /recall with no search text should still surface what's recorded, got: \
+             {lines:?}"
+        );
+    }
+
+    #[test]
+    fn recall_with_no_match_says_so() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("what is the weather like today");
+
+        let lines = session
+            .handle_utterance("/recall zzz_nothing_matches_this_zzz")
+            .join("\n");
+        assert!(
+            lines.contains("I don't have anything recorded about"),
+            "got: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn why_explains_an_isolated_intent_with_no_connections() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("what is the weather like today");
+        session.handle_utterance("/recall weather");
+
+        let lines = session.handle_utterance("/why 1").join("\n");
+        assert!(
+            lines.contains("[1] is something you asked, recorded"),
+            "got: {lines:?}"
+        );
+        assert!(
+            lines.contains("isn't connected to anything else yet"),
+            "an undecomposed goal creates exactly one real node with no real edges, got: \
+             {lines:?}"
+        );
+    }
+
+    #[test]
+    fn related_reveals_real_dependency_edges_between_decomposed_tasks() {
+        let (_dir, mut session) = open_session();
+        // The real, built-in HTN template (hyperion-intent/src/templates.rs): business_model and
+        // branding both really depend on market_research, so real `depends_on` edges connect them
+        // in the real graph -- not just shared membership in one Intent's `children` list.
+        session.handle_utterance("I need to launch my startup");
+
+        let recalled = session
+            .handle_utterance("/recall market_research")
+            .join("\n");
+        assert!(
+            recalled.contains("[1] a planned task: market_research"),
+            "got: {recalled:?}"
+        );
+
+        let related = session.handle_utterance("/related 1").join("\n");
+        assert!(related.contains("business_model"), "got: {related:?}");
+        assert!(related.contains("branding"), "got: {related:?}");
+    }
+
+    /// Regression test for a real bug a live manual check caught: an earlier `why()` classified
+    /// every "intent"-typed node as "something you asked," including a decomposed goal's own
+    /// child tasks (which carry no utterance of their own -- nobody actually said
+    /// "market_research").
+    #[test]
+    fn why_distinguishes_a_planned_subtask_from_something_actually_said() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+        session.handle_utterance("/recall market_research");
+
+        let lines = session.handle_utterance("/why 1").join("\n");
+        assert!(
+            lines.contains("[1] is a planned task, recorded"),
+            "got: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn why_reports_a_real_connection_count_for_a_task_with_edges() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+        session.handle_utterance("/recall market_research");
+
+        let lines = session.handle_utterance("/why 1").join("\n");
+        assert!(
+            lines.contains("connected to 2 other things"),
+            "market_research really is the target of two real depends_on edges (from \
+             business_model and branding), got: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn related_results_renumber_so_a_second_related_call_can_drill_further() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+        session.handle_utterance("/recall market_research");
+
+        let first_hop = session.handle_utterance("/related 1").join("\n");
+        assert!(
+            first_hop.contains("business_model") && first_hop.contains("branding"),
+            "got: {first_hop:?}"
+        );
+
+        // `/related 1` just re-numbered its own output -- a second `/related 1` must resolve
+        // against *that* fresh list, not silently reuse the previous one or error out.
+        let second_hop = session.handle_utterance("/related 1").join("\n");
+        assert!(
+            !second_hop.contains("don't have a"),
+            "a freshly re-numbered [1] must resolve to a real node, got: {second_hop:?}"
+        );
+    }
+
+    #[test]
+    fn why_and_related_reject_an_unknown_reference_number() {
+        let (_dir, mut session) = open_session();
+
+        let why = session.handle_utterance("/why 1").join("\n");
+        assert!(why.contains("don't have a \"[1]\""), "got: {why:?}");
+
+        let related = session.handle_utterance("/related 3").join("\n");
+        assert!(related.contains("don't have a \"[3]\""), "got: {related:?}");
+    }
+
+    #[test]
+    fn why_and_related_reject_a_non_numeric_argument() {
+        let (_dir, mut session) = open_session();
+
+        let why = session.handle_utterance("/why abc").join("\n");
+        assert!(why.contains("needs a result number"), "got: {why:?}");
+
+        let related = session.handle_utterance("/related abc").join("\n");
+        assert!(
+            related.contains("needs a result number"),
+            "got: {related:?}"
+        );
+    }
 }

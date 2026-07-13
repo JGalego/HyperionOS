@@ -23,13 +23,17 @@ use hyperion_coordination::CoordinationSession;
 use hyperion_crypto::{Keystore, SecretStore};
 use hyperion_intent::{HandleOutcome, IntentEngine};
 use hyperion_knowledge_graph::{GraphError, KnowledgeGraph, NodeId};
+
+use crate::graph_explorer::GraphExplorer;
 use hyperion_netstack::{DomainEgressGrant, NetstackHub};
 use hyperion_workspace::{
     project, CapabilityUiContract, ComplexityTier, Modality, ModalityInterface, RegionAffinity,
     WorkspaceCompiler,
 };
 
-fn now() -> u64 {
+/// `pub(crate)` so [`crate::graph_explorer`]'s own relative-time rendering shares one clock
+/// reading with the rest of this crate rather than duplicating this exact function.
+pub(crate) fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock before Unix epoch")
@@ -98,6 +102,10 @@ pub struct ConsoleSession {
     /// Set while a live `InvokeOutcome::PendingConsent` is awaiting its yes/no confirmation --
     /// the *next* utterance is captured as that answer rather than parsed normally.
     pending_consent: Option<PendingCloudConsent>,
+    /// Backs the `/recall`/`/why`/`/related` meta-commands -- see
+    /// [`crate::graph_explorer::GraphExplorer`] for why this is its own small module rather than
+    /// more direct `KnowledgeGraph` calls scattered through this file.
+    graph_explorer: GraphExplorer,
     workspace: WorkspaceCompiler,
     next_turn_id: u64,
 }
@@ -267,6 +275,7 @@ impl ConsoleSession {
         let graph = Arc::new(KnowledgeGraph::open(&kg_path)?);
         let context = Arc::new(hyperion_context::ContextEngine::new(graph.clone()));
         let netstack = Arc::new(Self::build_netstack(graph.clone()));
+        let graph_explorer = GraphExplorer::new(graph.clone());
         let intent_engine = IntentEngine::new(graph, context.clone());
 
         let keystore = Keystore::open_or_create(&data_dir.join("device.key"))
@@ -335,6 +344,7 @@ impl ConsoleSession {
             secret_store,
             pending_connect: None,
             pending_consent: None,
+            graph_explorer,
             workspace: WorkspaceCompiler::new(),
             next_turn_id: 1,
         })
@@ -610,6 +620,35 @@ impl ConsoleSession {
             return Some(Self::help_text());
         }
 
+        if lower.starts_with("/recall") {
+            let text = trimmed["/recall".len()..].trim();
+            return Some(self.graph_explorer.recall(&self.monitor, &self.token, text));
+        }
+
+        if lower.starts_with("/why") {
+            let rest = trimmed["/why".len()..].trim();
+            return Some(match rest.parse::<usize>() {
+                Ok(n) => self.graph_explorer.why(&self.monitor, &self.token, n),
+                Err(_) => vec![
+                    "\"/why\" needs a result number from a recent \"/recall\" or \"/related\" \
+                     -- try \"/why 1\"."
+                        .to_string(),
+                ],
+            });
+        }
+
+        if lower.starts_with("/related") {
+            let rest = trimmed["/related".len()..].trim();
+            return Some(match rest.parse::<usize>() {
+                Ok(n) => self.graph_explorer.related(&self.monitor, &self.token, n),
+                Err(_) => vec![
+                    "\"/related\" needs a result number from a recent \"/recall\" or \
+                     \"/related\" -- try \"/related 1\"."
+                        .to_string(),
+                ],
+            });
+        }
+
         if lower.starts_with("connect") {
             for provider in [
                 CloudProvider::OpenAi,
@@ -760,6 +799,15 @@ impl ConsoleSession {
             .to_string(),
             "  connect my <provider> account                store a real API key for openai, \
              anthropic, or gemini"
+                .to_string(),
+            "  /recall [text]                              look through what I've recorded \
+             (bare, for everything recent)"
+                .to_string(),
+            "  /why <n>                                    explain a \"/recall\"/\"/related\" \
+             result -- when it was recorded, how connected it is"
+                .to_string(),
+            "  /related <n>                                show what's connected to a \
+             \"/recall\"/\"/related\" result"
                 .to_string(),
             "  /help                                        show this message".to_string(),
         ]
