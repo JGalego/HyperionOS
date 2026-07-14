@@ -142,6 +142,16 @@ HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch ./target/debug/hyperion-console 
 
 See [USAGE_SCENARIOS.md](USAGE_SCENARIOS.md) for how scenarios work, the full set under [`scenarios/`](scenarios/), and how to point one at a real backend (Candle, a local engine, or a cloud provider).
 
+To use a real cloud provider (OpenAI, Anthropic, Gemini, Groq) or a local engine that needs its own key, copy [`.env.example`](.env.example) to `.env`, fill in the real value, then:
+
+```sh
+set -a && source .env && set +a
+cargo build -p hyperion-console --bin hyperion-console --features openai-compat
+HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch ./target/debug/hyperion-console scenarios/backend-cloud-groq.txt
+```
+
+`.env` is already gitignored, so a real key never gets committed. A scenario file only ever references a key by name (`$GROQ_API_KEY`), never as a literal - see USAGE_SCENARIOS.md's "Running a scenario from a file" for how that expansion works.
+
 ## License
 
 MIT - See [LICENSE](LICENSE)
