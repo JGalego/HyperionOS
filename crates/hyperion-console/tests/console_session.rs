@@ -255,15 +255,60 @@ fn two_different_undecomposed_goals_each_get_their_own_response_text() {
         "expected the second turn to echo its own real utterance, not the first turn's cached \
          content, got: {second_text:?}"
     );
-    assert!(
-        !second_text.contains("hey there"),
-        "the second turn must not still carry the first turn's stale response text, got: \
+    // The second turn now legitimately quotes "hey there" as real recent-conversation context
+    // (see `ConsoleSession::prompt_with_recent_history`) -- a plain substring check can no
+    // longer distinguish that from the old stale-cache bleed, so this checks for the bug's own
+    // actual signature instead: the *whole* response being a stale copy of the first turn's,
+    // not just a legitimate partial quote of it.
+    assert_ne!(
+        second_text, first_text,
+        "the second turn's response must be its own, not a stale copy of the first turn's, got: \
          {second_text:?}"
     );
     assert!(
         third_text.contains("what is the weather like today"),
         "expected the third turn to echo its own real utterance, not an earlier turn's cached \
          content, got: {third_text:?}"
+    );
+}
+
+/// Regression test: `ConsoleSession` used to mint a brand-new, unique session id for every
+/// single turn and pass *that* to `IntentEngine::handle_utterance` -- so its real working-memory
+/// turn buffer (and `hyperion-context`'s own working-set hysteresis, keyed the same way) never
+/// accumulated more than one turn's worth of history before being silently discarded and
+/// recreated empty on the very next turn. A real follow-up question in the same conversation got
+/// no benefit from any of it. Proven here via the one real, externally observable signal this
+/// crate's own default (mock) backend gives: `MockBackend::generate` echoes its prompt verbatim,
+/// so a real "recent conversation" prefix genuinely reaching the model shows up directly in the
+/// rendered response text.
+#[test]
+fn a_followup_utterance_carries_real_conversation_history_into_its_own_prompt() {
+    let (_dir, mut session) = open_session();
+
+    let first = session.handle_utterance("my name is Alex");
+    let second = session.handle_utterance("what is my name");
+
+    let first_text = first.join("\n");
+    let second_text = second.join("\n");
+    assert!(
+        first_text.contains("my name is Alex"),
+        "the first turn (nothing prior to recap) must be unchanged: bare utterance, no prefix, \
+         got: {first_text:?}"
+    );
+    assert!(
+        second_text.contains("my name is Alex") && second_text.contains("what is my name"),
+        "the second turn's real prompt must carry the first turn's utterance as recent \
+         conversation *and* still ask its own real question, got: {second_text:?}"
+    );
+
+    // A brand-new, separate session must never see the first session's history -- this is real
+    // per-session state, not a global leak across every `ConsoleSession`.
+    let (_dir2, mut other_session) = open_session();
+    let unrelated = other_session.handle_utterance("what is my name").join("\n");
+    assert!(
+        !unrelated.contains("my name is Alex"),
+        "a fresh, unrelated session must not carry another session's real conversation \
+         history, got: {unrelated:?}"
     );
 }
 

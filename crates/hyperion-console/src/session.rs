@@ -120,7 +120,15 @@ pub struct ConsoleSession {
     /// more direct `KnowledgeGraph` calls scattered through this file.
     graph_explorer: GraphExplorer,
     workspace: WorkspaceCompiler,
-    next_turn_id: u64,
+    /// Stable for this `ConsoleSession`'s entire real process lifetime -- the identity
+    /// `hyperion-intent`'s working-memory turn buffer / active-graph reconciliation stack and
+    /// `hyperion-context`'s working-set hysteresis both accumulate real state against, keyed by
+    /// session. A real, previously-shipped bug this fixes: every turn used to mint its own
+    /// fresh, unique tag and pass *that* as the session id, so those three real, already-tested
+    /// mechanisms never saw more than one turn's worth of history before being silently thrown
+    /// away and recreated empty on the very next turn -- a real user asking a follow-up question
+    /// in the same conversation got no benefit from any of them.
+    session_id: String,
     /// The most recent decomposed plan's own `hyperion-coordination` session id, set at the end
     /// of [`Self::run_decomposed_plan`] -- [`Self::redo_task`] (the `/redo <task> <extra
     /// instructions>` meta-command) needs this to find the real plan a task name belongs to,
@@ -366,7 +374,7 @@ impl ConsoleSession {
             pending_consent: None,
             graph_explorer,
             workspace: WorkspaceCompiler::new(),
-            next_turn_id: 1,
+            session_id: "console".to_string(),
             last_plan_session_id: None,
         })
     }
@@ -951,14 +959,11 @@ impl ConsoleSession {
             return reply;
         }
 
-        let turn_tag = format!("console-turn-{}", self.next_turn_id);
-        self.next_turn_id += 1;
-
         let outcome = match self.intent_engine.handle_utterance(
             &self.monitor,
             &self.token,
             utterance,
-            &turn_tag,
+            &self.session_id,
         ) {
             Ok(outcome) => outcome,
             Err(e) => return vec![format!("I couldn't understand that: {e}")],
@@ -989,7 +994,7 @@ impl ConsoleSession {
             self.run_decomposed_plan(&ticket, on_progress)
         };
 
-        self.render_workspace(root, &turn_tag, &predicate, &outcomes)
+        self.render_workspace(root, &self.session_id, &predicate, &outcomes)
     }
 
     /// `true` while a "connect my `<provider>`" flow is awaiting its follow-up API-key line --
@@ -1132,7 +1137,8 @@ impl ConsoleSession {
         // `Self::open`) rather than spawning fresh -- required for any grant, cloud consent
         // included, to ever survive past this one turn.
         let capability_ref = self.current_backend.capability_ref();
-        let args = serde_json::json!({ "prompt": utterance });
+        let prompt = self.prompt_with_recent_history(utterance);
+        let args = serde_json::json!({ "prompt": prompt });
         let detail = match self.agent_runtime.invoke(
             &self.monitor,
             &self.token,
@@ -1149,7 +1155,7 @@ impl ConsoleSession {
                 let provider_label = self.current_backend.label();
                 self.pending_consent = Some(PendingCloudConsent {
                     capability_ref: capability_ref.to_string(),
-                    prompt: utterance.to_string(),
+                    prompt,
                 });
                 format!(
                     "This would send your message to a real, paid, external {provider_label} \
@@ -1167,6 +1173,27 @@ impl ConsoleSession {
                 predicate: "generic_goal".to_string(),
                 detail,
             }],
+        )
+    }
+
+    /// docs/06's "avoid forcing users to repeat themselves," applied to this console's one real
+    /// chat path: prefixes `utterance` with this session's own recent conversation, so a genuine
+    /// follow-up ("what is my name" after "my name is Alex") gives the model something to
+    /// actually answer from. Real now that [`Self::session_id`] is stable across turns (see this
+    /// struct's own doc comment) -- `IntentEngine::handle_utterance` already pushed `utterance`
+    /// as this working memory's own last entry before this ever runs, so it's excluded here and
+    /// asked as the real instruction instead of recapped as history. A session with no prior
+    /// turns (or exactly one, the current one) is unchanged from before this existed: bare
+    /// `utterance`, nothing prepended.
+    fn prompt_with_recent_history(&self, utterance: &str) -> String {
+        let history = self.intent_engine.working_memory_turns(&self.session_id);
+        let prior = &history[..history.len().saturating_sub(1)];
+        if prior.is_empty() {
+            return utterance.to_string();
+        }
+        format!(
+            "Recent conversation, most recent last:\n{}\n\nNow respond to: {utterance}",
+            prior.join("\n")
         )
     }
 
@@ -1450,7 +1477,7 @@ impl ConsoleSession {
     fn render_workspace(
         &self,
         root: NodeId,
-        turn_tag: &str,
+        session_id: &str,
         predicate: &str,
         outcomes: &[TaskOutcome],
     ) -> Vec<String> {
@@ -1459,13 +1486,14 @@ impl ConsoleSession {
             .map(|o| contract_for(&o.predicate, &format!("{}: {}", o.predicate, o.detail)))
             .collect();
 
-        // A real Context Bundle assembly for this turn's own scope -- falls back to an empty
+        // A real Context Bundle assembly, scoped to this turn's own real Intent (`intent_id`)
+        // but this console's one stable, whole-session `session_id` -- falls back to an empty
         // bundle (still a real, valid `ContextBundle`, just with nothing to bind panels to yet)
         // if assembly itself fails, since a missing context signal shouldn't block rendering the
         // real Agent outcome the user is actually waiting on.
         let scope = Scope {
             intent_id: root.0.to_string(),
-            session_id: turn_tag.to_string(),
+            session_id: session_id.to_string(),
             mentions: Vec::new(),
             anchors: Vec::new(),
         };
