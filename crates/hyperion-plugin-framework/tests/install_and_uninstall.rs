@@ -30,6 +30,7 @@ fn manifest_with_web_search(keystore: &Keystore) -> PluginManifest {
             implementation_kind: ImplementationKind::CloudApi,
             quality_score: 0.5,
             version: 1,
+            native_binary: None,
         })],
         requested_permissions: vec![CapabilityGrantRequest {
             operation: Operation::NetworkEgress,

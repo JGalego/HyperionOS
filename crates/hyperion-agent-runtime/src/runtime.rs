@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_netstack::{FreshnessPolicy, NetstackHub, WebResolutionRequest};
+use hyperion_plugin_framework::PluginRegistry;
 use hyperion_scheduler::{
     AgentId, IntentId, ResourceDimension, ResourceLedger, ResourceVector, SchedClass, Scheduler,
     TaskDescriptor, TaskId,
@@ -112,11 +113,17 @@ pub struct AgentRuntime {
     /// crate's own tests) -- to acquire one just to satisfy a parameter they'd never use. See
     /// [`Self::new_with_netstack`].
     netstack: Option<Arc<NetstackHub>>,
+    /// Real backend for any `capability_ref` this crate doesn't otherwise recognize -- see
+    /// [`Self::invoke`]'s dispatch chain. `Option`, same reasoning as [`Self::netstack`]: most of
+    /// this crate's own 13+ existing call sites have no installed plugins at all and shouldn't
+    /// need to acquire an empty [`PluginRegistry`] just to satisfy a required parameter. See
+    /// [`Self::new_with_netstack_and_plugins`].
+    plugins: Option<Arc<PluginRegistry>>,
 }
 
 impl AgentRuntime {
     pub fn new(ai_runtime: Arc<LocalAiRuntime>) -> Self {
-        Self::new_with_netstack(ai_runtime, None)
+        Self::new_with_netstack_and_plugins(ai_runtime, None, None)
     }
 
     /// As [`Self::new`], additionally wiring a real [`NetstackHub`] so `web.research` dispatches
@@ -125,6 +132,18 @@ impl AgentRuntime {
     pub fn new_with_netstack(
         ai_runtime: Arc<LocalAiRuntime>,
         netstack: Option<Arc<NetstackHub>>,
+    ) -> Self {
+        Self::new_with_netstack_and_plugins(ai_runtime, netstack, None)
+    }
+
+    /// As [`Self::new_with_netstack`], additionally wiring a real [`PluginRegistry`] so an
+    /// unrecognized `capability_ref` with an installed, real `NativeBinary` implementation
+    /// dispatches to it for real (AUTONOMY_ROADMAP.md's Slice 1), instead of falling through to
+    /// [`stubs::dispatch`]'s catch-all echo.
+    pub fn new_with_netstack_and_plugins(
+        ai_runtime: Arc<LocalAiRuntime>,
+        netstack: Option<Arc<NetstackHub>>,
+        plugins: Option<Arc<PluginRegistry>>,
     ) -> Self {
         let mut scheduler = Scheduler::new();
         // One nominal dimension stands in for "a Capability invocation's
@@ -145,6 +164,7 @@ impl AgentRuntime {
             next_task_id: AtomicU64::new(1),
             ai_runtime,
             netstack,
+            plugins,
         }
     }
 
@@ -263,6 +283,17 @@ impl AgentRuntime {
             self.dispatch_document_draft(monitor, token, &args)
         } else if capability_ref == WEB_SEARCH_CAPABILITY {
             self.dispatch_market_research(monitor, token, &args)
+        } else if let Some(plugins) = self.plugins.as_ref().filter(|p| {
+            p.query(capability_ref).is_some_and(|entry| {
+                entry
+                    .implementations
+                    .iter()
+                    .any(|i| i.native_binary.is_some())
+            })
+        }) {
+            plugins
+                .invoke_native_binary(capability_ref, args.clone())
+                .map_err(|e| e.to_string())
         } else {
             stubs::dispatch(capability_ref, &args)
         };

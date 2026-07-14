@@ -36,6 +36,7 @@ fn manifest_with(capability_id: &str, keystore: &Keystore) -> PluginManifest {
             implementation_kind: ImplementationKind::LocalSmallModel,
             quality_score: 0.5,
             version: 1,
+            native_binary: None,
         })],
         requested_permissions: vec![CapabilityGrantRequest {
             operation: Operation::Read,

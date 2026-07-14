@@ -2768,6 +2768,7 @@ dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
  "hyperion-netstack",
+ "hyperion-plugin-framework",
  "hyperion-scheduler",
  "serde",
  "serde_json",
@@ -3086,6 +3087,8 @@ version = "0.1.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
+ "hyperion-trust-boundary",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
 ]

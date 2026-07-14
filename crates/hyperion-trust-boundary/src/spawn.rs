@@ -74,10 +74,43 @@ impl SpawnedBoundary {
     }
 
     /// True iff the process still exists (and is signalable by us) -- a plain existence probe,
-    /// sending no actual signal.
+    /// sending no actual signal. **Not** an "has it finished" check: an exited-but-unreaped child
+    /// is a real zombie, still a valid, signalable process table entry, so this stays `true` until
+    /// something actually reaps it (`wait`, `kill`, `revoke`, or `Drop`'s own best-effort
+    /// `WNOHANG`) -- a caller polling for real completion wants [`Self::try_wait`] instead, which
+    /// this crate's own earlier real bug (an infinite poll loop in
+    /// `hyperion-plugin-framework::registry::invoke_native_binary`, caught live) is the reason
+    /// this doc comment is this explicit.
     pub fn is_alive(&self) -> bool {
         // SAFETY: signal 0 sends nothing; it only reports whether the pid is signalable.
         unsafe { libc::kill(self.pid, 0) == 0 }
+    }
+
+    /// A real, non-blocking check for real completion -- unlike [`Self::is_alive`] (stays `true`
+    /// for an unreaped zombie), this actually reaps the child the moment it exits, returning
+    /// `Some(exit_code)` exactly once, or `None` while it's still genuinely running. Mirrors
+    /// `std::process::Child::try_wait`'s own well-known shape. The real, correct way to poll for a
+    /// bounded wait: loop calling this, sleep between calls, and stop looping (calling
+    /// [`Self::kill`] instead) once your own deadline passes.
+    pub fn try_wait(&mut self) -> io::Result<Option<i32>> {
+        let mut status: libc::c_int = 0;
+        // SAFETY: `self.pid` is a real child this process forked and hasn't reaped yet; status is
+        // a valid out-pointer; WNOHANG makes this non-blocking.
+        let reaped = unsafe { libc::waitpid(self.pid, &mut status, libc::WNOHANG) };
+        if reaped == 0 {
+            return Ok(None);
+        }
+        if reaped < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if libc::WIFEXITED(status) {
+            Ok(Some(libc::WEXITSTATUS(status)))
+        } else {
+            Err(io::Error::other(format!(
+                "sandboxed process (pid {}) did not exit normally (raw status {status})",
+                self.pid
+            )))
+        }
     }
 
     /// The real revocation effect M2 requires: kills the process outright (Landlock/seccomp are
@@ -92,6 +125,46 @@ impl SpawnedBoundary {
         // SAFETY: status is a valid out-pointer; reaps the child killed above.
         unsafe { libc::waitpid(self.pid, &mut status, 0) };
         monitor.cap_revoke(&self.token)
+    }
+
+    /// A real, blocking wait for this real child to exit on its own -- unlike [`Self::is_alive`]
+    /// (a non-blocking probe) or `Drop`'s own `WNOHANG` reap (only collects an *already*-exited
+    /// child), this actually blocks until the sandboxed program finishes, then returns its real
+    /// exit code. Consumes `self`, mirroring [`Self::revoke`]'s own ownership shape: once reaped,
+    /// this handle no longer refers to a live process either way. A caller that instead wants a
+    /// bounded wait polls [`Self::is_alive`] and calls [`Self::kill`] on timeout, never blocking
+    /// here in the first place -- see `hyperion-plugin-framework::registry::invoke_native_binary`.
+    pub fn wait(self) -> io::Result<i32> {
+        let mut status: libc::c_int = 0;
+        // SAFETY: `self.pid` is a real child this process forked and hasn't reaped yet; status is
+        // a valid out-pointer.
+        if unsafe { libc::waitpid(self.pid, &mut status, 0) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if libc::WIFEXITED(status) {
+            Ok(libc::WEXITSTATUS(status))
+        } else {
+            Err(io::Error::other(format!(
+                "sandboxed process (pid {}) did not exit normally (raw status {status})",
+                self.pid
+            )))
+        }
+    }
+
+    /// Kills and reaps this real child without touching any [`CapabilityMonitor`]'s revocation
+    /// graph -- for a caller (like a bounded-timeout waiter) that has no monitor handle to hand
+    /// [`Self::revoke`], and isn't revoking a capability so much as ending a process that ran too
+    /// long. A holder of the same token elsewhere is unaffected; call `revoke` instead when that
+    /// matters.
+    pub fn kill(self) -> io::Result<()> {
+        // SAFETY: `self.pid` is a real child this process forked and hasn't reaped yet.
+        if unsafe { libc::kill(self.pid, libc::SIGKILL) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut status: libc::c_int = 0;
+        // SAFETY: status is a valid out-pointer; reaps the child just killed above.
+        unsafe { libc::waitpid(self.pid, &mut status, 0) };
+        Ok(())
     }
 }
 

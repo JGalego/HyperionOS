@@ -9,6 +9,11 @@ repository.workspace = true
 hyperion-ai-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
 hyperion-netstack = { workspace = true }
+# Real, optional (Option<Arc<...>>, same shape as `NetstackHub` below) dispatch to an installed
+# plugin's own real `NativeBinary` implementation when `capability_ref` isn't one of this crate's
+# own hardcoded constants -- AUTONOMY_ROADMAP.md's Slice 1, closing this crate's own
+# stub-dispatch-fallback gap for real.
+hyperion-plugin-framework = { workspace = true }
 hyperion-scheduler = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

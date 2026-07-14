@@ -34,7 +34,13 @@ fn implementation() -> Implementation {
     Implementation {
         contract_id: "document.summarize".to_string(),
         name: "acme-summarizer".to_string(),
-        runtime: Runtime::NativeBinary,
+        // Not `Runtime::NativeBinary`: this crate's `Implementation` carries no executable path
+        // yet (see AUTONOMY_ROADMAP.md's "tool creation" slice), so `PluginRegistry::install` now
+        // really validates a `NativeBinary` contribution needs a real, existing, executable
+        // `NativeBinaryDescriptor` -- these tests exercise the generic publish/harness/registry
+        // workflow, not native-binary execution specifically, so any non-`NativeBinary` runtime
+        // is the right, honest fixture choice.
+        runtime: Runtime::CloudApi,
         latency_class: LatencyClass::Interactive,
         requires_consent: false,
     }

@@ -1,7 +1,20 @@
+use std::path::PathBuf;
+
 use hyperion_capability::TrustBoundaryId;
 
 pub type PluginId = u64;
 pub type CapabilityId = String;
+
+/// The real, previously-missing "something for a sandbox to run" this crate's own doc comment
+/// names: `program` + `args` are handed straight to `hyperion_trust_boundary::spawn` (via
+/// `std::process::Command`), never interpreted or parsed by this crate. Populated only for
+/// `ImplementationKind::NativeBinary` -- every other kind still has no execution story, exactly
+/// as before.
+#[derive(Debug, Clone)]
+pub struct NativeBinaryDescriptor {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+}
 
 /// docs/24 §Sandboxing's depth spectrum, reused as a **policy label** this
 /// crate enforces against a manifest's declared minimum — not a new
@@ -77,6 +90,12 @@ pub struct CapabilityManifest {
     pub implementation_kind: ImplementationKind,
     pub quality_score: f32,
     pub version: u32,
+    /// Real execution info for `ImplementationKind::NativeBinary` -- `None` for every other kind
+    /// (they each already have their own real dispatch elsewhere: a local/cloud model backend, a
+    /// cloud API client). `PluginRegistry::install` rejects a `NativeBinary` manifest that leaves
+    /// this `None`, or whose `program` doesn't really exist and isn't really executable -- an
+    /// honest check at install time, not a trusted claim.
+    pub native_binary: Option<NativeBinaryDescriptor>,
 }
 
 /// docs/24 §4's `Contribution`, narrowed to the one variant this
@@ -129,6 +148,9 @@ pub struct ImplementationDescriptor {
     pub implementation_kind: ImplementationKind,
     pub quality_score: f32,
     pub version: u32,
+    /// Carried straight over from the installing [`CapabilityManifest`]'s own field -- see there
+    /// for why. [`crate::registry::PluginRegistry::invoke_native_binary`] is the real caller.
+    pub native_binary: Option<NativeBinaryDescriptor>,
 }
 
 /// docs/24 §4's `RegistryEntry`, with `contract` added (not in the doc's
@@ -145,6 +167,7 @@ pub struct RegistryEntry {
     pub install_state: InstallState,
 }
 
+#[derive(Debug)]
 pub struct PluginHandle {
     pub plugin_id: PluginId,
     pub boundary: TrustBoundaryId,
@@ -168,6 +191,12 @@ pub enum PluginError {
     NoSuchPlugin,
     #[error("no such capability_id in the registry")]
     NoSuchCapability,
+    #[error("no runnable (NativeBinary) implementation is installed for '{0}'")]
+    NoRunnableImplementation(CapabilityId),
+    #[error("invalid NativeBinary implementation: {0}")]
+    InvalidNativeBinary(String),
+    #[error("sandboxed execution failed: {0}")]
+    ExecutionFailed(String),
     #[error("capability fault: {0}")]
     Capability(#[from] hyperion_capability::Fault),
 }

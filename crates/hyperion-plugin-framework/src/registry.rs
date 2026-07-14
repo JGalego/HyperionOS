@@ -7,9 +7,9 @@ use hyperion_crypto::VerifyingKey;
 
 use crate::review::validate_manifest;
 use crate::types::{
-    CapabilityId, CapabilityManifest, Contribution, ImplementationDescriptor, InstallState,
-    PluginError, PluginHandle, PluginId, PluginManifest, QuarantineReason, RegistryEntry,
-    TrustDepth,
+    CapabilityId, CapabilityManifest, Contribution, ImplementationDescriptor, ImplementationKind,
+    InstallState, PluginError, PluginHandle, PluginId, PluginManifest, QuarantineReason,
+    RegistryEntry, TrustDepth,
 };
 
 fn rights_for(op: crate::types::Operation) -> RightsMask {
@@ -21,12 +21,43 @@ fn rights_for(op: crate::types::Operation) -> RightsMask {
     }
 }
 
+/// Real Linux sandboxing only, and only depths this workspace's real enforcement can actually
+/// provide -- `hyperion_trust_boundary::TrustDepth` has no VM-equivalent depth 3 (see that
+/// crate's own doc comment on why), so this policy label's own D2/D3 both map to the strongest
+/// real depth that exists, `Container` (namespaces + Landlock + seccomp), rather than pretending
+/// a stronger isolation this workspace doesn't implement.
+#[cfg(target_os = "linux")]
+fn real_trust_depth(policy: TrustDepth) -> hyperion_trust_boundary::TrustDepth {
+    match policy {
+        TrustDepth::D0 | TrustDepth::D1 => hyperion_trust_boundary::TrustDepth::Process,
+        TrustDepth::D2 | TrustDepth::D3 => hyperion_trust_boundary::TrustDepth::Container,
+    }
+}
+
+/// A real sandboxed `NativeBinary` invocation's own bounded patience -- mirrors
+/// `hyperion-ai-runtime::openai_compat_backend::GENERATE_TIMEOUT`'s same 120s reasoning: a real,
+/// potentially slow tool shouldn't be cut off after a network-call-sized timeout, but a genuinely
+/// hung one must not block a capability dispatch forever either.
+#[cfg(target_os = "linux")]
+const NATIVE_BINARY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+#[cfg(target_os = "linux")]
+const NATIVE_BINARY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// docs/24 — Plugin Framework. See this crate's doc comment for the full
 /// real/deferred split.
 pub struct PluginRegistry {
     plugins: Mutex<HashMap<PluginId, PluginManifest>>,
     boundaries: Mutex<HashMap<PluginId, TrustBoundaryId>>,
     tokens: Mutex<HashMap<PluginId, Vec<CapabilityToken>>>,
+    /// A real, purpose-built `READ | WRITE` token minted once at install time (when `monitor` is
+    /// really `&mut`, per [`Self::install`]'s own signature) for exactly one job: scoping a
+    /// [`hyperion_trust_boundary::SpawnGrant`]'s real fs access to a `NativeBinary` invocation's
+    /// own real temp I/O directory. Looked up read-only at invocation time
+    /// ([`Self::invoke_native_binary`]) rather than derived fresh there, since that call site only
+    /// ever has a shared `&CapabilityMonitor` available (matching
+    /// `hyperion-agent-runtime::AgentRuntime::invoke`'s own concurrent-dispatch design, which
+    /// deliberately never takes `&mut CapabilityMonitor`).
+    sandbox_tokens: Mutex<HashMap<PluginId, CapabilityToken>>,
     registry: Mutex<HashMap<CapabilityId, RegistryEntry>>,
     next_plugin_id: AtomicU64,
     next_boundary_ordinal: AtomicU64,
@@ -44,6 +75,7 @@ impl PluginRegistry {
             plugins: Mutex::new(HashMap::new()),
             boundaries: Mutex::new(HashMap::new()),
             tokens: Mutex::new(HashMap::new()),
+            sandbox_tokens: Mutex::new(HashMap::new()),
             registry: Mutex::new(HashMap::new()),
             next_plugin_id: AtomicU64::new(1),
             next_boundary_ordinal: AtomicU64::new(1),
@@ -78,6 +110,21 @@ impl PluginRegistry {
         if !consented {
             return Err(PluginError::ConsentDeclined);
         }
+        // An honest check now, not a trusted claim -- see `NativeBinaryDescriptor`'s own doc
+        // comment. Checked before any minting/registration below, so a manifest that fails this
+        // never partially installs, matching this function's own existing invariant.
+        let needs_sandbox_token =
+            manifest
+                .contributions
+                .iter()
+                .any(|Contribution::Capability(cm)| {
+                    cm.implementation_kind == ImplementationKind::NativeBinary
+                });
+        for Contribution::Capability(cm) in &manifest.contributions {
+            if cm.implementation_kind == ImplementationKind::NativeBinary {
+                validate_native_binary(cm.native_binary.as_ref())?;
+            }
+        }
 
         let plugin_id = self.next_plugin_id.fetch_add(1, Ordering::Relaxed);
         let boundary =
@@ -88,6 +135,20 @@ impl PluginRegistry {
             let token =
                 monitor.cap_derive(admin_token, rights_for(request.operation), None, boundary)?;
             minted.push(token);
+        }
+        // Minted once here, while `monitor` is really `&mut` -- see `Self::sandbox_tokens`'s own
+        // doc comment for why this can't instead be derived lazily at invocation time.
+        if needs_sandbox_token {
+            let sandbox_token = monitor.cap_derive(
+                admin_token,
+                RightsMask::READ | RightsMask::WRITE,
+                None,
+                boundary,
+            )?;
+            self.sandbox_tokens
+                .lock()
+                .unwrap()
+                .insert(plugin_id, sandbox_token);
         }
 
         for contribution in &manifest.contributions {
@@ -121,6 +182,7 @@ impl PluginRegistry {
             implementation_kind: cm.implementation_kind,
             quality_score: cm.quality_score,
             version: cm.version,
+            native_binary: cm.native_binary.clone(),
         };
 
         let mut registry = self.registry.lock().unwrap();
@@ -224,4 +286,162 @@ impl PluginRegistry {
     pub fn boundary_of(&self, plugin_id: PluginId) -> Option<TrustBoundaryId> {
         self.boundaries.lock().unwrap().get(&plugin_id).copied()
     }
+
+    /// The real, previously-missing execution this crate's own doc comment named: given a
+    /// `capability_id` this registry has an installed `NativeBinary` implementation for, runs it
+    /// for real, inside a real `hyperion_trust_boundary::spawn` sandbox, and returns its real
+    /// output. `args` crosses the boundary as a real JSON file (`input.json`) in a fresh real temp
+    /// directory that *is* the sandbox's entire real fs scope (Landlock-enforced); the program is
+    /// expected to write its own real JSON result to `output.json` in that same directory before
+    /// exiting. No `monitor`/`&mut` needed here — the one token this needs was already minted, for
+    /// real, at install time (see [`Self::sandbox_tokens`]'s own doc comment for why).
+    #[cfg(target_os = "linux")]
+    pub fn invoke_native_binary(
+        &self,
+        capability_id: &str,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, PluginError> {
+        let entry = self
+            .query(capability_id)
+            .ok_or(PluginError::NoSuchCapability)?;
+        let descriptor = entry
+            .implementations
+            .iter()
+            .find(|d| d.native_binary.is_some())
+            .ok_or_else(|| PluginError::NoRunnableImplementation(capability_id.to_string()))?;
+        // `install` already validated this `Some` -- see `validate_native_binary`.
+        let native = descriptor.native_binary.as_ref().unwrap();
+        let plugin_id = descriptor.plugin_id;
+
+        let token = self
+            .sandbox_tokens
+            .lock()
+            .unwrap()
+            .get(&plugin_id)
+            .cloned()
+            .ok_or(PluginError::NoSuchPlugin)?;
+        let policy_depth = self
+            .plugins
+            .lock()
+            .unwrap()
+            .get(&plugin_id)
+            .map(|m| m.min_trust_depth)
+            .ok_or(PluginError::NoSuchPlugin)?;
+
+        let tempdir = tempfile::tempdir().map_err(|e| {
+            PluginError::ExecutionFailed(format!(
+                "couldn't create a real temp dir for sandboxed I/O: {e}"
+            ))
+        })?;
+        let input_path = tempdir.path().join("input.json");
+        let output_path = tempdir.path().join("output.json");
+        std::fs::write(
+            &input_path,
+            serde_json::to_vec(&args).map_err(|e| {
+                PluginError::ExecutionFailed(format!("couldn't serialize args: {e}"))
+            })?,
+        )
+        .map_err(|e| PluginError::ExecutionFailed(format!("couldn't write input.json: {e}")))?;
+
+        let mut command = std::process::Command::new(&native.program);
+        command
+            .args(&native.args)
+            .arg(&input_path)
+            .arg(&output_path);
+
+        let grant = hyperion_trust_boundary::SpawnGrant {
+            token,
+            depth: real_trust_depth(policy_depth),
+            fs_scope: tempdir.path().to_path_buf(),
+        };
+        let mut boundary_handle = hyperion_trust_boundary::spawn(&grant, command).map_err(|e| {
+            PluginError::ExecutionFailed(format!("couldn't spawn the sandbox: {e}"))
+        })?;
+
+        // `try_wait` (a real, non-blocking `waitpid(WNOHANG)`), not `is_alive` -- `is_alive` only
+        // checks signalability, which stays true for a real zombie (exited but unreaped), so a
+        // loop built on it alone would spin until `NATIVE_BINARY_TIMEOUT` even for a tool that
+        // finished instantly (a real bug this exact code caught live during development).
+        let deadline = std::time::Instant::now() + NATIVE_BINARY_TIMEOUT;
+        let exit_code = loop {
+            if let Some(exit_code) = boundary_handle.try_wait().map_err(|e| {
+                PluginError::ExecutionFailed(format!("couldn't check the sandbox's status: {e}"))
+            })? {
+                break exit_code;
+            }
+            if std::time::Instant::now() >= deadline {
+                boundary_handle.kill().map_err(|e| {
+                    PluginError::ExecutionFailed(format!(
+                        "sandboxed process timed out and couldn't even be killed: {e}"
+                    ))
+                })?;
+                return Err(PluginError::ExecutionFailed(format!(
+                    "'{capability_id}' timed out after {NATIVE_BINARY_TIMEOUT:?} and was killed"
+                )));
+            }
+            std::thread::sleep(NATIVE_BINARY_POLL_INTERVAL);
+        };
+        if exit_code != 0 {
+            return Err(PluginError::ExecutionFailed(format!(
+                "'{capability_id}' exited with a real, non-zero status {exit_code}"
+            )));
+        }
+
+        let output_bytes = std::fs::read(&output_path).map_err(|e| {
+            PluginError::ExecutionFailed(format!(
+                "'{capability_id}' exited 0 but left no readable output.json: {e}"
+            ))
+        })?;
+        serde_json::from_slice(&output_bytes).map_err(|e| {
+            PluginError::ExecutionFailed(format!(
+                "'{capability_id}'s output.json wasn't valid JSON: {e}"
+            ))
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn invoke_native_binary(
+        &self,
+        capability_id: &str,
+        _args: serde_json::Value,
+    ) -> Result<serde_json::Value, PluginError> {
+        Err(PluginError::ExecutionFailed(format!(
+            "'{capability_id}' needs real sandboxed execution (hyperion-trust-boundary), which \
+             is Linux-only -- this platform can't run it"
+        )))
+    }
+}
+
+/// An honest check at install time, not a trusted claim: a `NativeBinary` contribution must
+/// really name a program, and that program must really exist and really be executable right now
+/// -- a manifest that only *claims* runnability never gets to install as if it had it.
+fn validate_native_binary(
+    descriptor: Option<&crate::types::NativeBinaryDescriptor>,
+) -> Result<(), PluginError> {
+    let Some(descriptor) = descriptor else {
+        return Err(PluginError::InvalidNativeBinary(
+            "ImplementationKind::NativeBinary requires a native_binary descriptor".to_string(),
+        ));
+    };
+    let metadata = std::fs::metadata(&descriptor.program).map_err(|e| {
+        PluginError::InvalidNativeBinary(format!(
+            "{:?} doesn't exist or isn't readable: {e}",
+            descriptor.program
+        ))
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err(PluginError::InvalidNativeBinary(format!(
+                "{:?} exists but isn't executable",
+                descriptor.program
+            )));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+    }
+    Ok(())
 }

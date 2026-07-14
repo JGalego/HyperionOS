@@ -31,6 +31,7 @@ fn manifest(keystore: &Keystore) -> PluginManifest {
             implementation_kind: ImplementationKind::LocalSmallModel,
             quality_score: 0.5,
             version: 1,
+            native_binary: None,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,

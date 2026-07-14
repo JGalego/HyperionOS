@@ -94,7 +94,7 @@ pub use registry::PluginRegistry;
 pub use review::{sign, validate_manifest};
 pub use types::{
     CapabilityGrantRequest, CapabilityId, CapabilityManifest, Contribution,
-    ImplementationDescriptor, ImplementationKind, InstallState, Operation, PluginError,
-    PluginHandle, PluginId, PluginManifest, QuarantineReason, RegistryEntry, SemanticContract,
-    SideEffect, TrustDepth,
+    ImplementationDescriptor, ImplementationKind, InstallState, NativeBinaryDescriptor, Operation,
+    PluginError, PluginHandle, PluginId, PluginManifest, QuarantineReason, RegistryEntry,
+    SemanticContract, SideEffect, TrustDepth,
 };
