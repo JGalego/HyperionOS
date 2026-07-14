@@ -32,6 +32,29 @@ fastest real debug loop. It defaults to `MockBackend` (no `--features candle`) a
 credentials, i.e. exactly what anyone cloning this repo and running the console gets without extra
 setup — deliberately the *worst-case* real default, not a cherry-picked best case.
 
+### Running a scenario from a file
+
+For anything beyond a one-off utterance, pass a scenario *file* as the binary's own first
+argument instead of building a `printf` command by hand:
+
+```
+cargo build -p hyperion-console --bin hyperion-console
+HYPERION_CONSOLE_DATA_DIR=<a real, disposable directory> \
+    ./target/debug/hyperion-console scenarios/multi-turn-demo.txt
+```
+
+One real utterance per line. A blank line or a `#`-prefixed comment is skipped, not sent as a
+real (nonsensical) utterance — so a scenario file can document itself and stay readable. `$NAME`
+is expanded against the real process environment before the line is sent, so a checked-in
+scenario file can reference `$OPENAI_API_KEY` by name (never a real literal secret) and still
+drive a real connection once `source .env && export $(grep -v '^#' .env | xargs)` — or just
+`set -a && source .env && set +a` — has actually set it. A pasted-key line is still redacted in
+the printed transcript exactly as a real terminal never echoes it. Each utterance is echoed as
+`"> {utterance}"` right before its own real response, so the output reads as a self-contained
+transcript; the binary exits as soon as the file ends rather than falling through to interactive
+stdin. See [`scenarios/multi-turn-demo.txt`](scenarios/multi-turn-demo.txt) for a real, runnable
+example of the scenario in "A more complex, multi-turn, multi-request-type scenario" below.
+
 ### Running a scenario against a real backend
 
 Every scenario above ran on `MockBackend`. To exercise the same scenarios against a real model,
@@ -104,11 +127,19 @@ guessed:
 ### A more complex, multi-turn, multi-request-type scenario
 
 Combining several request shapes and a mid-session backend switch in one real session — this is
-the shape to follow for new complex scenarios, not just single-utterance ones. Use
-`printf '%s\n' "utterance one" "utterance two" ...` (one shell argument per utterance), not a
-single multi-line quoted string — a `\` at the end of a line *inside* a single-quoted string is
-not a shell line-continuation, it's a literal backslash-then-newline in the piped text, which
-silently corrupts the input:
+the shape to follow for new complex scenarios, not just single-utterance ones. As a real, checked-
+in scenario file — see "Running a scenario from a file" above:
+
+```
+rm -rf /tmp/hyperion-scratch
+HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+    ./target/debug/hyperion-console scenarios/multi-turn-demo.txt
+```
+
+Or the same thing without a file, one utterance per shell argument (`printf '%s\n' "utterance
+one" "utterance two" ...`, not a single multi-line quoted string — a `\` at the end of a line
+*inside* a single-quoted string is not a shell line-continuation, it's a literal
+backslash-then-newline in the piped text, which silently corrupts the input):
 
 ```
 rm -rf /tmp/hyperion-scratch

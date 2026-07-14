@@ -1,0 +1,25 @@
+# USAGE_SCENARIOS.md's "A more complex, multi-turn, multi-request-type scenario," as a real,
+# runnable scenario file:
+#
+#   cargo build -p hyperion-console --bin hyperion-console
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/multi-turn-demo.txt
+#
+# Exercises, in one session: plain conversation + continuity, the one real decomposed multi-task
+# HTN template, a sub-result lookup, a backend-switch attempt mid-session, and a plain follow-up.
+# `/backend candle` only succeeds if this binary was built with `--features candle`; on the
+# default build it correctly, honestly refuses and the session keeps working on whichever backend
+# was already active -- run this file against both builds to see both real behaviors.
+
+my name is Alex
+
+what is my name
+
+launch my startup
+
+/result market_research
+
+/backend candle
+
+what programming language should I learn first

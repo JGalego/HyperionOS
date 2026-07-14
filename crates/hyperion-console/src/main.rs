@@ -83,6 +83,110 @@ fn main() {
         }
     };
 
+    // A bare positional argument is a scenario file (USAGE_SCENARIOS.md's own "how to run a
+    // scenario" section) -- `source .env && hyperion-console scenarios/foo.txt` in place of the
+    // fragile `printf '%s\n' "..." | hyperion-console` pattern that pattern's own file had no
+    // real way to check in with secrets still injected only at run time.
+    if let Some(scenario_path) = std::env::args().nth(1) {
+        run_scenario_file(&scenario_path, &mut session);
+        return;
+    }
+
+    run_interactive(&mut session);
+}
+
+/// Feeds a real scenario file, one real utterance per line, through the exact same
+/// [`ConsoleSession::handle_utterance_with_progress`] path [`run_interactive`] uses -- a scenario
+/// file is a *record* of the same real turns a person could have typed, not a distinct code path.
+/// Echoes each utterance before its response (`"> {utterance}"`) since nothing else would --
+/// unlike a real terminal, a file's own lines were never typed anywhere visible -- except while
+/// [`ConsoleSession::awaiting_secret_input`] is true, when the real pasted API key is redacted in
+/// this echo exactly as [`hyperion_console::secret_input::RawEchoOff`] keeps it off a real
+/// terminal. No banner, no trailing interactive prompt: a scenario file's output is meant to be a
+/// reviewable transcript, not a chat session.
+fn run_scenario_file(path: &str, session: &mut ConsoleSession) {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(e) => {
+            eprintln!("I couldn't read the scenario file {path:?}: {e}.");
+            std::process::exit(1);
+        }
+    };
+
+    for raw_line in contents.lines() {
+        let trimmed = raw_line.trim();
+        // Checked before deciding whether this line is "just" a comment/blank spacer -- an empty
+        // line while awaiting a secret is itself a real, legitimate answer (cancel connecting),
+        // the same rule `run_interactive` already applies to a real typed empty line.
+        let awaiting_secret = session.awaiting_secret_input();
+        if !awaiting_secret && (trimmed.is_empty() || trimmed.starts_with('#')) {
+            continue;
+        }
+
+        let utterance = expand_env_vars(trimmed);
+        if awaiting_secret {
+            println!("> [key redacted]");
+        } else {
+            println!("> {utterance}");
+        }
+
+        let output_lines = session.handle_utterance_with_progress(&utterance, &mut |event| {
+            if let TaskProgress::Done(line) = event {
+                println!("{line}");
+            }
+        });
+        for output_line in output_lines {
+            println!("{output_line}");
+        }
+        println!();
+    }
+
+    if session.awaiting_secret_input() {
+        eprintln!(
+            "Scenario file ended while still waiting for a pasted API key -- that \"connect\" \
+             never completed."
+        );
+    }
+}
+
+/// Expands `$NAME` references (letters, digits, underscore) against this real process's own
+/// environment -- the same interpolation a shell would already do for the
+/// `printf '%s\n' "$OPENAI_API_KEY" ... | hyperion-console` pattern USAGE_SCENARIOS.md documents,
+/// needed here because [`run_scenario_file`] reads its file's lines literally, with no shell in
+/// between to do it. An unset reference is left untouched, not replaced with an empty string, so
+/// a scenario author sees an honest failure downstream (e.g. "you haven't connected your openai
+/// account yet") instead of a silently blank secret.
+fn expand_env_vars(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '$' {
+            out.push(c);
+            continue;
+        }
+        let mut name = String::new();
+        while let Some(&next) = chars.peek() {
+            if next.is_ascii_alphanumeric() || next == '_' {
+                name.push(next);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        match std::env::var(&name) {
+            Ok(value) if !name.is_empty() => out.push_str(&value),
+            _ => {
+                out.push('$');
+                out.push_str(&name);
+            }
+        }
+    }
+    out
+}
+
+/// The real, live stdin/stdout chat loop -- unchanged from before scenario files existed, just
+/// pulled into its own function so [`main`] can choose it or [`run_scenario_file`].
+fn run_interactive(session: &mut ConsoleSession) {
     // Only for a real interactive terminal -- a screen reader, a pipe, or a redirected/scripted
     // caller gets straight to the one line that actually matters, not decorative noise before it.
     if io::stdout().is_terminal() {
