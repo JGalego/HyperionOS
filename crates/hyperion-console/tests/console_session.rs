@@ -215,9 +215,14 @@ fn an_unmatched_utterance_still_produces_a_real_agent_invocation_as_text() {
         "expected the real Agent invocation's own result to echo the utterance it was given, \
          got: {joined:?}"
     );
+    // The undecomposed-goal path's own internal sentinel predicate ("generic_goal") is
+    // deliberately *not* rendered -- it names no real task a user would recognize, unlike a
+    // decomposed plan's own real task names, and is otherwise redundant with the real, genuinely
+    // accessibility-motivated "status: " role announcement already in front of the text (see
+    // `ConsoleSession::render_workspace`'s own doc comment).
     assert!(
-        joined.contains("generic_goal"),
-        "expected the undecomposed root's own predicate to appear in the rendered text, got: \
+        !joined.contains("generic_goal"),
+        "the internal \"generic_goal\" sentinel must never leak into rendered text, got: \
          {joined:?}"
     );
 }
@@ -403,12 +408,8 @@ fn the_plain_english_backend_phrase_requires_all_three_words() {
     assert!(
         lines.contains("echo: use mock"),
         "\"use mock\" (without \"backend\") must be treated as a normal goal utterance, not a \
-         meta-command, got: {lines:?}"
-    );
-    assert!(
-        lines.contains("generic_goal"),
-        "expected the bare two-word phrase to take the normal undecomposed-goal path, got: \
-         {lines:?}"
+         meta-command -- the real \"echo: <utterance>\" content only the undecomposed-goal path \
+         (never a meta-command reply) produces proves this, got: {lines:?}"
     );
 }
 

@@ -1502,9 +1502,24 @@ impl ConsoleSession {
         predicate: &str,
         outcomes: &[TaskOutcome],
     ) -> Vec<String> {
+        // A decomposed plan's own real, meaningful task names (e.g. "market_research") are
+        // genuinely worth prefixing -- with several outcomes rendered together, naming which is
+        // which is real information. `"generic_goal"` is different: the internal sentinel
+        // `run_undecomposed_goal`/`run_web_research` use for the one-outcome case, never a real
+        // task name a user would recognize -- prefixing it added a purely technical label with
+        // no content, on top of the real (and, unlike this, legitimately accessibility-motivated
+        // -- see `hyperion_workspace::modality`'s own screen-reader role-then-name convention)
+        // "status: " announcement already in front of it.
         let contracts: Vec<CapabilityUiContract> = outcomes
             .iter()
-            .map(|o| contract_for(&o.predicate, &format!("{}: {}", o.predicate, o.detail)))
+            .map(|o| {
+                let label = if o.predicate == "generic_goal" {
+                    o.detail.clone()
+                } else {
+                    format!("{}: {}", o.predicate, o.detail)
+                };
+                contract_for(&o.predicate, &label)
+            })
             .collect();
 
         // A real Context Bundle assembly, scoped to this turn's own real Intent (`intent_id`)
