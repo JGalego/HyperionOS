@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
-use hyperion_storage::StorageEngine;
+use hyperion_storage::{StorageEngine, VersionId};
 
 use crate::index::GraphIndex;
 use crate::types::{
@@ -236,6 +236,47 @@ impl KnowledgeGraph {
             .get(&node_id)
             .cloned()
             .ok_or(GraphError::NotFound)
+    }
+
+    /// The node's current `VersionId`, if it exists — the handle a caller needs to hold onto now
+    /// in order to read this exact state back later via [`Self::get_at_version`], since nothing
+    /// else in this crate's public API surfaces one (see [`Self::generation`]'s doc comment on
+    /// why *that* pass-through deliberately returns a coarser `u64` instead, for the one existing
+    /// caller a real version identity would be more than it needs).
+    pub fn current_version(&self, node_id: NodeId) -> Option<VersionId> {
+        self.storage.current_version(node_id)
+    }
+
+    /// A historical read: `node_id` as it existed at `version`, rather than its current value —
+    /// docs/09 §5.1's real, durable-reference framing for a recovery point, which
+    /// `hyperion-recovery`'s own doc comment names as blocked on this not existing (this crate's
+    /// live [`index`](crate::index) only ever holds the *current* value per node). Reads through
+    /// directly to `hyperion-storage`'s own version chain — `StorageEngine::get_object`'s
+    /// `version` parameter already supported this; nothing needed to change there, only a caller
+    /// on this side that asks for it. `Err(GraphError::NotFound)` covers both "no such version"
+    /// and "that version belongs to an edge, not a node" — a caller with the wrong id shape gets
+    /// the same "not found" this crate already returns for [`Self::get`], not a different error
+    /// shape to special-case.
+    pub fn get_at_version(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        node_id: NodeId,
+        version: VersionId,
+    ) -> Result<NodeRecord, GraphError> {
+        self.require(monitor, token, RightsMask::READ)?;
+        let payload = match self
+            .storage
+            .get_object(monitor, token, node_id, Some(version))
+        {
+            Ok(payload) => payload,
+            Err(hyperion_storage::StorageError::NotFound) => return Err(GraphError::NotFound),
+            Err(e) => return Err(e.into()),
+        };
+        match serde_json::from_value::<Record>(payload).map_err(|_| GraphError::NotFound)? {
+            Record::Node(record) => Ok(record),
+            Record::Edge(_) => Err(GraphError::NotFound),
+        }
     }
 
     /// `graph.query` — docs/09 §6/§7: type filter ∩ vector similarity ∩

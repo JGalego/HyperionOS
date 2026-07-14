@@ -69,6 +69,10 @@ mod index;
 mod types;
 
 pub use graph::KnowledgeGraph;
+// Re-exported the same way `NodeId`/`EdgeId` already alias `hyperion_storage::ObjectId` in
+// types.rs — a caller of `KnowledgeGraph::current_version`/`get_at_version` needs to name this
+// type without taking its own direct dependency on `hyperion-storage`.
+pub use hyperion_storage::VersionId;
 pub use types::{
     EdgeConstraint, EdgeId, EdgeOrigin, EdgeRecord, ExplainRef, GraphError, GraphQuery,
     LinkOutcome, NodeId, NodeRecord, ProvenanceChain, QueryHit, Subgraph,

@@ -30,12 +30,20 @@
 //! - **A true zero-copy, whole-graph MVCC cut.** docs/33 frames a
 //!   `RecoveryPoint` as "not a copy of data; a durable, timestamped
 //!   reference" because the real store's native MVCC/content-addressing
-//!   makes a reference cheap. `hyperion-knowledge-graph` doesn't expose a
-//!   historical-version read API (only the *current* value per node), so
-//!   this crate captures the current value of exactly the objects an
-//!   action declares up front — a real copy, bounded by that action's
-//!   scope, not the free omniscient reference the doc describes. Adding
-//!   a historical-read API to `hyperion-knowledge-graph` is deferred.
+//!   makes a reference cheap. `hyperion-knowledge-graph` now has a real
+//!   historical-version read API (`KnowledgeGraph::current_version`/
+//!   `get_at_version`, layered directly on `hyperion-storage`'s own
+//!   version chain) — this crate's own gap named it as the reason a real
+//!   reference-based `RecoveryPoint` didn't exist; that reason is gone.
+//!   Still deliberately not rewired to use it here, though: this crate's
+//!   snapshot-capture is already real, tested, and "cheap at the scale of
+//!   one action's `objects_touched`" per its own doc above, and switching
+//!   `RecoveryPoint`/`ActionRecord` from an owned copy to a
+//!   `(NodeId, VersionId)` reference is a real, separate representation
+//!   change to this crate's own types and every method that reads them
+//!   (`restore_objects`, `undo`, `redo`, `recover_from_crash`), not a
+//!   one-line wiring fix — worth its own careful pass rather than folding
+//!   into an unrelated change.
 //! - **Un-creating a freshly created object.** `hyperion-knowledge-graph`
 //!   has no node-delete operation (only edges tombstone); a recovery-
 //!   point snapshot of an object that didn't exist yet is recorded as
