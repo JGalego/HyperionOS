@@ -1,9 +1,16 @@
 //! The real stdin/stdout loop around [`hyperion_console::ConsoleSession`] -- all the real logic
-//! lives there and is tested directly; this binary is only real terminal I/O plumbing.
+//! lives there and is tested directly; this binary is only real terminal I/O plumbing (plus, now,
+//! the real MCP/A2A server and client transports -- see [`mcp`]/[`a2a`]/[`http_server`]/
+//! [`http_client`], AUTONOMY_ROADMAP.md's Social pillar).
+
+mod a2a;
+mod http_client;
+mod http_server;
+mod mcp;
 
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -17,6 +24,11 @@ const BANNER: &str = r#" _  ___   _____ ___ ___ ___ ___  _  _
 
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const SPINNER_FRAME_INTERVAL: Duration = Duration::from_millis(80);
+
+/// Arbitrary, unregistered/user ports (RFC 6335) -- just real, fixed defaults so `/mcp-server`/
+/// `/a2a-server` work with no argument; either can still be given an explicit port.
+const DEFAULT_MCP_PORT: u16 = 8765;
+const DEFAULT_A2A_PORT: u16 = 8766;
 
 /// A real, live "this is still running" animation for whichever task names
 /// [`TaskProgress::Starting`] just named -- a real background thread redraws the same terminal
@@ -72,7 +84,7 @@ fn main() {
     let data_dir = std::env::var("HYPERION_CONSOLE_DATA_DIR")
         .unwrap_or_else(|_| std::env::temp_dir().display().to_string());
 
-    let mut session = match ConsoleSession::open(&data_dir) {
+    let session = match ConsoleSession::open(&data_dir) {
         Ok(session) => session,
         Err(e) => {
             eprintln!(
@@ -82,17 +94,191 @@ fn main() {
             std::process::exit(1);
         }
     };
+    // Shared, not owned outright, from here on: `/mcp-server`/`/a2a-server` spawn real background
+    // threads that need their own handle to the exact same live session -- a real MCP/A2A tool
+    // call and a real typed utterance must see and affect the same conversation, not two
+    // divergent copies.
+    let session = Arc::new(Mutex::new(session));
 
     // A bare positional argument is a scenario file (USAGE_SCENARIOS.md's own "how to run a
     // scenario" section) -- `source .env && hyperion-console scenarios/foo.txt` in place of the
     // fragile `printf '%s\n' "..." | hyperion-console` pattern that pattern's own file had no
     // real way to check in with secrets still injected only at run time.
     if let Some(scenario_path) = std::env::args().nth(1) {
-        run_scenario_file(&scenario_path, &mut session);
+        run_scenario_file(&scenario_path, &session);
         return;
     }
 
-    run_interactive(&mut session);
+    run_interactive(&session);
+}
+
+/// What a real, typed line meant to control the *process* itself, rather than being a normal
+/// utterance headed for [`ConsoleSession::handle_utterance`] -- checked before that call in both
+/// [`run_interactive`] and [`run_scenario_file`], the same "meta-command tier, ahead of the real
+/// goal pipeline" precedent `ConsoleSession::handle_meta_command` itself already established one
+/// layer down. Lives here, not there, because starting a background server needs a real
+/// `Arc<Mutex<ConsoleSession>>` handle to hand a thread -- `ConsoleSession`'s own methods only
+/// ever see `&mut self`, never a handle to share.
+enum ControlOutcome {
+    /// Not a control command at all -- proceed to the real utterance pipeline as normal.
+    NotRecognized,
+    /// A control command that's already done its real work; print these lines and keep going.
+    Handled(Vec<String>),
+    /// The process should end now (real user input at a real `/standby` was just given).
+    Exit,
+}
+
+/// Recognizes `/mcp-server [port]`, `/a2a-server [port]`, `/standby`, `/mcp-call`, and
+/// `/a2a-call` -- see each real handler's own doc comment. Returns [`ControlOutcome::NotRecognized`]
+/// for everything else, so the normal utterance pipeline runs unchanged.
+fn try_control_command(trimmed: &str, session: &Arc<Mutex<ConsoleSession>>) -> ControlOutcome {
+    let lower = trimmed.to_ascii_lowercase();
+
+    if let Some(rest) = lower.strip_prefix("/mcp-server") {
+        return start_mcp_server(session, rest.trim());
+    }
+    if let Some(rest) = lower.strip_prefix("/a2a-server") {
+        return start_a2a_server(session, rest.trim());
+    }
+    if lower == "/standby" {
+        return standby();
+    }
+    if let Some(rest) = trimmed.strip_prefix("/mcp-call ") {
+        return ControlOutcome::Handled(vec![mcp_call(rest.trim())]);
+    }
+    if let Some(rest) = trimmed.strip_prefix("/a2a-call ") {
+        return ControlOutcome::Handled(vec![a2a_call(rest.trim())]);
+    }
+
+    ControlOutcome::NotRecognized
+}
+
+/// `/mcp-server [port]` -- starts a real MCP server in a real background thread (default port
+/// [`DEFAULT_MCP_PORT`]), wrapping this same live session; see [`mcp`]'s own doc comment for
+/// exactly what it exposes. Returns immediately -- the server keeps running in the background for
+/// the rest of this process's life (stop the process, or see `/standby` to keep it alive
+/// intentionally while testing from elsewhere).
+fn start_mcp_server(session: &Arc<Mutex<ConsoleSession>>, port_arg: &str) -> ControlOutcome {
+    let port = if port_arg.is_empty() {
+        DEFAULT_MCP_PORT
+    } else {
+        match port_arg.parse() {
+            Ok(port) => port,
+            Err(_) => {
+                return ControlOutcome::Handled(vec![format!(
+                    "\"{port_arg}\" isn't a real port number -- try \"/mcp-server\" or \
+                     \"/mcp-server 8765\"."
+                )])
+            }
+        }
+    };
+    match mcp::spawn_server(session.clone(), port) {
+        Ok(server) => {
+            let addr = server.addr();
+            // Deliberately dropped, not stopped: `RunningServer` has no `Drop` side effect (its
+            // real background thread owns its own state, not a borrow of this handle), so this
+            // server keeps serving until the whole process ends -- see this function's own doc
+            // comment.
+            drop(server);
+            ControlOutcome::Handled(vec![format!(
+                "Real MCP server listening on http://{addr} -- JSON-RPC 2.0 (initialize, \
+                 tools/list, tools/call). Still running when this command returns; use \
+                 \"/standby\" to keep this process alive while you test it from elsewhere."
+            )])
+        }
+        Err(e) => ControlOutcome::Handled(vec![format!("I couldn't start the MCP server: {e}")]),
+    }
+}
+
+/// `/a2a-server [port]` -- as [`start_mcp_server`], for a real A2A server instead; see [`a2a`]'s
+/// own doc comment for exactly what it exposes.
+fn start_a2a_server(session: &Arc<Mutex<ConsoleSession>>, port_arg: &str) -> ControlOutcome {
+    let port = if port_arg.is_empty() {
+        DEFAULT_A2A_PORT
+    } else {
+        match port_arg.parse() {
+            Ok(port) => port,
+            Err(_) => {
+                return ControlOutcome::Handled(vec![format!(
+                    "\"{port_arg}\" isn't a real port number -- try \"/a2a-server\" or \
+                     \"/a2a-server 8766\"."
+                )])
+            }
+        }
+    };
+    match a2a::spawn_server(session.clone(), port) {
+        Ok(server) => {
+            let addr = server.addr();
+            // See `start_mcp_server`'s own comment on why a plain drop is enough here.
+            drop(server);
+            ControlOutcome::Handled(vec![format!(
+                "Real A2A server listening on http://{addr} -- Agent Card at \
+                 /.well-known/agent-card.json, SendMessage at /. Still running when this command \
+                 returns; use \"/standby\" to keep this process alive while you test it from \
+                 elsewhere."
+            )])
+        }
+        Err(e) => ControlOutcome::Handled(vec![format!("I couldn't start the A2A server: {e}")]),
+    }
+}
+
+/// `/standby` -- blocks on a real, literal read of this process's own real stdin (never the
+/// scenario file [`run_scenario_file`] might otherwise still be reading from) until the user
+/// actually provides input, then ends the process. The one real reason this exists: keep a
+/// process that just started a real background server (`/mcp-server`/`/a2a-server`) alive long
+/// enough to actually test it from another terminal, entirely on the user's own schedule, rather
+/// than the scenario file simply reaching its end and the whole process (server included) exiting
+/// before anyone got the chance.
+fn standby() -> ControlOutcome {
+    println!("Standing by -- press Enter at this terminal when you're done testing, to stop.");
+    let _ = io::stdout().flush();
+    let mut line = String::new();
+    let _ = io::stdin().lock().read_line(&mut line);
+    ControlOutcome::Exit
+}
+
+/// `/mcp-call <host> <port> <tool> <json arguments>` -- the real outbound half: calls a real,
+/// already-known MCP endpoint's `tools/call` (including another Hyperion instance's own
+/// `/mcp-server`). Not discovery: the caller names the endpoint.
+fn mcp_call(rest: &str) -> String {
+    let mut parts = rest.splitn(4, ' ');
+    let (Some(host), Some(port_str), Some(tool), Some(json_args)) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return "\"/mcp-call\" needs <host> <port> <tool> <json arguments>, e.g. \"/mcp-call \
+                127.0.0.1 8765 hyperion.ask {\\\"prompt\\\":\\\"hello\\\"}\""
+            .to_string();
+    };
+    let Ok(port) = port_str.parse::<u16>() else {
+        return format!("\"{port_str}\" isn't a real port number.");
+    };
+    let arguments: serde_json::Value = match serde_json::from_str(json_args) {
+        Ok(v) => v,
+        Err(e) => return format!("that last argument isn't valid JSON: {e}"),
+    };
+    match mcp::call_tool(host, port, tool, arguments) {
+        Ok(text) => text,
+        Err(e) => format!("I couldn't call that MCP tool: {e}"),
+    }
+}
+
+/// `/a2a-call <host> <port> <message text>` -- the real outbound half: sends a real message to a
+/// real, already-known A2A endpoint's `SendMessage` method.
+fn a2a_call(rest: &str) -> String {
+    let mut parts = rest.splitn(3, ' ');
+    let (Some(host), Some(port_str), Some(text)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return "\"/a2a-call\" needs <host> <port> <message text>, e.g. \"/a2a-call 127.0.0.1 \
+                8766 hello there\""
+            .to_string();
+    };
+    let Ok(port) = port_str.parse::<u16>() else {
+        return format!("\"{port_str}\" isn't a real port number.");
+    };
+    match a2a::send_message(host, port, text) {
+        Ok(reply) => reply,
+        Err(e) => format!("I couldn't send that A2A message: {e}"),
+    }
 }
 
 /// Feeds a real scenario file, one real utterance per line, through the exact same
@@ -104,7 +290,7 @@ fn main() {
 /// this echo exactly as [`hyperion_console::secret_input::RawEchoOff`] keeps it off a real
 /// terminal. No banner, no trailing interactive prompt: a scenario file's output is meant to be a
 /// reviewable transcript, not a chat session.
-fn run_scenario_file(path: &str, session: &mut ConsoleSession) {
+fn run_scenario_file(path: &str, session: &Arc<Mutex<ConsoleSession>>) {
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(e) => {
@@ -118,7 +304,7 @@ fn run_scenario_file(path: &str, session: &mut ConsoleSession) {
         // Checked before deciding whether this line is "just" a comment/blank spacer -- an empty
         // line while awaiting a secret is itself a real, legitimate answer (cancel connecting),
         // the same rule `run_interactive` already applies to a real typed empty line.
-        let awaiting_secret = session.awaiting_secret_input();
+        let awaiting_secret = session.lock().unwrap().awaiting_secret_input();
         if !awaiting_secret && (trimmed.is_empty() || trimmed.starts_with('#')) {
             continue;
         }
@@ -130,18 +316,36 @@ fn run_scenario_file(path: &str, session: &mut ConsoleSession) {
             println!("> {utterance}");
         }
 
-        let output_lines = session.handle_utterance_with_progress(&utterance, &mut |event| {
-            if let TaskProgress::Done(line) = event {
-                println!("{line}");
+        if !awaiting_secret {
+            match try_control_command(&utterance, session) {
+                ControlOutcome::Exit => return,
+                ControlOutcome::Handled(lines) => {
+                    for line in lines {
+                        println!("{line}");
+                    }
+                    println!();
+                    continue;
+                }
+                ControlOutcome::NotRecognized => {}
             }
-        });
+        }
+
+        let output_lines =
+            session
+                .lock()
+                .unwrap()
+                .handle_utterance_with_progress(&utterance, &mut |event| {
+                    if let TaskProgress::Done(line) = event {
+                        println!("{line}");
+                    }
+                });
         for output_line in output_lines {
             println!("{output_line}");
         }
         println!();
     }
 
-    if session.awaiting_secret_input() {
+    if session.lock().unwrap().awaiting_secret_input() {
         eprintln!(
             "Scenario file ended while still waiting for a pasted API key -- that \"connect\" \
              never completed."
@@ -186,7 +390,7 @@ fn expand_env_vars(line: &str) -> String {
 
 /// The real, live stdin/stdout chat loop -- unchanged from before scenario files existed, just
 /// pulled into its own function so [`main`] can choose it or [`run_scenario_file`].
-fn run_interactive(session: &mut ConsoleSession) {
+fn run_interactive(session: &Arc<Mutex<ConsoleSession>>) {
     // Only for a real interactive terminal -- a screen reader, a pipe, or a redirected/scripted
     // caller gets straight to the one line that actually matters, not decorative noise before it.
     if io::stdout().is_terminal() {
@@ -208,7 +412,7 @@ fn run_interactive(session: &mut ConsoleSession) {
         // A "connect my <provider> account" flow's follow-up API-key line must not be echoed to
         // the terminal or left sitting in scrollback -- checked before the real read, since
         // ECHO has to be off *during* it, not after `handle_utterance` already has the line.
-        let awaiting_secret = session.awaiting_secret_input();
+        let awaiting_secret = session.lock().unwrap().awaiting_secret_input();
         let mut line = String::new();
         let read_result = if awaiting_secret {
             let _guard = RawEchoOff::disable();
@@ -232,6 +436,20 @@ fn run_interactive(session: &mut ConsoleSession) {
             continue;
         }
 
+        if !awaiting_secret {
+            match try_control_command(utterance, session) {
+                ControlOutcome::Exit => break,
+                ControlOutcome::Handled(lines) => {
+                    for line in lines {
+                        println!("{line}");
+                    }
+                    println!();
+                    continue;
+                }
+                ControlOutcome::NotRecognized => {}
+            }
+        }
+
         // A real `Spinner` animates while a tick of a decomposed multi-task plan is still
         // blocked on its own real (potentially slow) capability dispatch -- see
         // `ConsoleSession::run_decomposed_plan`'s own doc comment for why `Starting` fires
@@ -240,19 +458,22 @@ fn run_interactive(session: &mut ConsoleSession) {
         let interactive = io::stdout().is_terminal();
         let mut spinner: Option<Spinner> = None;
         let output_lines =
-            session.handle_utterance_with_progress(utterance, &mut |event| match event {
-                TaskProgress::Starting(names) => {
-                    if interactive && !names.is_empty() {
-                        spinner = Some(Spinner::start(&names));
+            session
+                .lock()
+                .unwrap()
+                .handle_utterance_with_progress(utterance, &mut |event| match event {
+                    TaskProgress::Starting(names) => {
+                        if interactive && !names.is_empty() {
+                            spinner = Some(Spinner::start(&names));
+                        }
                     }
-                }
-                TaskProgress::Done(line) => {
-                    if let Some(s) = spinner.take() {
-                        s.stop();
+                    TaskProgress::Done(line) => {
+                        if let Some(s) = spinner.take() {
+                            s.stop();
+                        }
+                        println!("{line}");
                     }
-                    println!("{line}");
-                }
-            });
+                });
         // A plan that errors or breaks out of its own tick loop before a real `Done` event
         // fires would otherwise leave the spinner animating forever -- stop it here too.
         if let Some(s) = spinner.take() {

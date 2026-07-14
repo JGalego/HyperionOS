@@ -56,22 +56,48 @@ mean here):
 
 **Real today:**
 
-- *(pending this session's Slice 2)* `hyperion-console --mcp` speaks real MCP over stdio,
-  exposing a handful of real capabilities (ask/recall/graph) as tools — the *server* side of "can
-  be talked to via a known protocol."
-
-**Also being built this pass:**
-
-- **An MCP client.** Hyperion calling *out* to a real, already-known MCP endpoint — including
-  another Hyperion instance's own `--mcp` server. This is not the same as real discovery: the
-  endpoint is given, not found.
+- **`/mcp-server [port]`** — a real MCP (Model Context Protocol) server, started as a real
+  background thread from an ordinary console meta-command, over real HTTP (JSON-RPC 2.0:
+  `initialize`, `tools/list`, `tools/call`) rather than stdio — stdio stays free for the rest of
+  the session, unlike a `--mcp`-flag design that would need to own it exclusively. Exposes
+  `hyperion.ask`/`hyperion.recall`/`hyperion.graph` as real tools, each a real turn through the
+  exact same `ConsoleSession::handle_utterance` path everything else in this crate uses — no new
+  bypass of the capability/consent model.
+- **`/a2a-server [port]`** — a real A2A (Agent2Agent) server, same shape: a real Agent Card at the
+  real spec-defined `/.well-known/agent-card.json`, and the real `SendMessage` JSON-RPC method
+  (the spec's own minimal "send a message, get a reply" flow), backed by the same live session.
+- **`/mcp-call <host> <port> <tool> <json args>`** and **`/a2a-call <host> <port> <message
+  text>`** — the real outbound half: Hyperion calling *out* to a real, already-known MCP/A2A
+  endpoint, including another Hyperion instance's own server. Verified live: two real
+  `hyperion-console` processes, one running `/a2a-server`, the other running `/a2a-call` against
+  it, genuinely exchanging a real reply pulled from the *first* process's own conversation history.
+  Not discovery — the endpoint is named, not found (see deferred, below).
+- **`/standby`** — blocks on a real read of this process's own stdin until the user provides real
+  input, then exits. Exists specifically so a scenario that starts a background server doesn't
+  have the whole process (server included) exit the instant the scenario file ends — the real
+  mechanism for "keep this alive long enough to test the server from another terminal, on my own
+  schedule."
+- Both servers share one real `Arc<Mutex<ConsoleSession>>` with the console's own interactive/
+  scenario-file loop — a real MCP/A2A tool call and a real typed utterance affect (and can observe)
+  the very same conversation, not two divergent copies.
 
 **Deliberately still deferred:**
 
 - **Real cross-instance discovery, identity, and trust.** Every existing multi-device concept in
   this workspace (`hyperion-federation`, `hyperion-device`) models *one user's own devices* inside
   one process — there is no concept anywhere of a *different* user/instance as a peer yet. This is
-  a real, separate identity model, not a small extension of what exists.
+  a real, separate identity model, not a small extension of what exists. `/mcp-call`/`/a2a-call`
+  work only because the caller already knows the exact host/port to name.
+- **mDNS/DNS-SD advertise + discover.** The natural next slice for the gap above's *discovery*
+  half (not identity/trust): `/mcp-server`/`/a2a-server` publishing a real
+  `_hyperion-mcp._tcp.local.`/`_hyperion-a2a._tcp.local.` service record on the real port they
+  bound, and a way to browse for the same service types on the LAN — closing
+  `hyperion-device`'s own already-named "real discovery protocols (mDNS/BLE/Matter/cloud-relay)"
+  gap at the same time. Not started this pass.
+- **The rest of each real spec.** MCP: resources, prompts, notifications, the SSE-streaming half
+  of "Streamable HTTP," stdio transport. A2A: `GetTask`/`ListTasks`/streaming/push notifications
+  (no real task store exists here — every dispatch completes synchronously before `SendMessage`
+  returns, so there's nothing to poll).
 - **A2A, gossip, or any custom/invented protocol.** Worth exactly when a real, concrete need
   outgrows what MCP already covers — not before.
 - **Real network transport for federation** (`hyperion-federation`'s own deferred list: heartbeat
