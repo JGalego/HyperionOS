@@ -16,6 +16,32 @@ fn open_session() -> (tempfile::TempDir, ConsoleSession) {
     (dir, session)
 }
 
+/// Regression test: `ConsoleSession::open` used to crash with a raw "No such file or directory"
+/// WAL error the very first time it was ever pointed at a data directory that didn't already
+/// exist -- i.e. a genuinely fresh install, never created for the caller and only ever assumed
+/// to be there already.
+#[test]
+fn open_creates_a_genuinely_fresh_data_directory_rather_than_failing() {
+    let parent = tempfile::tempdir().expect("create a real tempdir");
+    let never_created = parent.path().join("fresh-install-data-dir");
+    assert!(
+        !never_created.exists(),
+        "sanity: this path must not exist yet for this test to mean anything"
+    );
+
+    let session = ConsoleSession::open(&never_created);
+    assert!(
+        session.is_ok(),
+        "opening a session against a real, never-before-seen data directory must succeed, not \
+         crash, got: {:?}",
+        session.err()
+    );
+    assert!(
+        never_created.is_dir(),
+        "the data directory must actually have been created"
+    );
+}
+
 #[test]
 fn a_decomposable_utterance_produces_real_per_task_agent_outcomes_as_text() {
     let (_dir, mut session) = open_session();

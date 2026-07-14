@@ -297,6 +297,14 @@ impl ConsoleSession {
     /// partition; in a test, any tempdir.
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, GraphError> {
         let data_dir = data_dir.as_ref();
+        // A genuinely fresh install (or a caller-supplied path that doesn't exist yet) used to
+        // crash here with a raw "No such file or directory" WAL error -- this crate's own real
+        // data directory, never created for the caller, only ever assumed to already exist.
+        // Ignoring the result is deliberate, not a silently-swallowed error: if creation somehow
+        // still fails (a real permissions/disk problem), `KnowledgeGraph::open`/`Keystore::
+        // open_or_create` immediately below hit the exact same underlying failure and surface a
+        // real error through this function's own existing `Result`, same as before.
+        let _ = std::fs::create_dir_all(data_dir);
         let kg_path = PathBuf::from(data_dir).join("console_knowledge_graph.jsonl");
         let mut monitor = CapabilityMonitor::new();
         let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
