@@ -8,6 +8,11 @@ repository.workspace = true
 [dependencies]
 hyperion-ai-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
+# Real, optional (Option<Arc<...>>, same shape as `NetstackHub`/`PluginRegistry` below) durable,
+# cross-session record of this crate's own real suspend/auto-resume/backoff-decay history --
+# AUTONOMY_ROADMAP.md's Self-Sustaining pillar's "cross-session learning" slice. See
+# `AgentRuntime::spawn`'s own doc comment for what a fresh instance actually does with it.
+hyperion-memory = { workspace = true }
 hyperion-netstack = { workspace = true }
 # Real, optional (Option<Arc<...>>, same shape as `NetstackHub` below) dispatch to an installed
 # plugin's own real `NativeBinary` implementation when `capability_ref` isn't one of this crate's
@@ -24,4 +29,8 @@ thiserror = { workspace = true }
 # document.draft/web.search dispatch through a real LocalAiRuntime::infer call (which requires a
 # real registered, signature-verified model), not stubs::dispatch's harmless canned string.
 hyperion-crypto = { workspace = true }
+# For tests/cross_session_learning.rs's own real, on-disk KnowledgeGraph, opened twice against the
+# same path to simulate a real restart -- this crate's own real dependency is only on
+# hyperion-memory, which owns its own KnowledgeGraph handle internally.
+hyperion-knowledge-graph = { workspace = true }
 tempfile = { workspace = true }

@@ -125,13 +125,17 @@ mean here):
   decays `times_suspended` back down by one, each decay its own audited event
   (`backoff_decayed`) — the actual "recovers, and comes out stronger" mechanic, not a fixed
   penalty forever or a reset to baseline on the first success.
-
-**Also being built this pass:**
-
-- **Cross-session learning.** Feeding suspend/recover history into `hyperion-memory`'s Procedural
-  tier as a durable, cross-session "lessons learned" store (e.g. "capability X failed repeatedly,
-  start more cautious next time"), so the adaptive backoff above survives a restart instead of
-  resetting.
+- **Slice 3b, landed.** That same suspend/auto-resume/backoff-decay history now survives a real
+  process restart. `AgentRuntime` gains an `Option<Arc<MemoryEngine>>` (same optional-real-backend
+  shape as `Option<Arc<NetstackHub>>`/`Option<Arc<PluginRegistry>>`): `spawn` seeds a fresh
+  instance's `times_suspended` by querying `hyperion-memory`'s Procedural tier for that
+  specialization's own remembered history, and every suspend/auto-resume/decay
+  (`record_resilience_event`) writes back into it — so the "this instance is a repeat offender"
+  signal outlives the process, not just the in-memory `AgentInstance`. Proven end to end: opening
+  the exact same on-disk Knowledge Graph path twice, with a fresh `AgentRuntime`/`MemoryEngine`
+  each time and nothing else shared (the closest a single test process can get to a genuine
+  restart) — a specialization's suspension count is really there the second time, and a
+  *different* specialization's fresh instance genuinely starts at zero (no cross-contamination).
 
 **Deliberately still deferred:**
 

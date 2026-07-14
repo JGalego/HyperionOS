@@ -2767,6 +2767,8 @@ dependencies = [
  "hyperion-ai-runtime",
  "hyperion-capability",
  "hyperion-crypto",
+ "hyperion-knowledge-graph",
+ "hyperion-memory",
  "hyperion-netstack",
  "hyperion-plugin-framework",
  "hyperion-scheduler",

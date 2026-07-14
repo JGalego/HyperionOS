@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_memory::{MemoryEngine, MemoryFilter, MemoryTier};
 use hyperion_netstack::{FreshnessPolicy, NetstackHub, WebResolutionRequest};
 use hyperion_plugin_framework::PluginRegistry;
 use hyperion_scheduler::{
@@ -137,6 +138,12 @@ pub struct AgentRuntime {
     /// need to acquire an empty [`PluginRegistry`] just to satisfy a required parameter. See
     /// [`Self::new_with_netstack_and_plugins`].
     plugins: Option<Arc<PluginRegistry>>,
+    /// A real, durable, cross-session record of this instance's own suspend/auto-resume/
+    /// backoff-decay history -- AUTONOMY_ROADMAP.md's Self-Sustaining pillar's "cross-session
+    /// learning" slice. `Option`, same reasoning as [`Self::netstack`]/[`Self::plugins`]: most
+    /// callers have no `MemoryEngine` (itself needing a real `Arc<KnowledgeGraph>`) at all. See
+    /// [`Self::spawn`]'s own doc comment for what a fresh instance actually does with it.
+    memory: Option<Arc<MemoryEngine>>,
 }
 
 impl AgentRuntime {
@@ -163,6 +170,18 @@ impl AgentRuntime {
         netstack: Option<Arc<NetstackHub>>,
         plugins: Option<Arc<PluginRegistry>>,
     ) -> Self {
+        Self::new_with_netstack_and_plugins_and_memory(ai_runtime, netstack, plugins, None)
+    }
+
+    /// As [`Self::new_with_netstack_and_plugins`], additionally wiring a real [`MemoryEngine`] so
+    /// this instance's own suspend/auto-resume/backoff-decay history survives a restart -- see
+    /// [`Self::spawn`]'s own doc comment.
+    pub fn new_with_netstack_and_plugins_and_memory(
+        ai_runtime: Arc<LocalAiRuntime>,
+        netstack: Option<Arc<NetstackHub>>,
+        plugins: Option<Arc<PluginRegistry>>,
+        memory: Option<Arc<MemoryEngine>>,
+    ) -> Self {
         let mut scheduler = Scheduler::new();
         // One nominal dimension stands in for "a Capability invocation's
         // resource footprint" — `DEFAULT_QUOTA` reused as the ledger's
@@ -183,6 +202,7 @@ impl AgentRuntime {
             ai_runtime,
             netstack,
             plugins,
+            memory,
         }
     }
 
@@ -225,6 +245,14 @@ impl AgentRuntime {
     /// already takes `intent_ref`/`context_bundle_ref` at spawn time, so
     /// this crate does not model a separate unbound `spawning` state
     /// observable to callers.
+    ///
+    /// When [`Self::memory`] is real, a fresh instance doesn't start with a blank slate: it looks
+    /// up this manifest's own `specialization` in Procedural memory for the most recent real
+    /// suspend/resume history recorded under it (see [`Self::record_resilience_event`]) and seeds
+    /// `quota.times_suspended` from that, instead of always `0` -- AUTONOMY_ROADMAP.md's
+    /// Self-Sustaining pillar's "cross-session learning": a specialization with a real, recent
+    /// history of trouble starts the *next* process's instance a little more cautious too, rather
+    /// than the adaptive backoff resetting to nothing the moment this process restarts.
     pub fn spawn(
         &self,
         monitor: &CapabilityMonitor,
@@ -235,19 +263,92 @@ impl AgentRuntime {
         self.require(monitor, token, RightsMask::WRITE)?;
 
         let instance_id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let mut quota = QuotaState::new(DEFAULT_QUOTA);
+        quota.times_suspended =
+            self.remembered_times_suspended(monitor, token, &manifest.specialization);
         let mut instance = AgentInstance {
             instance_id,
             manifest,
             state: LifecycleState::Bound,
             bound_intent,
             grants: Vec::new(),
-            quota: QuotaState::new(DEFAULT_QUOTA),
+            quota,
             pending_consent: None,
             audit_log: Vec::new(),
         };
         Self::audit(&mut instance, "bound", format!("intent={bound_intent:?}"));
         self.instances.lock().unwrap().insert(instance_id, instance);
         Ok(instance_id)
+    }
+
+    /// The real read half of [`Self::record_resilience_event`] -- queries Procedural memory (if
+    /// [`Self::memory`] is wired) for this `specialization`'s own most recent real
+    /// `agent_resilience` record, returning its `times_suspended` (or `0` if there's no memory
+    /// engine, or no such record yet -- a specialization with no real history starts fresh, as
+    /// before this slice existed).
+    fn remembered_times_suspended(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        specialization: &str,
+    ) -> u32 {
+        let Some(memory) = self.memory.as_ref() else {
+            return 0;
+        };
+        let filter = MemoryFilter {
+            tier: Some(MemoryTier::Procedural),
+            ..Default::default()
+        };
+        let Ok(mut records) = memory.query(monitor, token, &filter) else {
+            return 0;
+        };
+        records.retain(|r| {
+            r.content.get("kind").and_then(|v| v.as_str()) == Some("agent_resilience")
+                && r.content.get("specialization").and_then(|v| v.as_str()) == Some(specialization)
+        });
+        records.sort_by_key(|r| r.created_at);
+        records
+            .last()
+            .and_then(|r| r.content.get("times_suspended"))
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32)
+            .unwrap_or(0)
+    }
+
+    /// The real write half: records one real suspend/auto-resume/backoff-decay event to
+    /// Procedural memory (if [`Self::memory`] is wired) so it survives this process's own
+    /// restart -- see [`Self::spawn`]'s own doc comment for the read side. A no-op (not an error)
+    /// when no memory engine is wired, or when the real write itself fails: this is a real,
+    /// additive learning signal, not something that should ever fail an invoke over.
+    fn record_resilience_event(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        specialization: &str,
+        event: &str,
+        capability_ref: &str,
+        times_suspended: u32,
+    ) {
+        let Some(memory) = self.memory.as_ref() else {
+            return;
+        };
+        let content = serde_json::json!({
+            "kind": "agent_resilience",
+            "specialization": specialization,
+            "event": event,
+            "capability_ref": capability_ref,
+            "times_suspended": times_suspended,
+        });
+        let _ = memory.remember(
+            monitor,
+            token,
+            MemoryTier::Procedural,
+            content,
+            None,
+            1.0,
+            false,
+            Vec::new(),
+        );
     }
 
     /// docs/11 §7's `invoke` — routed through the Broker (§6.1) and quota/
@@ -326,7 +427,7 @@ impl AgentRuntime {
             Ok(result) => {
                 instance.quota.consecutive_failures = 0;
                 Self::audit(instance, "invoked", capability_ref);
-                Self::record_success_after_resume(instance);
+                self.record_success_after_resume(monitor, token, instance);
                 Ok(InvokeOutcome::Result(result))
             }
             Err(reason) => {
@@ -350,6 +451,14 @@ impl AgentRuntime {
                             backoff_duration(instance.quota.times_suspended)
                         ),
                     );
+                    self.record_resilience_event(
+                        monitor,
+                        token,
+                        &instance.manifest.specialization,
+                        "suspended",
+                        capability_ref,
+                        instance.quota.times_suspended,
+                    );
                 }
                 Ok(InvokeOutcome::Failed(reason))
             }
@@ -361,7 +470,12 @@ impl AgentRuntime {
     /// comment for why this decays gradually rather than resetting outright on the first success.
     /// A no-op once `times_suspended` is already `0` (an instance that's never been suspended has
     /// nothing to earn back).
-    fn record_success_after_resume(instance: &mut AgentInstance) {
+    fn record_success_after_resume(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        instance: &mut AgentInstance,
+    ) {
         if instance.quota.times_suspended == 0 {
             return;
         }
@@ -373,6 +487,14 @@ impl AgentRuntime {
                 instance,
                 "backoff_decayed",
                 format!("times_suspended now {}", instance.quota.times_suspended),
+            );
+            self.record_resilience_event(
+                monitor,
+                token,
+                &instance.manifest.specialization,
+                "backoff_decayed",
+                "",
+                instance.quota.times_suspended,
             );
         }
     }
@@ -409,6 +531,14 @@ impl AgentRuntime {
                     instance,
                     "auto_resumed_after_backoff",
                     format!("times_suspended={}", instance.quota.times_suspended),
+                );
+                self.record_resilience_event(
+                    monitor,
+                    token,
+                    &instance.manifest.specialization,
+                    "auto_resumed",
+                    capability_ref,
+                    instance.quota.times_suspended,
                 );
             } else {
                 let remaining = required - elapsed;
