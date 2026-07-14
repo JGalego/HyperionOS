@@ -41,17 +41,17 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **Periodic Ed25519-signed Merkle anchors over the hash chain.**
-//!   `AuditLogEntry` has no `signature` field; the hash chain's tamper-evidence is now real
-//!   BLAKE3 (PRODUCTION_BOOT_PROMPT.md M9), which alone already satisfies that milestone's own
-//!   exit criterion ("rejected by a real signature *or* hash-chain check") for this crate's
-//!   piece of it. docs/34 §2's fuller design layers a periodic signed Merkle root over segments
-//!   of the chain on top of that (`device_key.sign(merkle_root(segment))` every
-//!   `ANCHOR_INTERVAL` entries, "hardware root of trust where available, a software key
-//!   otherwise") — a real, separate, additive enhancement (Merkle-tree construction plus
-//!   anchor-interval bookkeeping) this crate does not yet build, named here rather than silently
-//!   implied done by the hash-chain fix above. [`hyperion_crypto::Keystore`] (this workspace's
-//!   new real software keystore) is exactly what a future pass would sign anchors with.
+//! - ~~**Periodic Ed25519-signed Merkle anchors over the hash chain.**~~ Now real:
+//!   [`ledger::AuditLedger::new_with_keystore`] opts a ledger into producing a real, signed
+//!   [`ledger::Anchor`] every `ANCHOR_INTERVAL` entries — `device_key.sign(merkle_root(segment))`,
+//!   exactly docs/34 §2's fuller design, layered additively on top of the hash chain (the plain
+//!   [`ledger::AuditLedger::new`] behaves exactly as before: no anchors, same as when this bullet
+//!   was written). [`ledger::AuditLedger::verify_anchor`] checks both that an anchor's own
+//!   signature verifies and that its claimed root still matches the ledger's current entries —
+//!   catching a wholesale-rewritten segment a bare hash-chain re-verification, done by a party
+//!   that never watched the chain grow in real time, couldn't distinguish from a legitimate one
+//!   signed later. Hardware-backed anchoring ("hardware root of trust where available") remains
+//!   real-hardware-only, same as this workspace's other TPM-adjacent deferrals.
 //! - **The Fleet aggregate-submission network endpoint**
 //!   (`Fleet.submitAggregate`). [`aggregate::build_aggregate`] produces
 //!   the gated report; nothing here sends it anywhere — no real network
@@ -85,7 +85,7 @@ mod telemetry;
 mod types;
 
 pub use aggregate::build_aggregate;
-pub use ledger::AuditLedger;
+pub use ledger::{Anchor, AuditLedger};
 pub use telemetry::{derivative, ewma, TelemetryCollector};
 pub use types::{
     AggregateReport, AuditAction, AuditLogEntry, AuditPayload, ConsentCategory, ConsentScope,

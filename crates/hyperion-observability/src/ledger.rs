@@ -2,11 +2,59 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
-use hyperion_crypto::Hash;
+use hyperion_crypto::{Hash, Keystore, Signature, VerifyingKey};
 
 use crate::types::{
     AuditAction, AuditLogEntry, AuditPayload, ObservabilityError, PrincipalRef, VerificationReport,
 };
+
+/// docs/34 §2's periodic anchor cadence — every this-many real ledger entries, if this ledger was
+/// constructed with a real [`Keystore`] ([`AuditLedger::new_with_keystore`]), a signed
+/// [`Anchor`] is produced over the segment that just closed.
+const ANCHOR_INTERVAL: u64 = 100;
+
+/// docs/34 §2's periodic signed Merkle anchor: a real Ed25519 signature over the Merkle root of
+/// `[from_seq, to_seq]`'s `entry_hash`es -- "hardware root of trust where available, a software
+/// key otherwise" (this crate's own doc comment; [`hyperion_crypto::Keystore`] is the software
+/// case). Lets a verifier confirm an entire closed segment of the chain hasn't been rewritten
+/// wholesale (re-hashed *and* re-linked consistently) without re-verifying every entry back to
+/// genesis every time -- exactly the property a bare hash chain alone doesn't give a remote
+/// verifier who wasn't watching it grow in real time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Anchor {
+    pub from_seq: u64,
+    pub to_seq: u64,
+    pub merkle_root: Hash,
+    pub signature: Signature,
+}
+
+/// A standard binary Merkle tree root over `leaves`, in order — an odd node at any level carries
+/// up unhashed rather than being duplicated, since duplication (the common convention for
+/// fixed-arity trees) has a known second-preimage weakness when leaves themselves can repeat;
+/// carrying the odd one up avoids that at the cost of a slightly less "textbook" tree, immaterial
+/// for this crate's own verify-only use.
+fn merkle_root(leaves: &[Hash]) -> Hash {
+    assert!(
+        !leaves.is_empty(),
+        "an anchor is only ever built over a real, non-empty closed segment"
+    );
+    let mut level: Vec<Hash> = leaves.to_vec();
+    while level.len() > 1 {
+        let mut next = Vec::with_capacity(level.len().div_ceil(2));
+        for pair in level.chunks(2) {
+            if pair.len() == 2 {
+                let mut bytes = Vec::with_capacity(64);
+                bytes.extend_from_slice(pair[0].as_bytes());
+                bytes.extend_from_slice(pair[1].as_bytes());
+                next.push(hyperion_crypto::hash(&bytes));
+            } else {
+                next.push(pair[0]);
+            }
+        }
+        level = next;
+    }
+    level[0]
+}
 
 /// A real BLAKE3 hash of the empty byte string -- a well-defined, reproducible root for the
 /// chain's first entry to link to, playing the same "nothing came before this" role a `0` did
@@ -53,6 +101,11 @@ pub struct AuditLedger {
     entries: Mutex<Vec<AuditLogEntry>>,
     next_seq: AtomicU64,
     last_hash: Mutex<Hash>,
+    /// `None` — the default, plain [`Self::new`] — means this ledger never anchors, exactly as
+    /// it behaved before anchoring existed. `Some` (via [`Self::new_with_keystore`]) is what a
+    /// caller that actually has a real device identity to sign with opts into.
+    keystore: Option<Keystore>,
+    anchors: Mutex<Vec<Anchor>>,
 }
 
 impl Default for AuditLedger {
@@ -67,6 +120,20 @@ impl AuditLedger {
             entries: Mutex::new(Vec::new()),
             next_seq: AtomicU64::new(1),
             last_hash: Mutex::new(genesis_hash()),
+            keystore: None,
+            anchors: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// As [`Self::new`], but real periodic signed Merkle anchors (docs/34 §2) are produced every
+    /// [`ANCHOR_INTERVAL`] entries, signed with `keystore`.
+    pub fn new_with_keystore(keystore: Keystore) -> Self {
+        AuditLedger {
+            entries: Mutex::new(Vec::new()),
+            next_seq: AtomicU64::new(1),
+            last_hash: Mutex::new(genesis_hash()),
+            keystore: Some(keystore),
+            anchors: Mutex::new(Vec::new()),
         }
     }
 
@@ -115,7 +182,71 @@ impl AuditLedger {
         };
         self.entries.lock().unwrap().push(entry.clone());
         *last_hash = entry_hash;
+        drop(last_hash);
+
+        if let Some(keystore) = &self.keystore {
+            if seq.is_multiple_of(ANCHOR_INTERVAL) {
+                let from_seq = seq - ANCHOR_INTERVAL + 1;
+                self.anchor_segment(keystore, from_seq, seq);
+            }
+        }
+
         Ok(entry)
+    }
+
+    /// Builds and signs a real [`Anchor`] over `[from_seq, to_seq]`'s current `entry_hash`es and
+    /// records it. Only ever called from [`Self::append`] with a segment that has genuinely just
+    /// closed (`to_seq % ANCHOR_INTERVAL == 0`), but reads the segment fresh from `self.entries`
+    /// rather than threading its own hashes through, so it always anchors what's actually stored.
+    fn anchor_segment(&self, keystore: &Keystore, from_seq: u64, to_seq: u64) {
+        let leaves: Vec<Hash> = self
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e.seq >= from_seq && e.seq <= to_seq)
+            .map(|e| e.entry_hash)
+            .collect();
+        let root = merkle_root(&leaves);
+        let signature = keystore.sign(root.as_bytes());
+        self.anchors.lock().unwrap().push(Anchor {
+            from_seq,
+            to_seq,
+            merkle_root: root,
+            signature,
+        });
+    }
+
+    /// Every real signed [`Anchor`] this ledger has produced so far, oldest first.
+    pub fn anchors(&self) -> Vec<Anchor> {
+        self.anchors.lock().unwrap().clone()
+    }
+
+    /// Checks `anchor` two ways: its own signature must verify against `verifying_key` (catches a
+    /// forged anchor, or one signed by a different real key), and its `merkle_root` must still
+    /// match a fresh recomputation over `self`'s *current* `[from_seq, to_seq]` entries (catches
+    /// an anchored segment that was rewritten after the fact, even if the anchor record itself
+    /// was left untouched).
+    pub fn verify_anchor(&self, anchor: &Anchor, verifying_key: &VerifyingKey) -> bool {
+        if !hyperion_crypto::verify(
+            anchor.merkle_root.as_bytes(),
+            &anchor.signature,
+            verifying_key,
+        ) {
+            return false;
+        }
+        let leaves: Vec<Hash> = self
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e.seq >= anchor.from_seq && e.seq <= anchor.to_seq)
+            .map(|e| e.entry_hash)
+            .collect();
+        if leaves.is_empty() {
+            return false;
+        }
+        merkle_root(&leaves) == anchor.merkle_root
     }
 
     /// docs/34 §6's `Audit.query` — local-only; capability-checking here
@@ -266,6 +397,109 @@ mod tests {
             "a broken prev_hash link must be caught at the exact seq where the chain no longer \
              connects, even though that entry's own entry_hash still recomputes consistently \
              over its (untouched) content"
+        );
+    }
+
+    fn append_n(monitor: &CapabilityMonitor, root: &CapabilityToken, ledger: &AuditLedger, n: u64) {
+        for i in 0..n {
+            ledger
+                .append(
+                    monitor,
+                    root,
+                    PrincipalRef::System,
+                    AuditAction::Grant,
+                    None,
+                    AuditPayload::Note(format!("entry {i}")),
+                    1_000 + i,
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn no_anchor_is_produced_without_a_real_keystore() {
+        let (monitor, root, ledger) = setup();
+        append_n(&monitor, &root, &ledger, ANCHOR_INTERVAL * 2);
+        assert!(
+            ledger.anchors().is_empty(),
+            "the plain constructor must never anchor, exactly as before anchoring existed"
+        );
+    }
+
+    #[test]
+    fn a_real_signed_anchor_is_produced_after_exactly_anchor_interval_entries() {
+        let mut monitor = CapabilityMonitor::new();
+        let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+        let verifying_key = keystore.verifying_key();
+        let ledger = AuditLedger::new_with_keystore(keystore);
+
+        append_n(&monitor, &root, &ledger, ANCHOR_INTERVAL - 1);
+        assert!(
+            ledger.anchors().is_empty(),
+            "no anchor before the interval genuinely closes"
+        );
+
+        append_n(&monitor, &root, &ledger, 1);
+        let anchors = ledger.anchors();
+        assert_eq!(anchors.len(), 1);
+        let anchor = &anchors[0];
+        assert_eq!(anchor.from_seq, 1);
+        assert_eq!(anchor.to_seq, ANCHOR_INTERVAL);
+        assert!(
+            ledger.verify_anchor(anchor, &verifying_key),
+            "a freshly produced anchor over an untouched ledger must verify"
+        );
+    }
+
+    #[test]
+    fn verify_anchor_rejects_a_signature_from_a_different_real_key() {
+        let mut monitor = CapabilityMonitor::new();
+        let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+        let ledger = AuditLedger::new_with_keystore(keystore);
+        append_n(&monitor, &root, &ledger, ANCHOR_INTERVAL);
+
+        let forger_dir = tempfile::tempdir().unwrap();
+        let forger_keystore =
+            Keystore::open_or_create(&forger_dir.path().join("forger.key")).unwrap();
+        let anchor = &ledger.anchors()[0];
+        assert!(
+            !ledger.verify_anchor(anchor, &forger_keystore.verifying_key()),
+            "an anchor must not verify against a real key other than the one that signed it"
+        );
+    }
+
+    #[test]
+    fn verify_anchor_rejects_a_segment_rewritten_after_being_anchored() {
+        let mut monitor = CapabilityMonitor::new();
+        let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+        let dir = tempfile::tempdir().unwrap();
+        let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+        let verifying_key = keystore.verifying_key();
+        let ledger = AuditLedger::new_with_keystore(keystore);
+        append_n(&monitor, &root, &ledger, ANCHOR_INTERVAL);
+        let anchor = ledger.anchors()[0].clone();
+        assert!(ledger.verify_anchor(&anchor, &verifying_key));
+
+        // Simulate an attacker who rewrote an entry *and* recomputed entry_hash/prev_hash so the
+        // segment stays internally self-consistent (verify_chain alone would not catch this,
+        // since it only checks the chain's own internal links -- exactly the "rewritten
+        // wholesale" scenario docs/34 §2 names the anchor as defending against, distinct from a
+        // same-hash payload tamper `verify_chain`'s own test already covers). The anchor record
+        // itself is untouched; only the segment it claims to cover changed.
+        {
+            let mut entries = ledger.entries.lock().unwrap();
+            entries[0].entry_hash =
+                hyperion_crypto::hash(b"a rewritten, internally-consistent entry");
+        }
+
+        assert!(
+            !ledger.verify_anchor(&anchor, &verifying_key),
+            "an anchor must not verify once its anchored segment's real content hash has changed, \
+             even though the anchor record's own bytes are untouched"
         );
     }
 }
