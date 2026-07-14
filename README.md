@@ -12,7 +12,16 @@ Want the thinking behind it? Read [`CLAUDE.md`](CLAUDE.md).
 
 Want to know exactly what's built and what's next? See [`PRODUCTION_BOOT_PROMPT.md`](PRODUCTION_BOOT_PROMPT.md).
 
-## Philosophy
+## 📑 Contents
+
+- [🧭 Philosophy](#-philosophy)
+- [🧱 Architecture](#-architecture)
+- [🚀 Getting started](#-getting-started)
+- [🔨 Build it yourself](#-build-it-yourself)
+- [💬 Try it locally](#-try-it-locally)
+- [📄 License](#-license)
+
+## 🧭 Philosophy
 
 > Your goals are the operating system.
 
@@ -28,7 +37,7 @@ Hyperion manages what you actually have.
 | Windows | Context |
 | Applications | Memory, reasoning, capabilities |
 
-## Architecture
+## 🧱 Architecture
 
 > You speak. Everything else listens.
 
@@ -90,7 +99,7 @@ Conversation, generated screens, and voice: the only parts of Hyperion you direc
 - <code>L2</code>/<code>L1</code>/<code>L0</code> Every one of those steps was checked against a capability grant first, and scheduled safely underneath.
 - <code>L6</code> The results land back as one workspace — not four separate app windows.
 
-## Getting started
+## 🚀 Getting started
 
 Every tagged release publishes ready-to-flash disk images for both reference platforms on the [Releases](https://github.com/JGalego/HyperionOS/releases) page:
 
@@ -127,11 +136,11 @@ cargo run --release -p hyperion-release-gate --bin verify-release -- \
 
 This recomputes the hash directly from the image's own bytes (it never trusts the manifest's own recorded hash) and confirms the signature checks out against the manifest's recorded key - compare that key against the one published above.
 
-## Build it yourself
+## 🔨 Build it yourself
 
 See [PRODUCTION_BOOT_PROMPT.md](PRODUCTION_BOOT_PROMPT.md) and the scripts under [boot/scripts/](boot/scripts/) (`build-image.sh` for x86_64, `build-image-aarch64.sh` for aarch64) if you'd rather build an image from source than download one.
 
-## Try the console without an image
+## 💬 Try it locally
 
 For development, the fastest loop is a native build of `hyperion-console` on your own machine - no image, no boot:
 
@@ -152,6 +161,6 @@ HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch ./target/debug/hyperion-console 
 
 `.env` is already gitignored, so a real key never gets committed. A scenario file only ever references a key by name (`$GROQ_API_KEY`), never as a literal - see USAGE_SCENARIOS.md's "Running a scenario from a file" for how that expansion works.
 
-## License
+## 📄 License
 
 MIT - See [LICENSE](LICENSE)
