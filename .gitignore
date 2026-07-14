@@ -3,3 +3,6 @@
 # boot/: Buildroot itself, downloaded sources, and build output are
 # multi-GB, reproducibly re-derived by boot/scripts/*.sh -- not source.
 /boot/.tools/
+
+# sensitive files
+.env

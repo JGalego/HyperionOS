@@ -32,6 +32,100 @@ fastest real debug loop. It defaults to `MockBackend` (no `--features candle`) a
 credentials, i.e. exactly what anyone cloning this repo and running the console gets without extra
 setup — deliberately the *worst-case* real default, not a cherry-picked best case.
 
+### Running a scenario against a real backend
+
+Every scenario above ran on `MockBackend`. To exercise the same scenarios against a real model,
+each backend gets its secret differently — traced through `hyperion-console::session.rs`, not
+guessed:
+
+- **Candle (real local inference).** No secret at all — it downloads a small public model from
+  Hugging Face Hub with no auth needed. Just build with `--features candle`.
+  ```
+  cargo build -p hyperion-console --bin hyperion-console --features candle
+  ```
+- **Local engines (ollama/vllm/litellm/custom).** Read directly from dedicated, per-engine
+  environment variables at `/backend` switch time (`EngineKind::api_key_env_var`) — all optional
+  (Ollama/vLLM usually don't need one; a self-hosted LiteLLM proxy often does). Needs
+  `--features openai-compat`. Copy [`.env.example`](.env.example) to `.env` (already gitignored —
+  never commit real values), fill in what you need, then:
+  ```
+  cargo build -p hyperion-console --bin hyperion-console --features openai-compat
+  set -a && source .env && set +a
+  HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+      printf '/backend ollama llama3.2\nwhat is the capital of France\n' | \
+      ./target/debug/hyperion-console
+  ```
+  **Verified live, and worth knowing before you trust a "Switched to..." message:** unlike the
+  cloud path below, a local-engine switch is lenient, not an eager hard gate. With no real Ollama
+  running at all, the switch still reported success (a warning that the model name wasn't in the
+  server's own list, "continuing anyway"), and the real failure only surfaced on the next actual
+  request (`openai-compat backend error: ... 404 Not Found`). A successful "Switched to..."
+  message here is not proof the backend actually works yet — only the next real request tells you
+  that.
+- **Cloud providers (openai/anthropic/gemini).** Deliberately *not* read from the environment by
+  the console itself — the only real path in is the interactive `connect my <provider> account`
+  utterance, which stores the key encrypted at rest. Each provider needs its own build feature to
+  actually connect (`try_connect_openai`/`try_connect_anthropic`/`try_connect_gemini` each fail
+  with an honest, named error otherwise) — OpenAI's cloud API reuses `openai-compat` (it *is* the
+  origin of that wire shape); Anthropic and Gemini each need their own dedicated feature:
+  ```
+  cargo build -p hyperion-console --bin hyperion-console --features openai-compat  # openai
+  cargo build -p hyperion-console --bin hyperion-console --features anthropic      # anthropic
+  cargo build -p hyperion-console --bin hyperion-console --features gemini         # gemini
+  ```
+  **`/backend <provider> <model>` does a real, eager connectivity check right then** — it is not
+  just argument parsing. Verified live, with a deliberately fake key: the switch itself made a
+  real HTTPS call and failed outright with a real `401 Unauthorized`, and the session correctly
+  stayed on whichever backend was active before rather than half-switching. You need a genuinely
+  valid key for the switch to succeed at all:
+  ```
+  set -a && source .env && set +a
+  HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch printf '%s\n' \
+      "connect my openai account" \
+      "$OPENAI_API_KEY" \
+      "/backend openai gpt-4o-mini" \
+      "what is the capital of France" \
+      "yes" \
+      | ./target/debug/hyperion-console
+  ```
+  **Not independently verified in this sandbox (no real account to test against), based on
+  reading `run_undecomposed_goal`/`finish_consent` instead:** once the switch succeeds, the
+  consent prompt ("This would send your message to a real, paid, external OpenAI API — proceed?
+  (yes/no)") should fire on the *next* utterance — the first real dispatch, not the switch itself
+  — and `yes` answers it. If you run this with a real key and it doesn't match this description,
+  that's a real doc bug to fix, not something to assume is your own mistake.
+
+### A more complex, multi-turn, multi-request-type scenario
+
+Combining several request shapes and a mid-session backend switch in one real session — this is
+the shape to follow for new complex scenarios, not just single-utterance ones. Use
+`printf '%s\n' "utterance one" "utterance two" ...` (one shell argument per utterance), not a
+single multi-line quoted string — a `\` at the end of a line *inside* a single-quoted string is
+not a shell line-continuation, it's a literal backslash-then-newline in the piped text, which
+silently corrupts the input:
+
+```
+rm -rf /tmp/hyperion-scratch
+HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch printf '%s\n' \
+    "my name is Alex" \
+    "what is my name" \
+    "launch my startup" \
+    "/result market_research" \
+    "/backend candle" \
+    "what programming language should I learn first" \
+    | ./target/debug/hyperion-console
+```
+
+This exercises, in one session: plain conversation + continuity (scenario 9), the one real
+decomposed multi-task template (scenario 3), a sub-result lookup (scenario 4), a backend-switch
+attempt mid-session, and a plain follow-up. **`/backend candle` is a Cargo feature, not a runtime
+option** — it can only ever succeed if *this binary* was compiled with `--features candle` in the
+first place; on the default build it correctly, honestly refuses ("I couldn't switch: this build
+wasn't compiled with real inference support") and the session keeps working on whichever backend
+was already active. Run this scenario twice to see both real behaviors: once against the default
+build (confirms the honest refusal) and once against a binary built with `--features candle` from
+the start (confirms the switch succeeds and the final answer is real generated text, not an echo).
+
 ## Scenario log
 
 Each entry: persona/situation, the utterance(s) used, what was actually observed, and the
