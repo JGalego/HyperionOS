@@ -37,12 +37,11 @@ fn to_capability_manifest(
         implementation_kind: implementation_kind(implementation.runtime),
         quality_score,
         version: contract.version,
-        // `Implementation` (this crate's own type, docs/25 §2) carries no executable path/argv
-        // yet -- a `Runtime::NativeBinary`/`ComposedCapability` submission through this SDK still
-        // publishes as a real registry entry, just not yet a runnable one (see
-        // AUTONOMY_ROADMAP.md's "tool creation" slice for the real fix: this crate's own harness/
-        // validation pipeline, wired to carry a real `NativeBinaryDescriptor` through end to end).
-        native_binary: None,
+        // AUTONOMY_ROADMAP.md's "tool creation" slice: carried straight through from the
+        // submission now, so a `Runtime::NativeBinary` `Implementation` that names a real,
+        // existing, executable program installs as a genuinely *runnable* capability -- not just
+        // a labeled placeholder -- the moment it's published.
+        native_binary: implementation.native_binary.clone(),
     }
 }
 

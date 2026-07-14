@@ -1,4 +1,4 @@
-use hyperion_plugin_framework::{Operation, SideEffect};
+use hyperion_plugin_framework::{NativeBinaryDescriptor, Operation, SideEffect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrustLevel {
@@ -66,6 +66,16 @@ pub struct Implementation {
     pub runtime: Runtime,
     pub latency_class: LatencyClass,
     pub requires_consent: bool,
+    /// Real execution info for `Runtime::NativeBinary`/`ComposedCapability` -- `None` for
+    /// `LocalModel`/`CloudApi` (each already dispatches through its own real backend elsewhere).
+    /// AUTONOMY_ROADMAP.md's "tool creation" slice: this crate's own publish pipeline
+    /// (`prepare_submission` → `publish`) now installs a `NativeBinary` submission as a genuinely
+    /// *runnable* capability when this is `Some` -- naming an existing, real, already-vetted
+    /// program is "tool creation" in the safe, honest sense this workspace can support today; an
+    /// agent synthesizing and directly executing brand-new code from scratch is deliberately
+    /// deferred (real code review/static analysis of freshly generated code before ever executing
+    /// it is separate, substantial work, not a field addition).
+    pub native_binary: Option<NativeBinaryDescriptor>,
 }
 
 /// docs/25 §3's `MockContextBundle` — deliberately *not* wired to the

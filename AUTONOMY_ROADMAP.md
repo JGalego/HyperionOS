@@ -31,9 +31,16 @@ and `USAGE_SCENARIOS.md` already hold themselves to.
 roadmap, per direct instruction — see this file's own git history for what "deferred" used to
 mean here):
 
-- **Tool *creation*.** An agent authoring a brand-new plugin end to end: drafts a small script and
-  manifest, runs it through `hyperion-sdk`'s existing harness/validation, installs it through
-  `PluginRegistry::install` — using Slice 1's execution path, now real.
+- **Tool *creation*, landed (in the safe, honest sense this workspace can support today).**
+  `hyperion-sdk::Implementation` carries a real `native_binary: Option<NativeBinaryDescriptor>`,
+  threaded through `prepare_submission` → `publish` → `PluginRegistry::install`: naming an
+  existing, real, already-vetted program as a `Runtime::NativeBinary` submission now installs it
+  as a genuinely *runnable* capability, invocable through Slice 1's real execution path the moment
+  `publish` returns — proven end to end. **Deliberately not built**: an agent synthesizing brand-new
+  code from scratch and directly executing it. Real code review/static analysis of freshly
+  generated code before ever running it is separate, substantial work this session didn't
+  attempt — naming it here rather than quietly skipping it or faking it with an unreviewed
+  auto-exec path, which would be a real security regression, not a feature.
 - **`hyperion-api-gateway`'s parallel gap, landed.** Its own `ApiGateway::dispatch_one` now checks
   `self.registry` for a runnable `NativeBinary` implementation before falling back to
   `hyperion_agent_runtime::dispatch_stub_capability`, the exact same real execution path Slice 1
