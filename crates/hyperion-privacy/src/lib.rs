@@ -42,10 +42,25 @@
 //! Deliberately deferred, and why:
 //!
 //! - **Real encryption at rest, key wrapping, and Shamir secret-sharing
-//!   recovery.** [`types::ConsentGrant`] has no `proof: Signature` field
-//!   (docs/16 §4) and [`types::ResidencyTag`] has no `encryption_key_ref`
-//!   — no crate in this workspace performs real cryptography yet (the
-//!   same non-cryptographic-checksum pattern used throughout).
+//!   recovery.** `hyperion-crypto` (Phase 8/M9) means "no crate in this
+//!   workspace performs real cryptography yet" is no longer why this is
+//!   deferred, but adding [`types::ConsentGrant`]'s `proof: Signature`
+//!   (docs/16 §4) today would be signing with no real verifier: this
+//!   ledger is purely local and capability-gated, with no import/sync
+//!   path anywhere that would ever check such a signature — the same
+//!   gap as the bullet below (multi-device sync doesn't exist here yet).
+//!   A real signature with nothing to verify it against is exactly the
+//!   kind of mechanism-with-no-consumer this workspace's own convention
+//!   avoids; it belongs with that sync work, not bolted on alone.
+//!   [`types::ResidencyTag`]'s `encryption_key_ref` is a further, larger
+//!   gap: real encryption of arbitrary Knowledge Graph node metadata
+//!   would need to intercept `hyperion-storage`'s own WAL write/read
+//!   path with per-tag key material — a real, separate feature, not a
+//!   field addition. Key wrapping and Shamir secret-sharing recovery
+//!   remain out of scope the same way M9's own completion note already
+//!   scoped them: docs/28's fuller DEK/KEK/master-key hierarchy, deferred
+//!   there as "a real, separate, larger feature," not required by any
+//!   milestone's own exit criteria.
 //! - **`SyncEnvelope`/multi-device CRDT gossip and erasure propagation
 //!   across devices.** `ErasureReceipt` here has no
 //!   `propagated_to_devices` field — this crate has no multi-device sync
