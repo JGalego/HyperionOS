@@ -49,7 +49,7 @@ pub fn default_manifests() -> Vec<AgentManifest> {
             specialization: "assistant".to_string(),
             baseline_capabilities: vec!["assistant.respond".to_string()],
             // PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": requestable, never baseline
-            // -- these three route to the exact same dispatch `assistant.respond` does
+            // -- these four route to the exact same dispatch `assistant.respond` does
             // (`hyperion_agent_runtime::runtime::AgentRuntime::dispatch_assistant_respond`), but
             // only when the console's currently-active backend is the matching real cloud
             // provider (see `hyperion_console::session::BackendKind::capability_ref`). Being
@@ -60,6 +60,7 @@ pub fn default_manifests() -> Vec<AgentManifest> {
                 "cloud.openai".to_string(),
                 "cloud.anthropic".to_string(),
                 "cloud.gemini".to_string(),
+                "cloud.groq".to_string(),
             ],
             trust_tier: TrustTier::System,
         },

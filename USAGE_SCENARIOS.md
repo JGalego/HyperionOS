@@ -62,14 +62,17 @@ guessed:
   request (`openai-compat backend error: ... 404 Not Found`). A successful "Switched to..."
   message here is not proof the backend actually works yet — only the next real request tells you
   that.
-- **Cloud providers (openai/anthropic/gemini).** Deliberately *not* read from the environment by
-  the console itself — the only real path in is the interactive `connect my <provider> account`
+- **Cloud providers (openai/anthropic/gemini/groq).** Deliberately *not* read from the environment
+  by the console itself — the only real path in is the interactive `connect my <provider> account`
   utterance, which stores the key encrypted at rest. Each provider needs its own build feature to
-  actually connect (`try_connect_openai`/`try_connect_anthropic`/`try_connect_gemini` each fail
-  with an honest, named error otherwise) — OpenAI's cloud API reuses `openai-compat` (it *is* the
-  origin of that wire shape); Anthropic and Gemini each need their own dedicated feature:
+  actually connect (`try_connect_openai`/`try_connect_anthropic`/`try_connect_gemini`/
+  `try_connect_groq` each fail with an honest, named error otherwise) — OpenAI's and Groq's cloud
+  APIs both reuse `openai-compat` (Groq's own API is wire-compatible with OpenAI's, same as a
+  local engine's, but it's still a real, paid, third-party cloud API, so it's gated as a
+  `CloudProvider`, not an `EngineKind`); Anthropic and Gemini each need their own dedicated
+  feature:
   ```
-  cargo build -p hyperion-console --bin hyperion-console --features openai-compat  # openai
+  cargo build -p hyperion-console --bin hyperion-console --features openai-compat  # openai, groq
   cargo build -p hyperion-console --bin hyperion-console --features anthropic      # anthropic
   cargo build -p hyperion-console --bin hyperion-console --features gemini         # gemini
   ```
@@ -94,6 +97,9 @@ guessed:
   (yes/no)") should fire on the *next* utterance — the first real dispatch, not the switch itself
   — and `yes` answers it. If you run this with a real key and it doesn't match this description,
   that's a real doc bug to fix, not something to assume is your own mistake.
+
+  Groq follows the identical shape — swap `openai`/`$OPENAI_API_KEY`/`gpt-4o-mini` for
+  `groq`/`$GROQ_API_KEY`/one of Groq's own real model names (e.g. `llama-3.3-70b-versatile`).
 
 ### A more complex, multi-turn, multi-request-type scenario
 

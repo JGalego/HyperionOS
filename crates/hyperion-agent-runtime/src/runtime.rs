@@ -26,19 +26,24 @@ const ASSISTANT_RESPOND_CAPABILITY: &str = "assistant.respond";
 /// PRODUCTION_BOOT_PROMPT.md M10's real Capability alongside `assistant.respond` -- see
 /// [`AgentRuntime::dispatch_web_research`]'s own doc comment.
 const WEB_RESEARCH_CAPABILITY: &str = "web.research";
-/// PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": the three real, requestable (never
+/// PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": the real, requestable (never
 /// baseline -- see `hyperion-coordination::catalog::default_manifests`) Capabilities a real
 /// cloud dispatch is gated behind. Each routes to the exact same
 /// [`AgentRuntime::dispatch_assistant_respond`] as the baseline `assistant.respond` case below --
 /// dispatch itself is backend-agnostic (whatever `LocalAiRuntime`'s currently-active backend is),
 /// so only the *gate* differs between local and cloud use, not the dispatch function. The console
-/// picks which of these four literal strings to invoke under based on its own currently-active
+/// picks which of these literal strings to invoke under based on its own currently-active
 /// backend (`hyperion_console::session::BackendKind::capability_ref`) -- these stay private
 /// constants here, exactly as `ASSISTANT_RESPOND_CAPABILITY` already does, with the console
-/// hardcoding the matching literals rather than importing them.
+/// hardcoding the matching literals rather than importing them. `CLOUD_GROQ_CAPABILITY` joined
+/// the other three later (Groq support) -- it's a distinct, real, paid, hosted cloud provider
+/// (Groq's own LPU-hosted API), gated exactly like the rest, even though its wire protocol
+/// happens to be OpenAI-compatible (that's an implementation detail of the console's own
+/// `try_connect_groq`, not a trust-boundary distinction).
 const CLOUD_OPENAI_CAPABILITY: &str = "cloud.openai";
 const CLOUD_ANTHROPIC_CAPABILITY: &str = "cloud.anthropic";
 const CLOUD_GEMINI_CAPABILITY: &str = "cloud.gemini";
+const CLOUD_GROQ_CAPABILITY: &str = "cloud.groq";
 /// Real now, alongside `assistant.respond`/`web.research` above -- see
 /// [`AgentRuntime::dispatch_document_draft`]'s own doc comment for what changed and why.
 const DOCUMENT_DRAFT_CAPABILITY: &str = "document.draft";
@@ -247,6 +252,7 @@ impl AgentRuntime {
             CLOUD_OPENAI_CAPABILITY,
             CLOUD_ANTHROPIC_CAPABILITY,
             CLOUD_GEMINI_CAPABILITY,
+            CLOUD_GROQ_CAPABILITY,
         ]
         .contains(&capability_ref)
         {

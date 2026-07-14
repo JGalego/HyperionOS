@@ -53,12 +53,12 @@
 //! real, separate wiring gap (`hyperion-netstack` had zero real callers anywhere in this
 //! workspace before this milestone) rather than just a backend swap.
 //!
-//! PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers" adds three more real Capabilities the
-//! same way — `cloud.openai`/`cloud.anthropic`/`cloud.gemini` all dispatch through
+//! PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers" adds more real Capabilities the
+//! same way — `cloud.openai`/`cloud.anthropic`/`cloud.gemini`/`cloud.groq` all dispatch through
 //! [`runtime::AgentRuntime::dispatch_assistant_respond`], the exact same function
 //! `assistant.respond` already uses (dispatch itself is backend-agnostic; only *which* real
 //! `InferenceBackend` `LocalAiRuntime` was last handed differs). What's genuinely new here is
-//! the *gate*: `hyperion-coordination`'s "assistant" manifest declares these three as
+//! the *gate*: `hyperion-coordination`'s "assistant" manifest declares these four as
 //! `requestable_capabilities` (never baseline, unlike `assistant.respond`/`web.research`), so a
 //! real `GrantDecision::PendingConsent` round trip (§6.1) — real money, real data leaving the
 //! device — stands between a cloud-backed dispatch and ever actually running, where local/mock/

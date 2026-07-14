@@ -169,7 +169,8 @@ enum BackendKind {
         model: String,
     },
     /// A real, paid, external cloud provider -- see [`hyperion_ai_runtime::openai_compat_backend`]
-    /// (OpenAI itself, reused verbatim), [`hyperion_ai_runtime::anthropic_backend`], and
+    /// (OpenAI itself, reused verbatim -- Groq too, since its API is wire-compatible with
+    /// OpenAI's), [`hyperion_ai_runtime::anthropic_backend`], and
     /// [`hyperion_ai_runtime::gemini_backend`]. Unlike `Engine` (self-hosted, never gated), every
     /// dispatch under this variant goes through this provider's own requestable Capability (see
     /// [`Self::capability_ref`]) -- a real consent prompt, not just a runtime switch.
@@ -216,6 +217,10 @@ enum CloudProvider {
     OpenAi,
     Anthropic,
     Gemini,
+    /// Groq's own real, hosted, paid API -- LPU-hosted inference, not self-hosted, so it's a
+    /// `CloudProvider` (real consent gate) rather than an `EngineKind` (never gated) despite its
+    /// wire protocol being OpenAI-compatible; see [`ConsoleSession::try_connect_groq`].
+    Groq,
 }
 
 impl CloudProvider {
@@ -227,6 +232,7 @@ impl CloudProvider {
             CloudProvider::OpenAi => "openai",
             CloudProvider::Anthropic => "anthropic",
             CloudProvider::Gemini => "gemini",
+            CloudProvider::Groq => "groq",
         }
     }
 
@@ -239,6 +245,7 @@ impl CloudProvider {
             CloudProvider::OpenAi => "cloud.openai",
             CloudProvider::Anthropic => "cloud.anthropic",
             CloudProvider::Gemini => "cloud.gemini",
+            CloudProvider::Groq => "cloud.groq",
         }
     }
 }
@@ -525,6 +532,7 @@ impl ConsoleSession {
             CloudProvider::OpenAi => Self::try_connect_openai(api_key, model),
             CloudProvider::Anthropic => Self::try_connect_anthropic(api_key, model),
             CloudProvider::Gemini => Self::try_connect_gemini(api_key, model),
+            CloudProvider::Groq => Self::try_connect_groq(api_key, model),
         }
     }
 
@@ -552,6 +560,42 @@ impl ConsoleSession {
 
     #[cfg(not(feature = "openai-compat"))]
     fn try_connect_openai(
+        _api_key: &str,
+        _model: &str,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        Err(
+            "this build wasn't compiled with real OpenAI-compatible support \
+             (--features openai-compat)"
+                .to_string(),
+        )
+    }
+
+    /// Groq's own real API speaks the same OpenAI-compatible shape
+    /// [`hyperion_ai_runtime::OpenAiCompatBackend`] covers (unlike Anthropic/Gemini below, which
+    /// each need their own dedicated backend) -- no new backend needed, just Groq's own real
+    /// base URL. Gated on `openai-compat`, not a new feature, for that reason: this is the exact
+    /// same wire protocol the cloud-OpenAI and local-engine arms already speak.
+    /// `HYPERION_GROQ_BASE_URL` overrides the default exactly as `HYPERION_OPENAI_BASE_URL` does
+    /// for OpenAI -- see [`Self::try_connect_openai`]'s own doc comment for why that's a real
+    /// feature (a corporate proxy in front of Groq's real API) and not just a testing seam.
+    #[cfg(feature = "openai-compat")]
+    fn try_connect_groq(
+        api_key: &str,
+        model: &str,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        let base_url = std::env::var("HYPERION_GROQ_BASE_URL")
+            .unwrap_or_else(|_| "https://api.groq.com/openai/v1".to_string());
+        hyperion_ai_runtime::OpenAiCompatBackend::connect(
+            base_url,
+            model,
+            Some(api_key.to_string()),
+        )
+        .map(|backend| Box::new(backend) as Box<dyn hyperion_ai_runtime::InferenceBackend>)
+        .map_err(|e| format!("couldn't connect to the real Groq API: {e}"))
+    }
+
+    #[cfg(not(feature = "openai-compat"))]
+    fn try_connect_groq(
         _api_key: &str,
         _model: &str,
     ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
@@ -708,6 +752,7 @@ impl ConsoleSession {
                 CloudProvider::OpenAi,
                 CloudProvider::Anthropic,
                 CloudProvider::Gemini,
+                CloudProvider::Groq,
             ] {
                 if lower.contains(provider.label()) {
                     self.pending_connect = Some(provider);
@@ -719,7 +764,8 @@ impl ConsoleSession {
             }
             return Some(vec![
                 "Connect which provider? Try \"connect my openai account\", \"connect my \
-                 anthropic account\", or \"connect my gemini account\"."
+                 anthropic account\", \"connect my gemini account\", or \"connect my groq \
+                 account\"."
                     .to_string(),
             ]);
         }
@@ -771,11 +817,12 @@ impl ConsoleSession {
                     Err(e) => return Some(vec![e]),
                 }
             }
-            "openai" | "anthropic" | "gemini" => {
+            "openai" | "anthropic" | "gemini" | "groq" => {
                 let provider = match kind_name.as_str() {
                     "openai" => CloudProvider::OpenAi,
                     "anthropic" => CloudProvider::Anthropic,
-                    _ => CloudProvider::Gemini,
+                    "gemini" => CloudProvider::Gemini,
+                    _ => CloudProvider::Groq,
                 };
                 match rest.as_slice() {
                     [model] => BackendKind::Cloud {
@@ -795,7 +842,7 @@ impl ConsoleSession {
                 return Some(vec![format!(
                     "I don't know a \"{other}\" backend -- try \"candle\", \"mock\", \
                      \"ollama\", \"vllm\", \"litellm\", \"custom\", \"openai\", \"anthropic\", \
-                     or \"gemini\"."
+                     \"gemini\", or \"groq\"."
                 )])
             }
         };
@@ -854,14 +901,14 @@ impl ConsoleSession {
             "  /backend custom <base_url> <model>         switch to any other \
              OpenAI-compatible server"
                 .to_string(),
-            "  /backend <openai|anthropic|gemini> <model>  switch to a real cloud provider \
-             (needs a connected account)"
+            "  /backend <openai|anthropic|gemini|groq> <model>  switch to a real cloud \
+             provider (needs a connected account)"
                 .to_string(),
             "  /backend                                    show which backend is active right \
              now"
             .to_string(),
             "  connect my <provider> account                store a real API key for openai, \
-             anthropic, or gemini"
+             anthropic, gemini, or groq"
                 .to_string(),
             "  /recall [text]                              look through what I've recorded \
              (bare, for everything recent)"

@@ -678,14 +678,74 @@ fn cloud_consent_lifecycle_grants_in_session_but_reasks_fresh_after_a_restart() 
             "got: {switched_back:?}"
         );
         let mock_answer = session.handle_utterance("still working?").join("\n");
+        // Not `"echo: still working?"` verbatim -- `prompt_with_recent_history` (see
+        // `ConsoleSession`'s own doc comment) legitimately prefixes this turn's utterance with
+        // this session's real prior turns before the mock ever echoes it back. The real
+        // regression signature this guards is "declining consent leaves the session working at
+        // all," not the exact shape of what gets echoed.
         assert!(
-            mock_answer.contains("echo: still working?"),
+            mock_answer.contains("still working?"),
             "declining a consent prompt must not break the session's normal pipeline \
              afterward, got: {mock_answer:?}"
         );
     }
 
     std::env::remove_var("HYPERION_OPENAI_BASE_URL");
+}
+
+/// Groq support: proves the *whole* chain end to end -- `"connect my groq account"` recognized,
+/// the key stored and immediately granted for this session, `/backend groq <model>` switching
+/// through [`hyperion_console`]'s own `try_connect_groq`
+/// (`HYPERION_GROQ_BASE_URL` redirecting `OpenAiCompatBackend` to this test's local fixture
+/// server, exactly as `HYPERION_OPENAI_BASE_URL` does for cloud OpenAI), and the resulting
+/// dispatch actually reaching that fixture server over the real OpenAI-compatible wire protocol --
+/// not just that `CloudProvider::Groq` compiles, but that `hyperion-coordination`'s
+/// `"cloud.groq"` requestable capability and `hyperion-agent-runtime`'s matching dispatch route
+/// are both really wired, not just declared.
+#[cfg(feature = "openai-compat")]
+#[test]
+fn groq_backend_connects_and_dispatches_through_the_real_openai_compatible_wire_protocol() {
+    // 2 real requests: `OpenAiCompatBackend::connect`'s own validation call (fired by the
+    // `/backend groq ...` switch below) plus the one real `/v1/chat/completions` call the
+    // "say hello" dispatch makes -- see `common::spawn_fixture_server`'s own doc comment and the
+    // cloud-openai lifecycle test above, which budgets requests the same way.
+    let base_url = common::spawn_fixture_server(
+        2,
+        common::openai_compat_handler("llama-fixture", "groq fixture echo"),
+    );
+    std::env::set_var("HYPERION_GROQ_BASE_URL", &base_url);
+
+    let (_dir, mut session) = open_session();
+
+    let prompt = session
+        .handle_utterance("connect my groq account")
+        .join("\n");
+    assert!(
+        prompt.contains("Paste your groq API key"),
+        "got: {prompt:?}"
+    );
+    assert!(session.awaiting_secret_input());
+
+    let stored = session.handle_utterance("gsk-test-fixture-key").join("\n");
+    assert!(stored.contains("Connected"), "got: {stored:?}");
+    assert!(!session.awaiting_secret_input());
+
+    let switched = session
+        .handle_utterance("/backend groq llama-fixture")
+        .join("\n");
+    assert!(
+        switched.starts_with("Switched to the groq"),
+        "got: {switched:?}"
+    );
+
+    let answer = session.handle_utterance("say hello").join("\n");
+    assert!(
+        answer.contains("groq fixture echo: say hello"),
+        "expected the connect flow's own immediate in-session grant to let this dispatch \
+         through with no PendingConsent prompt, got: {answer:?}"
+    );
+
+    std::env::remove_var("HYPERION_GROQ_BASE_URL");
 }
 
 /// A real bug report motivated this: a user's real OpenAI key kept failing with a real 401 even
