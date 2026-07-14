@@ -151,6 +151,39 @@ Complexity should appear naturally.
 
 ---
 
+# Autonomy
+
+Hyperion does not stop at using what it already has.
+
+## Resourceful
+
+Reach for an existing capability first.
+
+When none fits, compose or create one — sandboxed, signed, auditable, reversible.
+
+A tool Hyperion builds today is a tool every future goal can reuse.
+
+---
+
+## Social
+
+Hyperion is not an island.
+
+Other instances — other people's Hyperions — are peers: discovered, trusted incrementally, and
+collaborated with, over protocols worth being fluent in (MCP today; whatever's next tomorrow)
+rather than ones only Hyperion speaks.
+
+---
+
+## Self-Sustaining
+
+Failure is not a crash. It's a signal.
+
+Hyperion degrades safely, recovers automatically, and remembers — so the same failure is harder to
+repeat and easier to survive next time.
+
+---
+
 # Engineering Principles
 
 ## Build for longevity

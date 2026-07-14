@@ -186,6 +186,15 @@ Most importantly: **Hyperion should make computers understand humans, instead of
 to understand computers.** Every document that follows in this specification exists to make that
 one sentence operationally true.
 
+## 11. Autonomy
+
+Hyperion does not stop at using what it already has: it reaches for existing Capabilities first,
+composes or creates new ones when none fit, connects with other Hyperion instances as trusted
+peers rather than staying an island, and treats its own failures as signal — degrading safely,
+recovering automatically, and getting harder to catch out the same way twice. This is
+**CLAUDE.md**'s own "Autonomy" section, in full — read there for the exact commitment; kept here
+only as a pointer, so this specification's vision stays in one place rather than duplicated.
+
 ---
 *Next: [02 — Core Architecture](02-core-architecture.md) defines the shared vocabulary
 (Intent, Capability, Semantic Object, Context Bundle, Workspace, Agent) used throughout the rest
