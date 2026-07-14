@@ -73,12 +73,18 @@
 //!   is rejected with [`types::PluginError::CapabilityCollisionIncompatible`]
 //!   rather than automatically minted a versioned variant id — the
 //!   caller can retry under an explicitly different `capability_id`.
-//! - **`TrustDepth` as a real isolation mechanism.** It is enforced here
-//!   purely as a policy label (a manifest's declared minimum compared
-//!   against the caller-supplied `available_depth`) — see
-//!   [`types::TrustDepth`]'s own doc comment for why this workspace has
-//!   no second, deeper sandboxing primitive beyond `hyperion-capability`'s
-//!   Trust Boundary to model a real depth spectrum with.
+//! - **`TrustDepth` as a real isolation mechanism.** Still enforced here purely as a policy label
+//!   (a manifest's declared minimum compared against the caller-supplied `available_depth`) — but
+//!   the premise that this workspace has no second, deeper sandboxing primitive is now stale:
+//!   `hyperion-trust-boundary` (real Linux user namespaces, Landlock, and seccomp-bpf via
+//!   `spawn`/`SpawnedBoundary::revoke`, live-tested against real forked processes) is exactly
+//!   that. What's still missing isn't the primitive, it's something for it to attach *to*: this
+//!   registry stores `ImplementationDescriptor`s (data), never a callable — `invoke_capability`'s
+//!   real dispatch always goes through `hyperion-agent-runtime`'s stub-dispatch fallback (see
+//!   `hyperion-api-gateway`'s own identical gap), because no out-of-process Capability execution
+//!   exists anywhere in this workspace yet. Wiring `TrustDepth` onto `hyperion-trust-boundary` for
+//!   real needs that out-of-process execution model built first — a real, separate feature, not a
+//!   dependency swap in this crate.
 
 mod registry;
 mod review;
