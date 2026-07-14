@@ -63,6 +63,24 @@ fn now() -> u64 {
 const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
 const DEFAULT_QUOTA: u32 = 100;
 
+/// AUTONOMY_ROADMAP.md's Self-Sustaining pillar: a `Suspended` instance's real path back, once
+/// `hyperion-supervisor::backoff_duration` proved the right *shape* for OS processes (capped
+/// exponential, keyed on a real per-target failure count) -- re-derived here, not copy-pasted,
+/// since this crate's own clock ([`now`]) is second-granularity, unlike that crate's millisecond
+/// one. Seconds, not milliseconds: `1, 2, 4, 8, 16, 32` for `times_suspended` `1..=6`, capped at 6
+/// so a real repeat offender's own wait keeps growing but never becomes practically infinite.
+fn backoff_duration(times_suspended: u32) -> u64 {
+    2u64.pow(times_suspended.clamp(1, 6) - 1)
+}
+
+/// How many *consecutive* real successes a resumed instance needs before
+/// [`AgentRuntime::invoke`]'s own phase 3 decays [`crate::types::QuotaState::times_suspended`] by
+/// one -- the concrete "comes out stronger" trigger: real, sustained good behavior earns back a
+/// shorter future backoff, one step at a time, rather than resetting to zero on the very first
+/// success (which would make repeat offense free) or never decaying at all (which would make one
+/// bad episode a permanent scar).
+const SUCCESS_STREAK_TO_DECAY: u32 = 3;
+
 /// [`AgentRuntime::prepare_invoke`]'s own result -- see [`AgentRuntime::invoke`]'s doc comment
 /// for why this three-phase split exists at all.
 enum PreparedInvoke {
@@ -308,6 +326,7 @@ impl AgentRuntime {
             Ok(result) => {
                 instance.quota.consecutive_failures = 0;
                 Self::audit(instance, "invoked", capability_ref);
+                Self::record_success_after_resume(instance);
                 Ok(InvokeOutcome::Result(result))
             }
             Err(reason) => {
@@ -319,10 +338,42 @@ impl AgentRuntime {
                 );
                 if instance.quota.consecutive_failures >= CIRCUIT_BREAKER_THRESHOLD {
                     instance.state = LifecycleState::Suspended;
-                    Self::audit(instance, "suspended_runaway", capability_ref);
+                    instance.quota.suspended_at = Some(now());
+                    instance.quota.times_suspended += 1;
+                    instance.quota.consecutive_successes_since_resume = 0;
+                    Self::audit(
+                        instance,
+                        "suspended_runaway",
+                        format!(
+                            "{capability_ref} (times_suspended={}, next backoff {}s)",
+                            instance.quota.times_suspended,
+                            backoff_duration(instance.quota.times_suspended)
+                        ),
+                    );
                 }
                 Ok(InvokeOutcome::Failed(reason))
             }
+        }
+    }
+
+    /// The real "comes out stronger" half: a real success streak after a resume earns back a
+    /// shorter future backoff, one step at a time -- see [`SUCCESS_STREAK_TO_DECAY`]'s own doc
+    /// comment for why this decays gradually rather than resetting outright on the first success.
+    /// A no-op once `times_suspended` is already `0` (an instance that's never been suspended has
+    /// nothing to earn back).
+    fn record_success_after_resume(instance: &mut AgentInstance) {
+        if instance.quota.times_suspended == 0 {
+            return;
+        }
+        instance.quota.consecutive_successes_since_resume += 1;
+        if instance.quota.consecutive_successes_since_resume >= SUCCESS_STREAK_TO_DECAY {
+            instance.quota.times_suspended -= 1;
+            instance.quota.consecutive_successes_since_resume = 0;
+            Self::audit(
+                instance,
+                "backoff_decayed",
+                format!("times_suspended now {}", instance.quota.times_suspended),
+            );
         }
     }
 
@@ -346,11 +397,29 @@ impl AgentRuntime {
             .get_mut(&instance_id)
             .ok_or(AgentError::NotFound)?;
 
+        if instance.state == LifecycleState::Suspended {
+            let elapsed = now().saturating_sub(instance.quota.suspended_at.unwrap_or(0));
+            let required = backoff_duration(instance.quota.times_suspended);
+            if elapsed >= required {
+                // A real path back: auto-resume, for real, rather than staying stuck until
+                // something external intervenes -- AUTONOMY_ROADMAP.md's Self-Sustaining pillar.
+                instance.state = LifecycleState::Bound;
+                instance.quota.suspended_at = None;
+                Self::audit(
+                    instance,
+                    "auto_resumed_after_backoff",
+                    format!("times_suspended={}", instance.quota.times_suspended),
+                );
+            } else {
+                let remaining = required - elapsed;
+                return Err(AgentError::InvalidState(format!(
+                    "still recovering from a recent run of failures -- try again in {remaining}s"
+                )));
+            }
+        }
+
         match instance.state {
-            LifecycleState::Terminated
-            | LifecycleState::Completed
-            | LifecycleState::Failed
-            | LifecycleState::Suspended => {
+            LifecycleState::Terminated | LifecycleState::Completed | LifecycleState::Failed => {
                 return Err(AgentError::InvalidState(format!(
                     "cannot invoke while {:?}",
                     instance.state

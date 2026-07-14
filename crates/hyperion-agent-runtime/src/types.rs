@@ -57,6 +57,24 @@ pub struct QuotaState {
     pub calls_used_this_window: u32,
     pub max_calls_per_window: u32,
     pub consecutive_failures: u32,
+    /// Real epoch-seconds ([`crate::runtime::now`]) this instance was last suspended, so
+    /// [`crate::AgentRuntime::prepare_invoke`] can tell whether its own adaptive backoff window
+    /// (keyed on [`Self::times_suspended`]) has really elapsed yet. `None` once resumed.
+    pub suspended_at: Option<u64>,
+    /// AUTONOMY_ROADMAP.md's Self-Sustaining pillar: this instance's *whole-life* suspension
+    /// count, distinct from [`Self::consecutive_failures`] (which already resets to `0` on any
+    /// success -- the real "is this instance still in trouble right now" signal). This one never
+    /// resets on a single success; it's the real "has this instance made the same kind of mistake
+    /// before" history a repeat offender's own, longer backoff is computed from, and a real streak
+    /// of successes after a resume decays it back down (see
+    /// [`crate::AgentRuntime::record_success_after_resume`]) -- the actual "recovers, and comes
+    /// out stronger" mechanic, not a fixed penalty forever.
+    pub times_suspended: u32,
+    /// How many *consecutive* real successes this instance has had since its last resume --
+    /// counted only while [`Self::times_suspended`] is still above zero, and reset by any real
+    /// failure. Once this reaches [`crate::runtime::SUCCESS_STREAK_TO_DECAY`], `times_suspended`
+    /// decays by one and this counter resets -- the concrete trigger for "earns its caution back."
+    pub consecutive_successes_since_resume: u32,
 }
 
 impl QuotaState {
@@ -65,6 +83,9 @@ impl QuotaState {
             calls_used_this_window: 0,
             max_calls_per_window,
             consecutive_failures: 0,
+            suspended_at: None,
+            times_suspended: 0,
+            consecutive_successes_since_resume: 0,
         }
     }
 

@@ -113,10 +113,18 @@ mean here):
 - `hyperion-recovery`'s undo/redo/crash-recovery journal already exists (real, but purely
   reactive — restores last-known-good, no learning).
 - `hyperion-supervisor`'s exponential backoff + give-up policy already exists for OS *processes*.
-- *(pending this session's Slice 3)* A suspended `AgentInstance` now has a real way back: it
-  auto-resumes after an adaptive backoff window, and a real repeat-offense history makes that
-  backoff longer next time, decaying back down after a real streak of successes — the actual
-  "recovers, and comes out stronger" mechanic, not just "back to baseline."
+- **Slice 3, landed.** A `Suspended` `AgentInstance` now has a real way back:
+  `AgentRuntime::prepare_invoke` auto-resumes it once a real, adaptive backoff window
+  (`backoff_duration`, capped exponential, re-derived from `hyperion-supervisor`'s own proven
+  shape for OS processes) has elapsed, with a real, explainable audit entry
+  (`auto_resumed_after_backoff`) — instead of staying stuck until something external intervenes.
+  `QuotaState.times_suspended` (the instance's real *whole-life* suspension count, distinct from
+  `consecutive_failures`, which already resets on any success) makes a repeat offender's next
+  backoff measurably longer — verified live: a second suspension's backoff genuinely outlasts the
+  first. A real streak of `SUCCESS_STREAK_TO_DECAY` (3) consecutive successes after a resume
+  decays `times_suspended` back down by one, each decay its own audited event
+  (`backoff_decayed`) — the actual "recovers, and comes out stronger" mechanic, not a fixed
+  penalty forever or a reset to baseline on the first success.
 
 **Also being built this pass:**
 
