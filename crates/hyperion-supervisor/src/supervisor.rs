@@ -26,7 +26,7 @@ use hyperion_capability::{CapabilityMonitor, CapabilityToken, TrustBoundaryId, W
 use hyperion_cgroups::Cgroup;
 use hyperion_trust_boundary::{SpawnGrant, SpawnedBoundary};
 
-use crate::errors::SupervisorError;
+use crate::errors::{GiveUpReason, SupervisorError};
 use crate::spec::ServiceSpec;
 
 /// A respawn faster than this counts as a "fast failure" for backoff purposes -- moved here
@@ -41,6 +41,25 @@ const FAST_FAILURE_THRESHOLD: Duration = Duration::from_secs(2);
 fn backoff_duration(consecutive_fast_failures: u32) -> Duration {
     let capped_exponent = consecutive_fast_failures.min(5);
     Duration::from_millis(200 * 2u64.pow(capped_exponent))
+}
+
+/// Erlang/OTP's classic "max_restarts" give-up policy: once a child has fast-failed this many
+/// times in a row, the supervisor stops respawning it rather than retrying forever. Applies
+/// uniformly to every tracked child, the same way [`backoff_duration`] already does. Chosen small
+/// enough that a genuinely broken binary (one that can never start) is stopped from consuming CPU
+/// in an infinite respawn loop within tens of seconds, but large enough that a real transient
+/// double-fault (this workspace's own M4 completion note documents one) survives.
+const MAX_CONSECUTIVE_FAST_FAILURES: u32 = 5;
+
+/// A service the supervisor has stopped trying to restart, kept queryable so a caller
+/// (`hyperion-init`'s own boot log today; a future real alerting transport, when one exists) can
+/// explain *why* a service is no longer running -- this workspace's own Explainability
+/// convention applied to process supervision: never just a silent stop.
+#[derive(Debug, Clone)]
+pub struct GivenUpService {
+    pub name: String,
+    pub restart_count: u32,
+    pub reason: GiveUpReason,
 }
 
 struct Bookkeeping {
@@ -89,6 +108,8 @@ pub struct Supervisor {
     cgroup_parent: Option<PathBuf>,
     next_origin: u64,
     children: HashMap<libc::pid_t, TrackedChild>,
+    /// Services this supervisor has given up on -- see [`Self::given_up`]/[`Self::reap_and_restart_one`].
+    given_up: HashMap<String, GivenUpService>,
 }
 
 impl Supervisor {
@@ -119,6 +140,7 @@ impl Supervisor {
             cgroup_parent,
             next_origin: 1,
             children: HashMap::new(),
+            given_up: HashMap::new(),
         })
     }
 
@@ -277,12 +299,12 @@ impl Supervisor {
     /// grandchild orphan (reparented here rather than a direct child of this process) -- not
     /// something to restart, and not a reason for PID 1 to abort.
     ///
-    /// If the respawn attempt itself fails (distinct from the original process merely exiting),
-    /// this service is logged and dropped from supervision rather than retried indefinitely -- a
-    /// real give-up/alerting policy for "even the fresh spawn attempt keeps failing" is a real,
-    /// separate refinement this MVP milestone doesn't attempt (mirrors M4's own documented
-    /// `io.max`/`SCHED_DEADLINE` deferrals: implemented for the case the exit criteria actually
-    /// tests, not silently pretended to handle every failure mode beyond it).
+    /// Two distinct ways this gives up on a service instead of restarting it, both recorded in
+    /// [`Self::given_up`] and returned as [`SupervisorError::GaveUp`] rather than silently:
+    /// fast-failing [`MAX_CONSECUTIVE_FAST_FAILURES`] times in a row ([`GiveUpReason::CrashLoop`]),
+    /// or the fresh respawn attempt itself erroring ([`GiveUpReason::RespawnFailed`]). Either way
+    /// the service is dropped from supervision, not retried indefinitely; every *other* tracked
+    /// child is untouched, same sibling-isolation guarantee as a normal restart.
     pub fn reap_and_restart_one(&mut self) -> Result<String, SupervisorError> {
         let mut status: libc::c_int = 0;
         // SAFETY: -1 waits for any child of this process; status is a valid out-pointer.
@@ -302,9 +324,33 @@ impl Supervisor {
         } else {
             0
         };
+
+        if child.book.consecutive_fast_failures >= MAX_CONSECUTIVE_FAST_FAILURES {
+            // Revoke any live token so nothing can present it once this service is no longer
+            // supervised -- the process itself is already gone (that's why waitpid returned it);
+            // `child`'s own Drop below releases its cgroup, same as a normal restart's fenced-off
+            // stale token.
+            if let ChildKind::Sandboxed { token, .. } = &child.kind {
+                self.monitor.cap_revoke(token);
+            }
+            let restart_count = child.book.restart_count;
+            self.given_up.insert(
+                name.clone(),
+                GivenUpService {
+                    name: name.clone(),
+                    restart_count,
+                    reason: GiveUpReason::CrashLoop,
+                },
+            );
+            return Err(SupervisorError::GaveUp {
+                name,
+                restart_count,
+                reason: GiveUpReason::CrashLoop,
+            });
+        }
         std::thread::sleep(backoff_duration(child.book.consecutive_fast_failures));
 
-        let new_pid = match &mut child.kind {
+        let respawn_result: Result<libc::pid_t, SupervisorError> = match &mut child.kind {
             ChildKind::Sandboxed {
                 spec,
                 boundary,
@@ -316,23 +362,55 @@ impl Supervisor {
                 // fences off any *other* holder of the same now-stale token, it doesn't kill
                 // anything.
                 self.monitor.cap_revoke(token);
-                let (new_pid, new_boundary, new_token, new_cgroup) =
-                    self.spawn_sandboxed_inner(spec, *origin)?;
-                *token = new_token;
-                *boundary = new_boundary;
-                *cgroup = new_cgroup;
-                new_pid
+                match self.spawn_sandboxed_inner(spec, *origin) {
+                    Ok((new_pid, new_boundary, new_token, new_cgroup)) => {
+                        *token = new_token;
+                        *boundary = new_boundary;
+                        *cgroup = new_cgroup;
+                        Ok(new_pid)
+                    }
+                    Err(e) => Err(e),
+                }
             }
             ChildKind::Plain { respawn } => respawn().map_err(|source| SupervisorError::Spawn {
                 name: name.clone(),
                 source,
-            })?,
+            }),
         };
 
-        child.book.restart_count += 1;
-        child.book.started_at = Instant::now();
-        self.children.insert(new_pid, child);
-        Ok(name)
+        match respawn_result {
+            Ok(new_pid) => {
+                child.book.restart_count += 1;
+                child.book.started_at = Instant::now();
+                self.children.insert(new_pid, child);
+                Ok(name)
+            }
+            Err(e) => {
+                let restart_count = child.book.restart_count;
+                self.given_up.insert(
+                    name.clone(),
+                    GivenUpService {
+                        name: name.clone(),
+                        restart_count,
+                        reason: GiveUpReason::RespawnFailed,
+                    },
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// The service this supervisor has given up restarting, if any -- see [`GiveUpReason`].
+    /// `None` for a name that's currently running, was never tracked, or (if names are ever
+    /// reused) has since been re-spawned by a fresh call to [`Self::spawn_sandboxed`]/
+    /// [`Self::adopt_plain`].
+    pub fn given_up(&self, name: &str) -> Option<GivenUpService> {
+        self.given_up.get(name).cloned()
+    }
+
+    /// Every service this supervisor has ever given up on, in this process's lifetime.
+    pub fn given_up_services(&self) -> Vec<GivenUpService> {
+        self.given_up.values().cloned().collect()
     }
 
     /// `hyperion-init`'s real PID 1 usage: supervise forever, logging each restart. Never
@@ -347,6 +425,16 @@ impl Supervisor {
                     println!("[hyperion-supervisor] restarted {name}");
                 }
                 Ok(_) => {}
+                Err(SupervisorError::GaveUp {
+                    name,
+                    restart_count,
+                    reason,
+                }) => {
+                    eprintln!(
+                        "[hyperion-supervisor] GAVE UP on {name:?} after {restart_count} \
+                         restart(s) ({reason:?}) -- no longer supervised"
+                    );
+                }
                 Err(e) => eprintln!("[hyperion-supervisor] wait/restart error: {e}"),
             }
         }

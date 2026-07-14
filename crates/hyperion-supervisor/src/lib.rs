@@ -45,8 +45,14 @@
 //!   service's own `fs_scope`, so it needs its own Landlock rule, not a reuse of the existing
 //!   one) -- a real, separate extension to M2's crate, deliberately not folded into this
 //!   milestone's already-large scope.
-//! - A give-up/alerting policy for a respawn attempt that itself keeps failing: not implemented --
-//!   see [`Supervisor::reap_and_restart_one`]'s docs.
+//! - ~~A give-up/alerting policy for a respawn attempt that itself keeps failing~~: now real --
+//!   [`Supervisor::reap_and_restart_one`] stops respawning a service once it has fast-failed a
+//!   small, fixed number of times in a row, or once a fresh respawn attempt itself errors,
+//!   recording why in [`Supervisor::given_up`]/[`Supervisor::given_up_services`] ([`GiveUpReason`])
+//!   rather than retrying forever or dropping the service silently. "Alerting" stops at making
+//!   this queryable and loudly logged (`run_forever` prints it): no real paging/notification
+//!   transport exists anywhere in this workspace to alert through, and inventing one here would be
+//!   exactly the kind of fabricated integration this workspace's own conventions reject.
 
 mod errors;
 mod spec;
@@ -56,7 +62,7 @@ mod spec;
 #[cfg(target_os = "linux")]
 mod supervisor;
 
-pub use errors::SupervisorError;
+pub use errors::{GiveUpReason, SupervisorError};
 pub use spec::{ServiceScheduling, ServiceSpec};
 #[cfg(target_os = "linux")]
-pub use supervisor::Supervisor;
+pub use supervisor::{GivenUpService, Supervisor};
