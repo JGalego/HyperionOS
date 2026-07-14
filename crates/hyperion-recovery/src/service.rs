@@ -7,8 +7,8 @@ use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_knowledge_graph::{GraphError, KnowledgeGraph, NodeId};
 
 use crate::types::{
-    ActionId, ActionRecord, ActionStatus, RecoveryError, RecoveryPoint, RecoveryPointId, Snapshot,
-    Trigger, UndoReceipt, UndoScope,
+    ActionId, ActionRecord, ActionStatus, RecoveryError, RecoveryPoint, RecoveryPointId,
+    RedoReceipt, Snapshot, Trigger, UndoReceipt, UndoScope,
 };
 
 /// docs/33 — Rollback & Recovery. See this crate's doc comment for the
@@ -18,6 +18,13 @@ pub struct RecoveryService {
     points: Mutex<HashMap<RecoveryPointId, RecoveryPoint>>,
     snapshots: Mutex<HashMap<RecoveryPointId, Snapshot>>,
     actions: Mutex<Vec<ActionRecord>>,
+    /// Captured by [`Self::undo`] at the moment it reverts an action -- the
+    /// state those `objects_touched` were actually in right before that
+    /// revert, i.e. the action's own real "after" effects. This is what
+    /// [`Self::redo`] re-applies; it is keyed by [`ActionId`] rather than
+    /// folded into `snapshots` (which is keyed by [`RecoveryPointId`] and
+    /// represents "before an action ran," not "after").
+    redo_snapshots: Mutex<HashMap<ActionId, Snapshot>>,
     next_point_id: AtomicU64,
     next_action_id: AtomicU64,
 }
@@ -29,6 +36,7 @@ impl RecoveryService {
             points: Mutex::new(HashMap::new()),
             snapshots: Mutex::new(HashMap::new()),
             actions: Mutex::new(Vec::new()),
+            redo_snapshots: Mutex::new(HashMap::new()),
             next_point_id: AtomicU64::new(1),
             next_action_id: AtomicU64::new(1),
         }
@@ -43,6 +51,29 @@ impl RecoveryService {
         monitor
             .check_rights_ok_result(token, rights)
             .map_err(|_| RecoveryError::Unauthorized)
+    }
+
+    /// Reads the current live state of every id in `objects` — `None` for
+    /// one that doesn't exist (yet). Shared by [`Self::recovery_point_create`]
+    /// (captures "before an action runs") and [`Self::undo`] (captures "the
+    /// action's real effects, right before reverting them" for
+    /// [`Self::redo`] to later re-apply).
+    fn snapshot_objects(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        objects: &[NodeId],
+    ) -> Result<Snapshot, RecoveryError> {
+        let mut snapshot = Vec::with_capacity(objects.len());
+        for &id in objects {
+            let existing = match self.graph.get(monitor, token, id) {
+                Ok(record) => Some(record),
+                Err(GraphError::NotFound) => None,
+                Err(e) => return Err(e.into()),
+            };
+            snapshot.push((id, existing));
+        }
+        Ok(snapshot)
     }
 
     /// docs/33 §5's recovery-point creation: capture what each about-to-
@@ -61,15 +92,7 @@ impl RecoveryService {
     ) -> Result<RecoveryPointId, RecoveryError> {
         self.require(monitor, token, RightsMask::WRITE)?;
 
-        let mut snapshot = Vec::with_capacity(objects_about_to_touch.len());
-        for &id in objects_about_to_touch {
-            let existing = match self.graph.get(monitor, token, id) {
-                Ok(record) => Some(record),
-                Err(GraphError::NotFound) => None,
-                Err(e) => return Err(e.into()),
-            };
-            snapshot.push((id, existing));
-        }
+        let snapshot = self.snapshot_objects(monitor, token, objects_about_to_touch)?;
 
         let point_id = self.next_point_id.fetch_add(1, Ordering::Relaxed);
         self.points.lock().unwrap().insert(
@@ -130,6 +153,34 @@ impl RecoveryService {
         self.set_status(action_id, ActionStatus::Aborted)
     }
 
+    /// Writes every `Some` entry of `snapshot` back to the graph verbatim,
+    /// restricted to `objects` — shared by [`Self::restore_objects`] (a
+    /// `RecoveryPointId`-keyed "before" snapshot) and [`Self::redo`] (an
+    /// `ActionId`-keyed "after" snapshot). A `None` entry is left alone,
+    /// same limitation both callers already document: this can't un-create
+    /// an object `hyperion-knowledge-graph` has no delete operation for.
+    fn apply_snapshot(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        snapshot: &Snapshot,
+        objects: &[NodeId],
+    ) -> Result<(), RecoveryError> {
+        for (node_id, state) in snapshot.iter().filter(|(id, _)| objects.contains(id)) {
+            if let Some(record) = state {
+                self.graph.put_node(
+                    monitor,
+                    token,
+                    Some(*node_id),
+                    record.object_type.clone(),
+                    record.embedding.clone(),
+                    record.metadata.clone(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     fn restore_objects(
         &self,
         monitor: &CapabilityMonitor,
@@ -144,19 +195,7 @@ impl RecoveryService {
             .get(&recovery_point_id)
             .cloned()
             .ok_or(RecoveryError::NoSuchRecoveryPoint)?;
-        for (node_id, before) in snapshot.iter().filter(|(id, _)| objects.contains(id)) {
-            if let Some(record) = before {
-                self.graph.put_node(
-                    monitor,
-                    token,
-                    Some(*node_id),
-                    record.object_type.clone(),
-                    record.embedding.clone(),
-                    record.metadata.clone(),
-                )?;
-            }
-        }
-        Ok(())
+        self.apply_snapshot(monitor, token, &snapshot, objects)
     }
 
     /// docs/32/33's `restore_to(recovery_point_id)`: restores every object
@@ -284,11 +323,15 @@ impl RecoveryService {
             .collect();
         let earliest = in_scope.iter().map(|a| a.created_at).min().unwrap();
 
+        // `Undone` actions are excluded alongside `Aborted`: their effects
+        // were already reverted, so a later action touching the same
+        // object no longer represents live, conflicting data.
         let conflicts: Vec<NodeId> = all_actions
             .iter()
             .filter(|a| {
                 !scope_ids.contains(&a.action_id)
                     && a.status != ActionStatus::Aborted
+                    && a.status != ActionStatus::Undone
                     && a.created_at >= earliest
             })
             .flat_map(|a| a.objects_touched.iter().copied())
@@ -299,6 +342,19 @@ impl RecoveryService {
             return Ok(UndoReceipt::NeedsConfirmation {
                 conflicting_objects: conflicts,
             });
+        }
+
+        // Capture each action's real, current effects *before* reverting
+        // any of them -- this is what `redo` later re-applies. Done as its
+        // own pass, before any restore below runs, so every capture reads
+        // genuinely live (pre-revert) state.
+        {
+            let mut redo_snapshots = self.redo_snapshots.lock().unwrap();
+            for record in &in_scope {
+                let post_action_state =
+                    self.snapshot_objects(monitor, token, &record.objects_touched)?;
+                redo_snapshots.insert(record.action_id, post_action_state);
+            }
         }
 
         let mut undone = Vec::new();
@@ -315,11 +371,91 @@ impl RecoveryService {
         let mut actions = self.actions.lock().unwrap();
         for a in actions.iter_mut() {
             if scope_ids.contains(&a.action_id) {
-                a.status = ActionStatus::Aborted;
+                a.status = ActionStatus::Undone;
             }
         }
         Ok(UndoReceipt::Targeted {
             undone_actions: undone,
+        })
+    }
+
+    /// docs/33's `redo(scope)`: the mirror image of [`Self::undo`],
+    /// re-applying an already-undone action's real captured effects rather
+    /// than replaying it forward. Same conflict rule: if anything
+    /// committed since the undo touched one of the same objects, redoing
+    /// would silently clobber that newer, legitimate work, so this
+    /// surfaces the conflict and requires explicit confirmation instead,
+    /// exactly like `undo` does for concurrent edits.
+    pub fn redo(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        scope: UndoScope,
+    ) -> Result<RedoReceipt, RecoveryError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+
+        let all_actions = self.actions.lock().unwrap().clone();
+        let mut in_scope: Vec<ActionRecord> = all_actions
+            .iter()
+            .filter(|a| a.status == ActionStatus::Undone && Self::in_scope(a, scope))
+            .cloned()
+            .collect();
+        if in_scope.is_empty() {
+            return Ok(RedoReceipt::NothingToRedo);
+        }
+        // Oldest first: the reverse of undo's newest-first unwind, so two
+        // redone actions that touched the same object converge back on the
+        // same forward order they were originally committed in.
+        in_scope.sort_by_key(|a| a.created_at);
+
+        let scope_ids: HashSet<ActionId> = in_scope.iter().map(|a| a.action_id).collect();
+        let touched: HashSet<NodeId> = in_scope
+            .iter()
+            .flat_map(|a| a.objects_touched.iter().copied())
+            .collect();
+        let earliest = in_scope.iter().map(|a| a.created_at).min().unwrap();
+
+        // Anything genuinely committed against one of these objects since
+        // the earliest undo in scope is new, legitimate work done *after*
+        // the undo -- redo would silently clobber it, so surface it
+        // instead, mirroring undo's own conflict rule.
+        let conflicts: Vec<NodeId> = all_actions
+            .iter()
+            .filter(|a| {
+                !scope_ids.contains(&a.action_id)
+                    && a.status == ActionStatus::Committed
+                    && a.created_at >= earliest
+            })
+            .flat_map(|a| a.objects_touched.iter().copied())
+            .filter(|id| touched.contains(id))
+            .collect();
+
+        if !conflicts.is_empty() {
+            return Ok(RedoReceipt::NeedsConfirmation {
+                conflicting_objects: conflicts,
+            });
+        }
+
+        let redo_snapshots = self.redo_snapshots.lock().unwrap();
+        let mut redone = Vec::new();
+        for record in &in_scope {
+            let snapshot = redo_snapshots
+                .get(&record.action_id)
+                .ok_or(RecoveryError::NoSuchAction)?
+                .clone();
+            self.apply_snapshot(monitor, token, &snapshot, &record.objects_touched)?;
+            redone.push(record.action_id);
+        }
+        drop(redo_snapshots);
+
+        let mut actions = self.actions.lock().unwrap();
+        for a in actions.iter_mut() {
+            if scope_ids.contains(&a.action_id) {
+                a.status = ActionStatus::Committed;
+            }
+        }
+        Ok(RedoReceipt::Targeted {
+            redone_actions: redone,
         })
     }
 

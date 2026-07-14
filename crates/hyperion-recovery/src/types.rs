@@ -37,6 +37,12 @@ pub enum ActionStatus {
     Committed,
     InFlight,
     Aborted,
+    /// Reverted by [`crate::service::RecoveryService::undo`] -- distinct
+    /// from [`Self::Aborted`] (an action that never took effect) because an
+    /// undone action's effects *did* happen and are recorded, real, and
+    /// redoable via [`crate::service::RecoveryService::redo`]; an aborted
+    /// one never ran to begin with and has nothing to redo.
+    Undone,
 }
 
 /// docs/33 §4's `ActionRecord` — the "undo record." No separate undo-
@@ -72,6 +78,16 @@ pub enum UndoReceipt {
     Targeted { undone_actions: Vec<ActionId> },
     NeedsConfirmation { conflicting_objects: Vec<NodeId> },
     NothingToUndo,
+}
+
+/// docs/33 §3's `redo(scope)` counterpart to [`UndoReceipt`] — same shape,
+/// same "never silently overwrite a real conflict" guarantee, mirrored for
+/// re-applying an already-undone action's effects.
+#[derive(Debug, Clone)]
+pub enum RedoReceipt {
+    Targeted { redone_actions: Vec<ActionId> },
+    NeedsConfirmation { conflicting_objects: Vec<NodeId> },
+    NothingToRedo,
 }
 
 pub(crate) type Snapshot = Vec<(NodeId, Option<NodeRecord>)>;

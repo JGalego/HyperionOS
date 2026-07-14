@@ -58,15 +58,21 @@
 //!   points and the action journal simply accumulate for the process
 //!   lifetime, appropriate for a hosted simulator with no long-running
 //!   retention story yet.
-//! - **Redo.** docs/33 lists a `redo(scope)` API; this crate's undo marks
-//!   undone actions `Aborted` rather than keeping a separate redo stack,
-//!   so redo is not implemented.
+//! - ~~**Redo.**~~ Now real: [`service::RecoveryService::undo`] captures
+//!   each reverted action's actual pre-revert state (its real committed
+//!   effects) into a redo snapshot, distinct from marking it `Aborted`;
+//!   [`service::RecoveryService::redo`] re-applies exactly that captured
+//!   state, gated by the same "surface conflicts, never silently
+//!   overwrite concurrent work" rule `undo` already uses. `ActionStatus`
+//!   gained a fourth variant, `Undone`, distinct from `Aborted` (an
+//!   action that never took effect has nothing to redo; one that ran and
+//!   was reverted does).
 
 mod service;
 mod types;
 
 pub use service::RecoveryService;
 pub use types::{
-    ActionId, ActionRecord, ActionStatus, RecoveryError, RecoveryPoint, RecoveryPointId, Trigger,
-    UndoReceipt, UndoScope,
+    ActionId, ActionRecord, ActionStatus, RecoveryError, RecoveryPoint, RecoveryPointId,
+    RedoReceipt, Trigger, UndoReceipt, UndoScope,
 };
