@@ -653,7 +653,11 @@ impl ConsoleSession {
         let trimmed = utterance.trim();
         let lower = trimmed.to_ascii_lowercase();
 
-        if lower == "/help" {
+        // Plain "help" (no slash) used to silently fall through to a real Agent dispatch --
+        // the single most natural thing a lost or new user would type got echoed back by
+        // whichever backend was active instead of ever reaching this crate's own, already
+        // well-designed help text.
+        if lower == "/help" || lower == "help" {
             return Some(Self::help_text());
         }
 
@@ -724,6 +728,15 @@ impl ConsoleSession {
             trimmed["/backend".len()..].trim()
         } else if lower.starts_with("use backend") {
             trimmed["use backend".len()..].trim()
+        } else if trimmed.starts_with('/') {
+            // A mistyped or unrecognized slash command used to silently fall through to a real
+            // Agent dispatch, sent to whichever backend was active as if it were a genuine
+            // goal -- a typo got an unrelated, confusing "response" instead of any feedback
+            // that the command itself wasn't recognized.
+            return Some(vec![format!(
+                "I don't recognize \"{trimmed}\" as a command -- try \"/help\" to see what's \
+                 available."
+            )]);
         } else {
             return None;
         };

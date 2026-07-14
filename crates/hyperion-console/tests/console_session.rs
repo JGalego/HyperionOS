@@ -444,6 +444,49 @@ fn help_command_lists_the_backend_meta_command() {
     );
 }
 
+/// Regression test: plain "help" (no slash) -- the single most natural thing a lost or new user
+/// would type -- used to silently fall through to a real Agent dispatch and get echoed back by
+/// whichever backend was active, instead of ever reaching the real help text `/help` already
+/// gives.
+#[test]
+fn bare_help_with_no_slash_gives_the_same_real_help_text_as_slash_help() {
+    let (_dir, mut session) = open_session();
+
+    let lines = session.handle_utterance("help");
+    let joined = lines.join("\n");
+
+    assert!(
+        joined.contains("/backend") && joined.contains("/recall"),
+        "expected bare \"help\" to give the same real help text as \"/help\", got: {joined:?}"
+    );
+    assert!(
+        !joined.contains("generic_goal"),
+        "bare \"help\" must not fall through to a real Agent invocation, got: {joined:?}"
+    );
+}
+
+/// Regression test: a mistyped or unrecognized slash command used to silently fall through to a
+/// real Agent dispatch too -- a typo got an unrelated, confusing "response" instead of any
+/// feedback that the command itself wasn't recognized.
+#[test]
+fn an_unrecognized_slash_command_gets_real_feedback_not_a_silent_agent_dispatch() {
+    let (_dir, mut session) = open_session();
+
+    let lines = session.handle_utterance("/nonexistent");
+    let joined = lines.join("\n");
+
+    assert!(
+        joined.contains("/nonexistent") && joined.contains("/help"),
+        "expected real feedback naming the unrecognized command and pointing to /help, got: \
+         {joined:?}"
+    );
+    assert!(
+        !joined.contains("generic_goal"),
+        "an unrecognized slash command must not fall through to a real Agent invocation, got: \
+         {joined:?}"
+    );
+}
+
 // This build's own switch attempt would otherwise make a real network call -- if
 // `--features openai-compat` is enabled, "not compiled with this feature" isn't the real
 // behavior to expect anymore (see `a_custom_engine_backend_switch_reaches_a_real_local_server_
