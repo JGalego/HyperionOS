@@ -2,7 +2,7 @@
 """Drives the real booted console over a Unix domain socket serial port (QEMU's
 `-chardev socket` backend for ttyS0) -- unlike boot-test.sh's `-serial file:...`, which only ever
 captures output, this can also *send* a real typed utterance, which is exactly what
-PRODUCTION_BOOT_PROMPT.md M7's exit criterion needs to prove: "a real utterance typed at the real
+docs/998-roadmap.md M7's exit criterion needs to prove: "a real utterance typed at the real
 booted console produces..." something real back.
 
 Usage: console-drive.py <socket-path> <utterance> <timeout-seconds>

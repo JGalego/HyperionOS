@@ -1265,7 +1265,7 @@ script exists" and "a user can actually download a release." Four real pieces la
    generates a real Ed25519 keystore via M9's own `Keystore::open_or_create` and prints its
    verifying key in hex. Run once, for real, against this repo:
    `b5c19b1e890fed3e164342f0285f6a1a1635d724f2284a2ebe00589a122ac90a` -- now published in
-   [README.md](README.md) as the independent, out-of-band value a downloader checks a manifest's
+  [README.md](../README.md) as the independent, out-of-band value a downloader checks a manifest's
    own recorded verifying key against (never trust a key recorded only inside the thing it's
    meant to authenticate). The private seed itself was base64-encoded and stored as this repo's
    real `HYPERION_RELEASE_SIGNING_KEY` GitHub Actions secret (confirmed via `gh secret list`

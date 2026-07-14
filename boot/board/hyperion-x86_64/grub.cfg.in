@@ -1,5 +1,5 @@
 set default="0"
-# PRODUCTION_BOOT_PROMPT.md M12: a real, measured contributor to cold-boot time -- this is a
+# docs/998-roadmap.md M12: a real, measured contributor to cold-boot time -- this is a
 # single-entry, headless appliance boot (init=/hyperion-init), never an interactive dual-boot
 # menu a human needs time to pick from, so waiting at all before auto-selecting the only entry is
 # pure, real, wasted boot time, not a safety margin worth keeping. docs/36's own budget allocates

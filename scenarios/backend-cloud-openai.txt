@@ -2,7 +2,7 @@
 # this binary built with `--features openai-compat`. Connecting and switching in the same
 # session grants this one running session immediate use -- no separate "yes/no" consent prompt
 # fires here; that only happens on a *fresh* process reusing an already-stored key (see
-# USAGE_SCENARIOS.md's cloud-provider notes for that path).
+# docs/999-usage-scenarios.md's cloud-provider notes for that path).
 #
 #   cargo build -p hyperion-console --bin hyperion-console --features openai-compat
 #   set -a && source .env && set +a

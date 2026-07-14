@@ -13,7 +13,7 @@
 # both real behaviors, exactly as scenarios/multi-turn-demo.txt already demonstrates.
 #
 # Verified live: a `candle`-feature build loads the real model eagerly at startup (see
-# USAGE_SCENARIOS.md's own note on why `candle` should never be combined with the other backend
+# docs/999-usage-scenarios.md's own note on why `candle` should never be combined with the other backend
 # features in one binary), so `/backend candle` below is usually a real no-op ("Already using the
 # candle backend") by the time it runs -- kept anyway so this file still reads correctly and still
 # does the right thing on a hypothetical future build where candle isn't the eager default.

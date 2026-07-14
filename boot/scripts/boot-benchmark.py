@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PRODUCTION_BOOT_PROMPT.md M12: measures real, end-to-end cold-boot time against docs/36's
+"""docs/998-roadmap.md M12: measures real, end-to-end cold-boot time against docs/36's
 budget -- "firmware -> login/shell -> first real Intent handled," not `hyperion_sim::boot`'s old
 in-process 250ms slice, which only ever measured one sub-phase of a boot that didn't yet exist.
 

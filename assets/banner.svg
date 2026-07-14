@@ -23,7 +23,7 @@
     </filter>
 
     <!-- Soft nebula washes, kept to the corners so they never sit behind the lockup itself and
-         cut its contrast. Violet (#4a2c6b) is the same real color PRODUCTION_BOOT_PROMPT.md's M7
+         cut its contrast. Violet (#4a2c6b) is the same real color docs/998-roadmap.md's M7
          stage-2 display probe proved on a real screen (crates/hyperion-init/src/linux/display_probe.rs). -->
     <radialGradient id="nebulaViolet" cx="120" cy="30" r="360" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#4a2c6b" stop-opacity="0.4"/>

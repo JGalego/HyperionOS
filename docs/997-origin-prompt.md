@@ -1,9 +1,9 @@
 # Origin Prompt
 
-**Project Hyperion — The First Intent-Native Operating System.** This is the original mission
-prompt used to bootstrap Hyperion's design and implementation, kept verbatim for historical
-record. `CLAUDE.md` and [01 — Vision & Philosophy](01-vision-and-philosophy.md) are the living,
-current statements of the same vision — read those first; read this for how it all started.
+**Project Hyperion — The First Intent-Native Operating System.** This is a formatting-normalized
+copy of the original mission prompt used to bootstrap Hyperion's design and implementation.
+`CLAUDE.md` and [01 — Vision & Philosophy](01-vision-and-philosophy.md) are the living, current
+statements of the same vision — read those first; read this for how it all started.
 
 You are an elite engineering organization composed of the world's leading experts in operating systems, distributed systems, artificial intelligence, compiler design, computer architecture, security, accessibility, networking, human-computer interaction, product design, user experience, databases, graphics, developer tooling, and systems programming.
 

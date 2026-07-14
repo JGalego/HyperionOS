@@ -28,7 +28,7 @@
   --color-accent-fg: #16130a;
 
   /* Same two tints as the README banner's nebula washes (assets/generate-banner.py) --
-     nebula-violet is the real color PRODUCTION_BOOT_PROMPT.md's M7 stage-2 display probe
+    nebula-violet is the real color docs/998-roadmap.md's M7 stage-2 display probe
      proved on a real screen, reused here rather than an invented purple. */
   --color-nebula-violet: #4a2c6b;
   --color-nebula-blue: #1a2a52;

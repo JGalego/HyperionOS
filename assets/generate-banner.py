@@ -6,7 +6,7 @@ Every visual choice here traces back to something real rather than invented:
   (50,50), and rotation timing (website/app/globals.css: `slow-spin 36s linear infinite`).
 - The palette (BG, ACCENT, ACCENT_STRONG, FG, FG_MUTED) is website/app/globals.css's own
   `.dark` block, not invented.
-- NEBULA_VIOLET is the exact real RGB color PRODUCTION_BOOT_PROMPT.md's M7 stage-2 display probe
+- NEBULA_VIOLET is the exact real RGB color docs/998-roadmap.md's M7 stage-2 display probe
   proved on a real screen (crates/hyperion-init/src/linux/display_probe.rs).
 - The wordmark and tagline positions are not computed by this script -- they were tuned by
   rendering the SVG in a real headless browser and reading back exact bounding boxes
@@ -31,7 +31,7 @@ ACCENT_STRONG = "#e6bb6e"
 FG = "#f5f3ee"
 FG_MUTED = "#a6a196"
 
-# The same real color PRODUCTION_BOOT_PROMPT.md's M7 stage-2 display probe proved on a real
+# The same real color docs/998-roadmap.md's M7 stage-2 display probe proved on a real
 # screen, reused here as a nebula tint rather than an arbitrary purple.
 NEBULA_VIOLET = "#4a2c6b"
 NEBULA_BLUE = "#1a2a52"
@@ -212,7 +212,7 @@ def build_svg():
     </filter>
 
     <!-- Soft nebula washes, kept to the corners so they never sit behind the lockup itself and
-         cut its contrast. Violet ({NEBULA_VIOLET}) is the same real color PRODUCTION_BOOT_PROMPT.md's M7
+         cut its contrast. Violet ({NEBULA_VIOLET}) is the same real color docs/998-roadmap.md's M7
          stage-2 display probe proved on a real screen (crates/hyperion-init/src/linux/display_probe.rs). -->
     <radialGradient id="nebulaViolet" cx="120" cy="30" r="360" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="{NEBULA_VIOLET}" stop-opacity="0.4"/>

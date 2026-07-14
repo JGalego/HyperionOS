@@ -1,4 +1,4 @@
-# USAGE_SCENARIOS.md's "A more complex, multi-turn, multi-request-type scenario," as a real,
+# docs/999-usage-scenarios.md's "A more complex, multi-turn, multi-request-type scenario," as a real,
 # runnable scenario file:
 #
 #   cargo build -p hyperion-console --bin hyperion-console

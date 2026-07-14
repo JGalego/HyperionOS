@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PRODUCTION_BOOT_PROMPT.md M7 stage 2: verifies a real PPM screenshot (captured by
+"""docs/998-roadmap.md M7 stage 2: verifies a real PPM screenshot (captured by
 screendump.py from the actual emulated display, independent of the guest) really shows the exact
 three-band color pattern crates/hyperion-init/src/linux/display_probe.rs writes into its real
 dumb buffer -- proof the real DRM/KMS mode-set actually reached the screen, not just that the

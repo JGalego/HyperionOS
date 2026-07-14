@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PRODUCTION_BOOT_PROMPT.md M7 stage 2: issues a real `screendump` command over QEMU's HMP
+"""docs/998-roadmap.md M7 stage 2: issues a real `screendump` command over QEMU's HMP
 monitor (a real Unix domain socket, `-monitor unix:PATH,server=on,wait=off`) once the guest has
 finished its own real DRM/KMS mode-set, capturing the *actual* emulated display's current pixel
 content to a real PPM file on the host -- independent proof, from outside the guest entirely, that

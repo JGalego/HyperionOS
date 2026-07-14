@@ -127,7 +127,7 @@ and left to drift.
 
 | Doc | Title | What it covers |
 |---|---|---|
-| [997](997-origin-prompt.md) | Origin Prompt | The original mission prompt used to bootstrap Hyperion's design, kept verbatim for historical record |
+| [997](997-origin-prompt.md) | Origin Prompt | A formatting-normalized copy of the original mission prompt used to bootstrap Hyperion's design |
 | [998](998-roadmap.md) | Roadmap | Production boot milestones (M0-M13), the Resourceful/Social/Self-Sustaining autonomy pillars, and the backlog of future work |
 | [999](999-usage-scenarios.md) | Usage Scenarios | Living acceptance-test log of real, verified console scenarios |
 

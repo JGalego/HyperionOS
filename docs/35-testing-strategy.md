@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Living instance of this document's own regression-capture loop:** [44 — Usage Scenarios](999-usage-scenarios.md)
+**Living instance of this document's own regression-capture loop:** [999 — Usage Scenarios](999-usage-scenarios.md)
 is the running, human-readable log of real scenarios actually driven against the
 compiled system — the concrete, growing counterpart to this document's `GoldenIntentCase`
 corpus concept, until a real automated `GoldenCorpus` harness exists to replace it.

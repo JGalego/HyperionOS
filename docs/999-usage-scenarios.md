@@ -9,7 +9,7 @@ machine-checked form of each finding below lives as a real regression test in th
 (linked per entry).
 
 **Status: a starting set, not the "dozens" docs/41 asks for.** ~13 scenarios have been run so far,
-plus all ten of the per-backend scenario files under [`scenarios/`](scenarios/) (scenario 10
+plus all ten of the per-backend scenario files under [`scenarios/`](../scenarios/) (scenario 10
 below), against `hyperion-console` only (the one real, natively-buildable, non-GUI entry point
 this sandbox can drive with piped stdin or a scenario file — see "How scenarios are run" below).
 Scenarios 11 and 13 ([998 — Roadmap](998-roadmap.md)'s Autonomy Roadmap section, Resourceful and
@@ -58,7 +58,7 @@ drive a real connection once `source .env && export $(grep -v '^#' .env | xargs)
 the printed transcript exactly as a real terminal never echoes it. Each utterance is echoed as
 `"> {utterance}"` right before its own real response, so the output reads as a self-contained
 transcript; the binary exits as soon as the file ends rather than falling through to interactive
-stdin. See [`scenarios/multi-turn-demo.txt`](scenarios/multi-turn-demo.txt) for a real, runnable
+stdin. See [`scenarios/multi-turn-demo.txt`](../scenarios/multi-turn-demo.txt) for a real, runnable
 example of the scenario in "A more complex, multi-turn, multi-request-type scenario" below.
 
 ### Checking how the knowledge graph changed
@@ -111,20 +111,20 @@ look different depending on *when* you ran it, defeating the whole point of diff
 
 Every scenario above ran on `MockBackend`. Each backend gets its secret differently — traced
 through `hyperion-console::session.rs`, not guessed — and each now has its own real, runnable
-scenario file under [`scenarios/`](scenarios/) instead of a hand-built `printf` command:
+scenario file under [`scenarios/`](../scenarios/) instead of a hand-built `printf` command:
 
 | Backend | Scenario file | Build feature | Needs |
 | --- | --- | --- | --- |
-| Mock (default) | [`backend-mock.txt`](scenarios/backend-mock.txt) | none | nothing |
-| Candle (local inference) | [`backend-candle.txt`](scenarios/backend-candle.txt) | `candle` | network, first run only (HF Hub download) |
-| Ollama | [`backend-local-ollama.txt`](scenarios/backend-local-ollama.txt) | `openai-compat` | a real `ollama serve` with the model pulled |
-| vLLM | [`backend-local-vllm.txt`](scenarios/backend-local-vllm.txt) | `openai-compat` | a real vLLM OpenAI-compatible server |
-| LiteLLM | [`backend-local-litellm.txt`](scenarios/backend-local-litellm.txt) | `openai-compat` | a real LiteLLM proxy, `HYPERION_LITELLM_API_KEY` if it needs one |
-| Custom OpenAI-compatible | [`backend-local-custom.txt`](scenarios/backend-local-custom.txt) | `openai-compat` | your own server's base_url + model, edited into the file |
-| OpenAI | [`backend-cloud-openai.txt`](scenarios/backend-cloud-openai.txt) | `openai-compat` | a real `OPENAI_API_KEY` in `.env` |
-| Anthropic | [`backend-cloud-anthropic.txt`](scenarios/backend-cloud-anthropic.txt) | `anthropic` | a real `ANTHROPIC_API_KEY` in `.env` |
-| Gemini | [`backend-cloud-gemini.txt`](scenarios/backend-cloud-gemini.txt) | `gemini` | a real `GEMINI_API_KEY` in `.env` |
-| Groq | [`backend-cloud-groq.txt`](scenarios/backend-cloud-groq.txt) | `openai-compat` | a real `GROQ_API_KEY` in `.env` |
+| Mock (default) | [`backend-mock.txt`](../scenarios/backend-mock.txt) | none | nothing |
+| Candle (local inference) | [`backend-candle.txt`](../scenarios/backend-candle.txt) | `candle` | network, first run only (HF Hub download) |
+| Ollama | [`backend-local-ollama.txt`](../scenarios/backend-local-ollama.txt) | `openai-compat` | a real `ollama serve` with the model pulled |
+| vLLM | [`backend-local-vllm.txt`](../scenarios/backend-local-vllm.txt) | `openai-compat` | a real vLLM OpenAI-compatible server |
+| LiteLLM | [`backend-local-litellm.txt`](../scenarios/backend-local-litellm.txt) | `openai-compat` | a real LiteLLM proxy, `HYPERION_LITELLM_API_KEY` if it needs one |
+| Custom OpenAI-compatible | [`backend-local-custom.txt`](../scenarios/backend-local-custom.txt) | `openai-compat` | your own server's base_url + model, edited into the file |
+| OpenAI | [`backend-cloud-openai.txt`](../scenarios/backend-cloud-openai.txt) | `openai-compat` | a real `OPENAI_API_KEY` in `.env` |
+| Anthropic | [`backend-cloud-anthropic.txt`](../scenarios/backend-cloud-anthropic.txt) | `anthropic` | a real `ANTHROPIC_API_KEY` in `.env` |
+| Gemini | [`backend-cloud-gemini.txt`](../scenarios/backend-cloud-gemini.txt) | `gemini` | a real `GEMINI_API_KEY` in `.env` |
+| Groq | [`backend-cloud-groq.txt`](../scenarios/backend-cloud-groq.txt) | `openai-compat` | a real `GROQ_API_KEY` in `.env` |
 
 Each file's own header comment names its exact build/run command. The general shape:
 
