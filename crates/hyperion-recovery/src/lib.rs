@@ -54,11 +54,19 @@
 //!   pre-action snapshot restored verbatim, not a separately-declared
 //!   symbolic operation. Simpler, and sufficient for every mitigation
 //!   this crate's tests exercise.
-//! - **`UndoScope::Session`/`UndoScope::Goal`.** Neither concept has a
-//!   first-class id anywhere in this workspace yet (`hyperion-
-//!   coordination`'s `SharedPlan` has no single "goal id" distinct from
-//!   its task graph) — `SingleAction`/`AgentRun`/`Global` cover every
-//!   scope this crate's callers can actually name today.
+//! - **`UndoScope::Session`/`UndoScope::Goal`.** The premise that neither
+//!   concept has a first-class id anywhere in this workspace is now
+//!   false: `hyperion_coordination::types::SharedPlan` has both
+//!   `session_id: u64` and `root_intent: NodeId` today. Still not added,
+//!   though: `hyperion-coordination` has no dependency on this crate at
+//!   all yet, so making this real needs a genuine new `allocate()` ->
+//!   `RecoveryService` call site tagging each dispatched task's action
+//!   record with its session/goal — comparable in size to this
+//!   workspace's own past `allocate()` -> `hyperion-explainability`
+//!   bridge, and deserving the same dedicated pass, not a bolted-on enum
+//!   variant with no real caller to populate it. `SingleAction`/
+//!   `AgentRun`/`Global` cover every scope this crate's actual callers
+//!   name today.
 //! - **Retention classes, compaction, and pinning enforcement beyond a
 //!   boolean flag.** [`service::RecoveryService::pin`]/`unpin` exist;
 //!   nothing yet reads that flag to protect a point from eviction, since
