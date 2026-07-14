@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use hyperion_device::{
     CapabilityManifestEntry, DeviceRegistry, DeviceType, Direction, SafetyClass,
     TrustTier as DeviceTrustTier,
@@ -39,6 +40,14 @@ fn t7_revoking_a_paired_device_immediately_blocks_further_invocation() {
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let registry = DeviceRegistry::new(graph);
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    let manifest = vec![CapabilityManifestEntry {
+        capability_name: "render".to_string(),
+        direction: Direction::Render,
+        safety_class: SafetyClass::Cosmetic,
+    }];
+    let signature =
+        hyperion_device::sign(DeviceType::Display, "Acme", "D1", &manifest, 1, &keystore);
     let device = registry
         .register(
             &monitor,
@@ -46,13 +55,11 @@ fn t7_revoking_a_paired_device_immediately_blocks_further_invocation() {
             DeviceType::Display,
             "Acme",
             "D1",
-            vec![CapabilityManifestEntry {
-                capability_name: "render".to_string(),
-                direction: Direction::Render,
-                safety_class: SafetyClass::Cosmetic,
-            }],
+            manifest,
             1,
             0,
+            &signature,
+            &keystore.verifying_key(),
         )
         .unwrap();
     registry

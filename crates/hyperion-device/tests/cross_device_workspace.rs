@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_context::{Budget, ContextBundle, ExpertiseEstimate, ExpertiseLevel, Scope};
+use hyperion_crypto::Keystore;
 use hyperion_device::{
     CapabilityManifestEntry, DeviceRegistry, DeviceType, Direction, SafetyClass,
 };
@@ -74,8 +75,22 @@ fn find_render_surfaces_genuinely_decides_how_many_real_devices_a_workspace_moun
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let devices = DeviceRegistry::new(graph);
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
     let owner = 1;
 
+    let display_manifest = vec![CapabilityManifestEntry {
+        capability_name: "display.render".to_string(),
+        direction: Direction::Render,
+        safety_class: SafetyClass::Cosmetic,
+    }];
+    let display_signature = hyperion_device::sign(
+        DeviceType::Display,
+        "Acme",
+        "Screen-1",
+        &display_manifest,
+        owner,
+        &keystore,
+    );
     let display = devices
         .register(
             &monitor,
@@ -83,17 +98,28 @@ fn find_render_surfaces_genuinely_decides_how_many_real_devices_a_workspace_moun
             DeviceType::Display,
             "Acme",
             "Screen-1",
-            vec![CapabilityManifestEntry {
-                capability_name: "display.render".to_string(),
-                direction: Direction::Render,
-                safety_class: SafetyClass::Cosmetic,
-            }],
+            display_manifest,
             owner,
             0,
+            &display_signature,
+            &keystore.verifying_key(),
         )
         .unwrap();
     // A real registered device with no Render-direction capability at
     // all -- it must never count as an eligible surface.
+    let sensor_manifest = vec![CapabilityManifestEntry {
+        capability_name: "sensor.read".to_string(),
+        direction: Direction::Sense,
+        safety_class: SafetyClass::Standard,
+    }];
+    let sensor_signature = hyperion_device::sign(
+        DeviceType::Sensor,
+        "Acme",
+        "Sensor-1",
+        &sensor_manifest,
+        owner,
+        &keystore,
+    );
     let sensor = devices
         .register(
             &monitor,
@@ -101,13 +127,11 @@ fn find_render_surfaces_genuinely_decides_how_many_real_devices_a_workspace_moun
             DeviceType::Sensor,
             "Acme",
             "Sensor-1",
-            vec![CapabilityManifestEntry {
-                capability_name: "sensor.read".to_string(),
-                direction: Direction::Sense,
-                safety_class: SafetyClass::Standard,
-            }],
+            sensor_manifest,
             owner,
             0,
+            &sensor_signature,
+            &keystore.verifying_key(),
         )
         .unwrap();
 

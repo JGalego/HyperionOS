@@ -44,11 +44,18 @@
 //!   device's `CapabilityManifest` is supplied directly to
 //!   [`DeviceRegistry::register`] by the caller, standing in for whatever
 //!   protocol actually advertised it. No real radio, no real transport.
-//! - **Signed-manifest verification** (§8's device-impersonation defense)
-//!   — manifests are trusted as given; real signature verification needs
-//!   [15 — Security Architecture](../15-security-architecture.md) (Phase
-//!   8) key material, the same dependency every other crate in this
-//!   workspace defers real signing to.
+//! - ~~**Signed-manifest verification**~~ (§8's device-impersonation
+//!   defense) — now real: `hyperion-crypto` (Phase 8/M9) is exactly the
+//!   key material this bullet named as missing.
+//!   [`DeviceRegistry::register`] now requires a real Ed25519
+//!   [`hyperion_crypto::Signature`] over the manifest's own fields,
+//!   verified against a caller-supplied [`hyperion_crypto::VerifyingKey`]
+//!   before anything is recorded — [`manifest::sign`] is what a caller
+//!   producing a real manifest uses, the same real signing/verifying
+//!   split `hyperion-plugin-framework`/`hyperion-update` already
+//!   established. One real, trusted device identity per this workspace's
+//!   single-device model, not a multi-publisher PKI docs/20 doesn't
+//!   specify.
 //! - **Per-surface Context Bundle field-splitting** (§5.5, §7's
 //!   `handle_cross_device_workspace`'s other half) — `tests/cross_device_workspace.rs`
 //!   (dev-dependency-only, no production coupling to `hyperion-workspace`
@@ -60,9 +67,11 @@
 //!   a real per-surface layout algorithm neither doc's pseudocode fully
 //!   specifies.
 
+mod manifest;
 mod registry;
 mod types;
 
+pub use manifest::sign;
 pub use registry::{DeviceError, DeviceRegistry};
 pub use types::{
     CapabilityManifestEntry, DeviceObject, DeviceType, Direction, PairingRecord, PresenceState,

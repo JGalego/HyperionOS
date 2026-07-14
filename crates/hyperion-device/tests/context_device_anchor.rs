@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_context::{Budget, ContextEngine, Scope};
+use hyperion_crypto::Keystore;
 use hyperion_device::{
     CapabilityManifestEntry, DeviceRegistry, DeviceType, Direction, SafetyClass,
 };
@@ -25,7 +26,21 @@ fn a_devices_real_kg_node_anchors_a_real_context_assembly() {
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let devices = DeviceRegistry::new(graph.clone());
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
 
+    let manifest = vec![CapabilityManifestEntry {
+        capability_name: "notify.show".to_string(),
+        direction: Direction::Render,
+        safety_class: SafetyClass::Cosmetic,
+    }];
+    let signature = hyperion_device::sign(
+        DeviceType::Mobile,
+        "Acme",
+        "Handset-1",
+        &manifest,
+        1,
+        &keystore,
+    );
     let device_id = devices
         .register(
             &monitor,
@@ -33,13 +48,11 @@ fn a_devices_real_kg_node_anchors_a_real_context_assembly() {
             DeviceType::Mobile,
             "Acme",
             "Handset-1",
-            vec![CapabilityManifestEntry {
-                capability_name: "notify.show".to_string(),
-                direction: Direction::Render,
-                safety_class: SafetyClass::Cosmetic,
-            }],
+            manifest,
             1,
             0,
+            &signature,
+            &keystore.verifying_key(),
         )
         .unwrap();
     let device_node = devices

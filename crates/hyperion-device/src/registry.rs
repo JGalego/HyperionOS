@@ -3,8 +3,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_crypto::{Signature, VerifyingKey};
 use hyperion_knowledge_graph::{KnowledgeGraph, NodeId};
 
+use crate::manifest;
 use crate::types::{
     CapabilityManifestEntry, DeviceObject, DeviceType, Direction, PairingRecord, PresenceState,
     TrustTier,
@@ -26,6 +28,8 @@ pub enum DeviceError {
     ActuationRequiresConfirmation,
     #[error("device is not reachable")]
     Unreachable,
+    #[error("device manifest signature does not verify against the trusted device identity")]
+    SignatureInvalid,
     #[error("knowledge graph error: {0}")]
     Graph(#[from] hyperion_knowledge_graph::GraphError),
 }
@@ -69,7 +73,11 @@ impl DeviceRegistry {
 
     /// docs/20 §5.1/§5.2: normalizes an already-discovered device's
     /// advertised manifest — see this crate's doc comment on the deferred
-    /// real discovery transport.
+    /// real discovery transport. docs/20 §8's device-impersonation defense,
+    /// now real: `signature` must verify against `verifying_key` over
+    /// exactly this manifest's own fields ([`manifest::sign`] is what a
+    /// caller producing one uses), or registration is refused outright,
+    /// before anything is recorded.
     #[allow(clippy::too_many_arguments)]
     pub fn register(
         &self,
@@ -81,8 +89,21 @@ impl DeviceRegistry {
         capability_manifest: Vec<CapabilityManifestEntry>,
         owner: u64,
         now: u64,
+        signature: &Signature,
+        verifying_key: &VerifyingKey,
     ) -> Result<u64, DeviceError> {
         self.require(monitor, token, RightsMask::WRITE)?;
+        if !manifest::verify(
+            device_type,
+            manufacturer,
+            model,
+            &capability_manifest,
+            owner,
+            signature,
+            verifying_key,
+        ) {
+            return Err(DeviceError::SignatureInvalid);
+        }
         let device_id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let device = DeviceObject {
             device_id,

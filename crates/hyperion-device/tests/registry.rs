@@ -4,7 +4,8 @@
 
 use std::sync::Arc;
 
-use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use hyperion_device::{
     CapabilityManifestEntry, DeviceError, DeviceRegistry, DeviceType, Direction, PresenceState,
     SafetyClass, TrustTier,
@@ -14,16 +15,18 @@ use hyperion_knowledge_graph::KnowledgeGraph;
 fn setup() -> (
     tempfile::TempDir,
     CapabilityMonitor,
-    hyperion_capability::CapabilityToken,
+    CapabilityToken,
     DeviceRegistry,
     Arc<KnowledgeGraph>,
+    Keystore,
 ) {
     let dir = tempfile::tempdir().unwrap();
     let mut monitor = CapabilityMonitor::new();
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let registry = DeviceRegistry::new(graph.clone());
-    (dir, monitor, token, registry, graph)
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    (dir, monitor, token, registry, graph, keystore)
 }
 
 fn display_manifest() -> Vec<CapabilityManifestEntry> {
@@ -34,21 +37,61 @@ fn display_manifest() -> Vec<CapabilityManifestEntry> {
     }]
 }
 
+/// docs/20 §8's device-impersonation defense, now real: every registration
+/// needs a genuine Ed25519 signature over its own manifest fields — this
+/// helper signs with `keystore` and registers in one step so the tests
+/// below stay focused on what they actually exercise.
+#[allow(clippy::too_many_arguments)]
+fn register_device(
+    registry: &DeviceRegistry,
+    monitor: &CapabilityMonitor,
+    token: &CapabilityToken,
+    keystore: &Keystore,
+    device_type: DeviceType,
+    manufacturer: &str,
+    model: &str,
+    capability_manifest: Vec<CapabilityManifestEntry>,
+    owner: u64,
+    now: u64,
+) -> Result<u64, DeviceError> {
+    let signature = hyperion_device::sign(
+        device_type,
+        manufacturer,
+        model,
+        &capability_manifest,
+        owner,
+        keystore,
+    );
+    registry.register(
+        monitor,
+        token,
+        device_type,
+        manufacturer,
+        model,
+        capability_manifest,
+        owner,
+        now,
+        &signature,
+        &keystore.verifying_key(),
+    )
+}
+
 #[test]
 fn register_persists_the_device_as_a_real_knowledge_graph_node() {
-    let (_dir, monitor, token, registry, graph) = setup();
-    let device = registry
-        .register(
-            &monitor,
-            &token,
-            DeviceType::Display,
-            "Acme",
-            "Display-1",
-            display_manifest(),
-            1,
-            0,
-        )
-        .unwrap();
+    let (_dir, monitor, token, registry, graph, keystore) = setup();
+    let device = register_device(
+        &registry,
+        &monitor,
+        &token,
+        &keystore,
+        DeviceType::Display,
+        "Acme",
+        "Display-1",
+        display_manifest(),
+        1,
+        0,
+    )
+    .unwrap();
 
     let node_id = registry
         .kg_node_for(device)
@@ -63,23 +106,24 @@ fn register_persists_the_device_as_a_real_knowledge_graph_node() {
 
 #[test]
 fn actuation_tier_pairing_requires_explicit_confirmation() {
-    let (_dir, monitor, token, registry, _graph) = setup();
-    let robot = registry
-        .register(
-            &monitor,
-            &token,
-            DeviceType::Robot,
-            "Acme",
-            "Arm-1",
-            vec![CapabilityManifestEntry {
-                capability_name: "robot.arm.move".to_string(),
-                direction: Direction::Actuate,
-                safety_class: SafetyClass::High,
-            }],
-            1,
-            0,
-        )
-        .unwrap();
+    let (_dir, monitor, token, registry, _graph, keystore) = setup();
+    let robot = register_device(
+        &registry,
+        &monitor,
+        &token,
+        &keystore,
+        DeviceType::Robot,
+        "Acme",
+        "Arm-1",
+        vec![CapabilityManifestEntry {
+            capability_name: "robot.arm.move".to_string(),
+            direction: Direction::Actuate,
+            safety_class: SafetyClass::High,
+        }],
+        1,
+        0,
+    )
+    .unwrap();
 
     let denied = registry.pair(
         &monitor,
@@ -107,30 +151,31 @@ fn actuation_tier_pairing_requires_explicit_confirmation() {
 
 #[test]
 fn a_sense_tier_pairing_cannot_be_used_to_invoke_an_actuate_capability() {
-    let (_dir, monitor, token, registry, _graph) = setup();
-    let device = registry
-        .register(
-            &monitor,
-            &token,
-            DeviceType::HomeAppliance,
-            "Acme",
-            "Lock-1",
-            vec![
-                CapabilityManifestEntry {
-                    capability_name: "lock.status".to_string(),
-                    direction: Direction::Sense,
-                    safety_class: SafetyClass::Standard,
-                },
-                CapabilityManifestEntry {
-                    capability_name: "lock.actuate".to_string(),
-                    direction: Direction::Actuate,
-                    safety_class: SafetyClass::High,
-                },
-            ],
-            1,
-            0,
-        )
-        .unwrap();
+    let (_dir, monitor, token, registry, _graph, keystore) = setup();
+    let device = register_device(
+        &registry,
+        &monitor,
+        &token,
+        &keystore,
+        DeviceType::HomeAppliance,
+        "Acme",
+        "Lock-1",
+        vec![
+            CapabilityManifestEntry {
+                capability_name: "lock.status".to_string(),
+                direction: Direction::Sense,
+                safety_class: SafetyClass::Standard,
+            },
+            CapabilityManifestEntry {
+                capability_name: "lock.actuate".to_string(),
+                direction: Direction::Actuate,
+                safety_class: SafetyClass::High,
+            },
+        ],
+        1,
+        0,
+    )
+    .unwrap();
 
     let result = registry.pair(
         &monitor,
@@ -145,19 +190,20 @@ fn a_sense_tier_pairing_cannot_be_used_to_invoke_an_actuate_capability() {
 
 #[test]
 fn invoking_an_undeclared_or_unpaired_capability_is_denied() {
-    let (_dir, monitor, token, registry, _graph) = setup();
-    let display = registry
-        .register(
-            &monitor,
-            &token,
-            DeviceType::Display,
-            "Acme",
-            "Display-1",
-            display_manifest(),
-            1,
-            0,
-        )
-        .unwrap();
+    let (_dir, monitor, token, registry, _graph, keystore) = setup();
+    let display = register_device(
+        &registry,
+        &monitor,
+        &token,
+        &keystore,
+        DeviceType::Display,
+        "Acme",
+        "Display-1",
+        display_manifest(),
+        1,
+        0,
+    )
+    .unwrap();
 
     let unpaired = registry.invoke(
         &monitor,
@@ -202,19 +248,20 @@ fn invoking_an_undeclared_or_unpaired_capability_is_denied() {
 
 #[test]
 fn presence_degrades_then_disconnects_and_recovers_on_heartbeat() {
-    let (_dir, monitor, token, registry, _graph) = setup();
-    let device = registry
-        .register(
-            &monitor,
-            &token,
-            DeviceType::Mobile,
-            "Acme",
-            "Phone-1",
-            vec![],
-            1,
-            0,
-        )
-        .unwrap();
+    let (_dir, monitor, token, registry, _graph, keystore) = setup();
+    let device = register_device(
+        &registry,
+        &monitor,
+        &token,
+        &keystore,
+        DeviceType::Mobile,
+        "Acme",
+        "Phone-1",
+        vec![],
+        1,
+        0,
+    )
+    .unwrap();
 
     registry.tick(5, 10, 30);
     assert_eq!(
@@ -243,40 +290,42 @@ fn presence_degrades_then_disconnects_and_recovers_on_heartbeat() {
 
 #[test]
 fn a_disconnected_device_refuses_invocation_and_a_substitute_is_found() {
-    let (_dir, monitor, token, registry, _graph) = setup();
+    let (_dir, monitor, token, registry, _graph, keystore) = setup();
     let nav_capability = "car.navigation.set_destination";
-    let car = registry
-        .register(
-            &monitor,
-            &token,
-            DeviceType::Vehicle,
-            "Acme",
-            "Car-1",
-            vec![CapabilityManifestEntry {
-                capability_name: nav_capability.to_string(),
-                direction: Direction::Render,
-                safety_class: SafetyClass::Standard,
-            }],
-            1,
-            0,
-        )
-        .unwrap();
-    let phone = registry
-        .register(
-            &monitor,
-            &token,
-            DeviceType::Mobile,
-            "Acme",
-            "Phone-1",
-            vec![CapabilityManifestEntry {
-                capability_name: nav_capability.to_string(),
-                direction: Direction::Render,
-                safety_class: SafetyClass::Standard,
-            }],
-            1,
-            0,
-        )
-        .unwrap();
+    let car = register_device(
+        &registry,
+        &monitor,
+        &token,
+        &keystore,
+        DeviceType::Vehicle,
+        "Acme",
+        "Car-1",
+        vec![CapabilityManifestEntry {
+            capability_name: nav_capability.to_string(),
+            direction: Direction::Render,
+            safety_class: SafetyClass::Standard,
+        }],
+        1,
+        0,
+    )
+    .unwrap();
+    let phone = register_device(
+        &registry,
+        &monitor,
+        &token,
+        &keystore,
+        DeviceType::Mobile,
+        "Acme",
+        "Phone-1",
+        vec![CapabilityManifestEntry {
+            capability_name: nav_capability.to_string(),
+            direction: Direction::Render,
+            safety_class: SafetyClass::Standard,
+        }],
+        1,
+        0,
+    )
+    .unwrap();
     registry
         .pair(
             &monitor,
