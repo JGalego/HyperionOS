@@ -112,4 +112,12 @@ pub enum ScalabilityError {
     Unauthorized,
     #[error("observability error: {0}")]
     Observability(#[from] hyperion_observability::ObservabilityError),
+    /// [`crate::apply_and_explain`]'s real-registry check: an
+    /// `AlternateImplementation` substitution named a capability that
+    /// isn't actually installed (or is quarantined) in the real
+    /// `hyperion-plugin-framework` registry it was checked against —
+    /// never write an audit notice claiming a fallback happened when it
+    /// didn't.
+    #[error("alternate implementation {0:?} is not a real, active registered capability")]
+    AlternateImplementationNotRegistered(CapabilityRef),
 }

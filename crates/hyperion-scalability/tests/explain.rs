@@ -1,11 +1,52 @@
 //! docs/37 §3's `apply_and_explain`: the audit notice is written as a
-//! real, tamper-evident `hyperion-observability` entry.
+//! real, tamper-evident `hyperion-observability` entry, and an
+//! `AlternateImplementation` substitution is confirmed against a real
+//! `hyperion-plugin-framework` registry before that notice is written.
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use hyperion_observability::{AuditAction, AuditLedger, AuditPayload, PrincipalRef};
+use hyperion_plugin_framework::{
+    sign, CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind, Operation,
+    PluginManifest, PluginRegistry, SemanticContract, TrustDepth,
+};
 use hyperion_scalability::{
     apply_and_explain, DegradationOutcome, DegradationPlan, ScalabilityError, Substitution,
 };
+
+fn keystore() -> (tempfile::TempDir, Keystore) {
+    let dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    (dir, keystore)
+}
+
+fn manifest_with(capability_id: &str, keystore: &Keystore) -> PluginManifest {
+    let mut manifest = PluginManifest {
+        plugin_id: 1,
+        publisher: "acme-plugins".to_string(),
+        signature: None,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: capability_id.to_string(),
+            contract: SemanticContract {
+                inputs: vec!["input".to_string()],
+                outputs: vec!["output".to_string()],
+                side_effects: vec![],
+            },
+            implementation_kind: ImplementationKind::LocalSmallModel,
+            quality_score: 0.5,
+            version: 1,
+        })],
+        requested_permissions: vec![CapabilityGrantRequest {
+            operation: Operation::Read,
+            scope: capability_id.to_string(),
+            justification: "provide a real alternate implementation".to_string(),
+        }],
+        min_trust_depth: TrustDepth::D1,
+    };
+    manifest.signature = Some(sign(&manifest, keystore));
+    manifest
+}
 
 #[test]
 fn a_degradation_plan_is_recorded_verbatim_in_the_audit_ledger() {
@@ -20,7 +61,16 @@ fn a_degradation_plan_is_recorded_verbatim_in_the_audit_ledger() {
         notice: "vision.generate disabled on this device".to_string(),
     };
 
-    apply_and_explain(&monitor, &root, &audit, PrincipalRef::System, &plan, 1_000).unwrap();
+    apply_and_explain(
+        &monitor,
+        &root,
+        &audit,
+        PrincipalRef::System,
+        &plan,
+        None,
+        1_000,
+    )
+    .unwrap();
 
     let entries = audit
         .query(&monitor, &root, |e| e.action == AuditAction::AdminOverride)
@@ -53,7 +103,92 @@ fn apply_and_explain_requires_write_rights() {
         &audit,
         PrincipalRef::System,
         &plan,
+        None,
         1_000,
     );
     assert!(matches!(result, Err(ScalabilityError::Unauthorized)));
+}
+
+#[test]
+fn an_alternate_implementation_substitution_naming_a_real_registered_capability_is_recorded() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let audit = AuditLedger::new();
+    let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
+    registry
+        .install(
+            &mut monitor,
+            &root,
+            manifest_with("vision.generate.small", &keystore),
+            TrustDepth::D2,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    let plan = DegradationPlan {
+        capability_ref: "vision.generate".to_string(),
+        outcome: DegradationOutcome::Substituted {
+            substitution: Substitution::AlternateImplementation(
+                "vision.generate.small".to_string(),
+            ),
+        },
+        notice: "vision.generate substituted with a smaller local model".to_string(),
+    };
+
+    apply_and_explain(
+        &monitor,
+        &root,
+        &audit,
+        PrincipalRef::System,
+        &plan,
+        Some(&registry),
+        1_000,
+    )
+    .unwrap();
+
+    let entries = audit
+        .query(&monitor, &root, |e| e.action == AuditAction::AdminOverride)
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+}
+
+#[test]
+fn an_alternate_implementation_substitution_naming_an_unregistered_capability_is_refused() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let audit = AuditLedger::new();
+    let registry = PluginRegistry::new();
+
+    let plan = DegradationPlan {
+        capability_ref: "vision.generate".to_string(),
+        outcome: DegradationOutcome::Substituted {
+            substitution: Substitution::AlternateImplementation(
+                "vision.generate.nonexistent".to_string(),
+            ),
+        },
+        notice: "vision.generate substituted with a smaller local model".to_string(),
+    };
+
+    let result = apply_and_explain(
+        &monitor,
+        &root,
+        &audit,
+        PrincipalRef::System,
+        &plan,
+        Some(&registry),
+        1_000,
+    );
+    assert!(matches!(
+        result,
+        Err(ScalabilityError::AlternateImplementationNotRegistered(ref c)) if c == "vision.generate.nonexistent"
+    ));
+
+    // No audit notice must have been written claiming a fallback that never happened.
+    let entries = audit
+        .query(&monitor, &root, |e| e.action == AuditAction::AdminOverride)
+        .unwrap();
+    assert!(entries.is_empty());
 }

@@ -8,6 +8,11 @@ repository.workspace = true
 [dependencies]
 hyperion-capability = { workspace = true }
 hyperion-observability = { workspace = true }
+hyperion-plugin-framework = { workspace = true }
 hyperion-privacy = { workspace = true }
 hyperion-scheduler = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+hyperion-crypto = { workspace = true }
+tempfile = { workspace = true }

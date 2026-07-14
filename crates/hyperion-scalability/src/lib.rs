@@ -52,12 +52,19 @@
 //!   `compute_tops` specifically has no scheduler dimension that means
 //!   the same thing (see [`fit`]'s doc comment).
 //! - **`capability_registry.install(plan.capability)`.** [`explain::apply_and_explain`]
-//!   writes the audit notice only; actually installing a substituted
-//!   implementation through `hyperion-plugin-framework`'s registry needs
-//!   a full `CapabilityManifest` a bare [`types::Substitution`] doesn't
-//!   carry enough information to construct — deferred to whichever
-//!   future integration wires degradation decisions into real plugin
-//!   installation.
+//!   still doesn't install a substituted implementation — a full
+//!   `CapabilityManifest` is genuinely more than a bare
+//!   [`types::Substitution`] carries, and installation is
+//!   `hyperion-plugin-framework`'s own capability-gated, signature-
+//!   verified operation, not something to route around. What's real now:
+//!   an `AlternateImplementation` substitution's target is confirmed
+//!   against a caller-supplied real `PluginRegistry` (`registry.query(...)`
+//!   already does exact-id lookup; a valid target must already be a
+//!   registered, non-quarantined capability, nothing needed constructing)
+//!   before the audit notice is written, refusing to claim a fallback
+//!   happened against a capability that was never actually installed.
+//!   `CheaperLocalTier`/`ConsentedCloudUpgrade` aren't pre-registered
+//!   capabilities the same way, so this check doesn't cover them.
 //! - **KG partitioning / `TenantPartition` / cross-tenant edges.**
 //!   [`types::TenancyMode::MultiTenantOrg`] is declared as a hardware-
 //!   tier-unlocked mode; no partitioning logic exists here — `hyperion-

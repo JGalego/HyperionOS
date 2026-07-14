@@ -3134,9 +3134,12 @@ name = "hyperion-scalability"
 version = "0.1.0"
 dependencies = [
  "hyperion-capability",
+ "hyperion-crypto",
  "hyperion-observability",
+ "hyperion-plugin-framework",
  "hyperion-privacy",
  "hyperion-scheduler",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 
