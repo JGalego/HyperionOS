@@ -280,9 +280,14 @@ impl KnowledgeGraph {
     }
 
     /// `graph.query` — docs/09 §6/§7: type filter ∩ vector similarity ∩
-    /// temporal window ∩ edge constraint, ranked by similarity. Permission
-    /// filtering here is the coarse per-call check only — see this crate's
-    /// doc comment's "Per-object ACL enforcement" deferral.
+    /// temporal window ∩ edge constraint, ranked by similarity, over
+    /// exactly the caller's own Trust Boundary's objects — docs/09 §8's
+    /// "capability-checked at every hop," per-object, not merely the
+    /// coarse per-call rights check [`Self::require`] alone gives. A
+    /// candidate owned by a different boundary is excluded entirely,
+    /// never merely down-ranked, mirroring `hyperion-context::engine`'s
+    /// own downstream filter of the same shape (now redundant there, but
+    /// left in place — defense in depth, not dead code).
     pub fn query(
         &self,
         monitor: &CapabilityMonitor,
@@ -291,10 +296,12 @@ impl KnowledgeGraph {
     ) -> Result<Vec<QueryHit>, GraphError> {
         self.require(monitor, token, RightsMask::READ)?;
         let index = self.index.lock().unwrap();
+        let caller_boundary = token.origin().0;
 
         let mut hits: Vec<QueryHit> = index
             .nodes
             .iter()
+            .filter(|(_, n)| n.owner == caller_boundary)
             .filter(|(_, n)| {
                 query
                     .type_filter
@@ -363,7 +370,14 @@ impl KnowledgeGraph {
     /// bidirectional-union recursive query: at every hop, edges are followed
     /// in both directions from the current frontier so "everything related
     /// to X" finds objects that point *at* the anchor as well as objects the
-    /// anchor points at.
+    /// anchor points at. docs/09 §8's "capability-checked at every hop, not
+    /// merely at the query boundary" is now real, per-object: the traversal
+    /// never expands *into* a node outside the caller's own Trust Boundary
+    /// (excluded entirely — its edge is never marked visited either — not
+    /// merely omitted from the final result after being walked), and `start`
+    /// itself is treated as not-found if the caller doesn't own it, the same
+    /// "never reveal existence of what you can't see" shape [`Self::get`]
+    /// already gives a single node.
     pub fn traverse(
         &self,
         monitor: &CapabilityMonitor,
@@ -374,7 +388,14 @@ impl KnowledgeGraph {
     ) -> Result<Subgraph, GraphError> {
         self.require(monitor, token, RightsMask::READ)?;
         let index = self.index.lock().unwrap();
-        if !index.nodes.contains_key(&start) {
+        let caller_boundary = token.origin().0;
+        let visible = |id: &NodeId| {
+            index
+                .nodes
+                .get(id)
+                .is_some_and(|n| n.owner == caller_boundary)
+        };
+        if !visible(&start) {
             return Err(GraphError::NotFound);
         }
 
@@ -396,6 +417,9 @@ impl KnowledgeGraph {
                     if edge_types.is_some_and(|types| !types.contains(&edge.predicate)) {
                         continue;
                     }
+                    if !visible(&edge.target) {
+                        continue;
+                    }
                     visited_edges.insert(eid);
                     if let std::collections::hash_map::Entry::Vacant(slot) =
                         depths.entry(edge.target)
@@ -409,6 +433,9 @@ impl KnowledgeGraph {
                         continue;
                     };
                     if edge_types.is_some_and(|types| !types.contains(&edge.predicate)) {
+                        continue;
+                    }
+                    if !visible(&edge.subject) {
                         continue;
                     }
                     visited_edges.insert(eid);

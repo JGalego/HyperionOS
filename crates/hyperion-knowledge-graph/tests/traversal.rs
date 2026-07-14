@@ -189,3 +189,96 @@ fn index_survives_reopen_by_replaying_the_wal() {
         subgraph.nodes.iter().map(|(id, _, _)| *id).collect();
     assert!(reached.contains(&photo));
 }
+
+/// docs/09 §8's "capability-checked at every hop": traversal must never expand into a node
+/// outside the caller's own Trust Boundary, even when a real edge connects it to the anchor.
+#[test]
+fn traversal_never_crosses_into_a_different_trust_boundarys_node() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut monitor = CapabilityMonitor::new();
+    let boundary_1 = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let boundary_2 = monitor.mint_root(RightsMask::all(), TrustBoundaryId(2), None);
+    let graph = KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap();
+
+    let trip = graph
+        .put_node(
+            &monitor,
+            &boundary_1,
+            None,
+            "trip",
+            None,
+            json!({"name": "Hawaii"}),
+        )
+        .unwrap();
+    // A different Trust Boundary's own node, linked to trip -- a real edge exists, but hotel
+    // itself belongs to a boundary the caller below doesn't hold.
+    let hotel = graph
+        .put_node(
+            &monitor,
+            &boundary_2,
+            None,
+            "hotel_booking",
+            None,
+            json!({"confirmation": "HYP-88213"}),
+        )
+        .unwrap();
+    graph
+        .link(
+            &monitor,
+            &boundary_2,
+            hotel,
+            "part_of_trip",
+            trip,
+            1.0,
+            EdgeOrigin::Explicit,
+            None,
+            "user_explicit",
+            None,
+        )
+        .unwrap();
+
+    let subgraph = graph
+        .traverse(&monitor, &boundary_1, trip, None, 1)
+        .unwrap();
+    let reached: std::collections::HashSet<_> =
+        subgraph.nodes.iter().map(|(id, _, _)| *id).collect();
+    assert!(reached.contains(&trip));
+    assert!(
+        !reached.contains(&hotel),
+        "a real edge exists, but hotel belongs to a different Trust Boundary -- it must never \
+         be reachable by boundary_1's own traversal"
+    );
+
+    // The edge itself must not be marked visited/returned either -- not just the node.
+    assert!(
+        subgraph.edges.is_empty(),
+        "the only real edge here crosses into an unauthorized node and must be excluded too"
+    );
+}
+
+#[test]
+fn traversing_from_a_node_owned_by_a_different_trust_boundary_is_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut monitor = CapabilityMonitor::new();
+    let boundary_1 = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let boundary_2 = monitor.mint_root(RightsMask::all(), TrustBoundaryId(2), None);
+    let graph = KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap();
+
+    let trip = graph
+        .put_node(
+            &monitor,
+            &boundary_2,
+            None,
+            "trip",
+            None,
+            json!({"name": "Hawaii"}),
+        )
+        .unwrap();
+
+    let result = graph.traverse(&monitor, &boundary_1, trip, None, 1);
+    assert!(
+        matches!(result, Err(hyperion_knowledge_graph::GraphError::NotFound)),
+        "a real node that exists but belongs to a different boundary must read as not-found, \
+         the same 'never reveal existence of what you can't see' shape a single get() gives"
+    );
+}

@@ -144,3 +144,47 @@ fn query_edge_constraint_matches_either_direction() {
     assert_eq!(ids, vec![paper]);
     assert!(!ids.contains(&unread_paper));
 }
+
+/// docs/09 §8's "capability-checked at every hop": a query must never return a candidate
+/// belonging to a different Trust Boundary, even one that would otherwise match every filter.
+#[test]
+fn query_never_returns_a_different_trust_boundarys_object() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut monitor = CapabilityMonitor::new();
+    let boundary_1 = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let boundary_2 = monitor.mint_root(RightsMask::all(), TrustBoundaryId(2), None);
+    let graph = KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap();
+
+    let mine = graph
+        .put_node(
+            &monitor,
+            &boundary_1,
+            None,
+            "document",
+            None,
+            json!({"title": "mine"}),
+        )
+        .unwrap();
+    let theirs = graph
+        .put_node(
+            &monitor,
+            &boundary_2,
+            None,
+            "document",
+            None,
+            json!({"title": "theirs"}),
+        )
+        .unwrap();
+
+    let query = GraphQuery {
+        type_filter: Some(vec!["document".to_string()]),
+        ..Default::default()
+    };
+    let hits = graph.query(&monitor, &boundary_1, &query).unwrap();
+    let ids: Vec<_> = hits.iter().map(|h| h.node_id).collect();
+    assert!(ids.contains(&mine));
+    assert!(
+        !ids.contains(&theirs),
+        "a real, matching object exists, but it belongs to a different Trust Boundary"
+    );
+}

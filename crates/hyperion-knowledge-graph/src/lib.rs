@@ -40,18 +40,22 @@
 //!   still needs real embeddings this workspace doesn't have, and
 //!   neither kind of inferred edge decays yet (weight is reset to a
 //!   fixed value each pass, not accumulated or aged).
-//! - **Per-object ACL enforcement.** Every public call here is
-//!   capability-gated the same way `hyperion-storage` already gates
-//!   `get_object`/`put_object` — a single coarse READ/WRITE rights check per
-//!   call via `hyperion_capability::CapabilityMonitor`. docs/29's per-row
-//!   `acl` JSONB and docs/09 §8's "capability-checked at every hop" describe
-//!   a *finer* per-object/per-hop authorization model; this crate records
-//!   `owner`/`device_origin` on every node for audit and later enforcement
-//!   but does not yet filter query/traversal results by them. That
-//!   enforcement is explicitly Phase 8's hardening pass
-//!   (docs/41-implementation-phases.md's own framing: "minimal versions...
-//!   already exist from earlier phases; Phase 8 is where they reach
-//!   production rigor"), not a Phase 2 exit criterion.
+//! - ~~**Per-object ACL enforcement.**~~ Now real for [`graph::KnowledgeGraph::query`]/
+//!   [`graph::KnowledgeGraph::traverse`] — Phase 8's hardening pass
+//!   (docs/41-implementation-phases.md's own framing: "minimal versions... already exist from
+//!   earlier phases; Phase 8 is where they reach production rigor") landed everywhere else in
+//!   this workspace but had never actually reached this crate's own two read paths that fan out
+//!   over many objects at once. Every public call here is still capability-gated the coarse way
+//!   (a single READ/WRITE rights check per call, same as `hyperion-storage`'s own
+//!   `get_object`/`put_object`), but `query`/`traverse` now also filter by the already-recorded
+//!   `owner` field, per docs/09 §8's "capability-checked at every hop": a candidate — or, for
+//!   `traverse`, a whole subtree reachable only through one — outside the caller's own Trust
+//!   Boundary is excluded entirely, never included and merely down-ranked, mirroring
+//!   `hyperion-context::engine`'s own downstream filter of the same shape (confirmed safe to add
+//!   here too: every real caller across the workspace already operates strictly within its own
+//!   token's boundary). `device_origin`-based filtering (a finer axis than plain `owner`) remains
+//!   unimplemented, as does docs/29's richer per-row `acl` JSONB — this closes the coarser,
+//!   `owner`-only half of the gap this bullet named.
 //! - **Multi-device CRDT merge.** Edge version tracking here is a single
 //!   monotonic counter per `(subject, predicate, target)` triple, enough to
 //!   prove and test the core invariant docs/09 §5.4 cares about most — "a

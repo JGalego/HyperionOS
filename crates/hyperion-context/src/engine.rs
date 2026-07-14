@@ -144,10 +144,21 @@ impl ContextEngine {
             .map(ObjectId)
             .filter(|&id| self.graph.get(monitor, token, id).is_ok());
         for &anchor in scope.anchors.iter().chain(intent_anchor.iter()) {
-            distances.entry(anchor).or_insert(0);
-            let subgraph = self
+            // An anchor this caller's Trust Boundary can't see -- a real object owned
+            // elsewhere, or one that genuinely doesn't exist, indistinguishable to a caller
+            // by design (see hyperion-knowledge-graph::traverse's own doc comment) --
+            // contributes nothing to the pool rather than failing the whole assembly: one
+            // unreachable anchor among several must never take down every other anchor's
+            // real contribution.
+            let subgraph = match self
                 .graph
-                .traverse(monitor, token, anchor, None, TRAVERSAL_DEPTH)?;
+                .traverse(monitor, token, anchor, None, TRAVERSAL_DEPTH)
+            {
+                Ok(subgraph) => subgraph,
+                Err(GraphError::NotFound) => continue,
+                Err(e) => return Err(e.into()),
+            };
+            distances.entry(anchor).or_insert(0);
             for (node_id, _, depth) in subgraph.nodes {
                 distances
                     .entry(node_id)
