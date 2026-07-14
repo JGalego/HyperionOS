@@ -1,4 +1,4 @@
-//! AUTONOMY_ROADMAP.md's Slice 1, proven at this crate's own real entry point:
+//! docs/998-roadmap.md's Slice 1, proven at this crate's own real entry point:
 //! `AgentRuntime::invoke`, given a `capability_ref` it doesn't otherwise recognize, dispatches to
 //! a real, installed `PluginRegistry` `NativeBinary` implementation -- a real sandboxed subprocess,
 //! not `stubs::dispatch`'s catch-all echo. Linux-only, matching `hyperion-trust-boundary`'s own

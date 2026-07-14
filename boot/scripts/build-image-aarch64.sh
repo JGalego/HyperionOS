@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the Hyperion aarch64 boot image with Buildroot (PRODUCTION_BOOT_PROMPT.md M11): fetches
+# Builds the Hyperion aarch64 boot image with Buildroot (docs/998-roadmap.md M11): fetches
 # Buildroot if needed, overlays Hyperion's aarch64 board config on top of it, and runs the build.
 # Output lands in $BUILDROOT_DIR/output-aarch64/images/{Image,rootfs.ext2}. Mirrors build-image.sh's
 # structure exactly, with one deliberate difference: a dedicated `O=output-aarch64` build output

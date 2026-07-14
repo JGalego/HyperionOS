@@ -63,7 +63,7 @@ fn genesis_hash() -> Hash {
     hyperion_crypto::hash(&[])
 }
 
-/// PRODUCTION_BOOT_PROMPT.md M9: a real BLAKE3 hash (via [`hyperion_crypto::hash`]) over the same
+/// docs/998-roadmap.md M9: a real BLAKE3 hash (via [`hyperion_crypto::hash`]) over the same
 /// fields the non-cryptographic stand-in this replaces already chose to cover -- not
 /// `std::collections::hash_map::DefaultHasher` (SipHash), which is explicitly documented as
 /// unsuitable for anything beyond in-process `HashMap` bucketing: its exact algorithm isn't

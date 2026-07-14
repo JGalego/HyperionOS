@@ -1,6 +1,6 @@
 //! `/mcp-server`: a real MCP (Model Context Protocol) server, exposing a real, live
 //! [`ConsoleSession`] as a small set of real tools over MCP's JSON-RPC 2.0 wire format
-//! (AUTONOMY_ROADMAP.md's Social pillar -- "being callable" over a real, known protocol, before
+//! (docs/998-roadmap.md's Social pillar -- "being callable" over a real, known protocol, before
 //! "calling others"). Deliberately a narrow, honest subset: three real methods (`initialize`,
 //! `tools/list`, `tools/call`) over HTTP (MCP's "Streamable HTTP" transport, request/response
 //! only -- no SSE streaming upgrade), not the full MCP surface (no resources, prompts,

@@ -10,13 +10,13 @@ hyperion-ai-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
 # Real, optional (Option<Arc<...>>, same shape as `NetstackHub`/`PluginRegistry` below) durable,
 # cross-session record of this crate's own real suspend/auto-resume/backoff-decay history --
-# AUTONOMY_ROADMAP.md's Self-Sustaining pillar's "cross-session learning" slice. See
+# docs/998-roadmap.md's Self-Sustaining pillar's "cross-session learning" slice. See
 # `AgentRuntime::spawn`'s own doc comment for what a fresh instance actually does with it.
 hyperion-memory = { workspace = true }
 hyperion-netstack = { workspace = true }
 # Real, optional (Option<Arc<...>>, same shape as `NetstackHub` below) dispatch to an installed
 # plugin's own real `NativeBinary` implementation when `capability_ref` isn't one of this crate's
-# own hardcoded constants -- AUTONOMY_ROADMAP.md's Slice 1, closing this crate's own
+# own hardcoded constants -- docs/998-roadmap.md's Slice 1, closing this crate's own
 # stub-dispatch-fallback gap for real.
 hyperion-plugin-framework = { workspace = true }
 hyperion-scheduler = { workspace = true }

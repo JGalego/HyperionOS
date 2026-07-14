@@ -1,5 +1,9 @@
-# Project Hyperion
-## The First Intent-Native Operating System
+# Origin Prompt
+
+**Project Hyperion — The First Intent-Native Operating System.** This is the original mission
+prompt used to bootstrap Hyperion's design and implementation, kept verbatim for historical
+record. `CLAUDE.md` and [01 — Vision & Philosophy](01-vision-and-philosophy.md) are the living,
+current statements of the same vision — read those first; read this for how it all started.
 
 You are an elite engineering organization composed of the world's leading experts in operating systems, distributed systems, artificial intelligence, compiler design, computer architecture, security, accessibility, networking, human-computer interaction, product design, user experience, databases, graphics, developer tooling, and systems programming.
 
@@ -23,7 +27,7 @@ Every subsystem should be built around one central idea:
 
 ---
 
-# Mission Statement
+## Mission Statement
 
 Hyperion should redefine personal computing in the same way that:
 
@@ -36,7 +40,7 @@ After using Hyperion, traditional operating systems should feel unnecessarily co
 
 ---
 
-# The Golden Rule
+## The Golden Rule
 
 Every design decision must answer one question:
 
@@ -46,7 +50,7 @@ If not, redesign it.
 
 ---
 
-# Primary Design Philosophy
+## Primary Design Philosophy
 
 Traditional operating systems manage:
 
@@ -70,7 +74,7 @@ The operating system should think in terms of **what** the user wants—not **ho
 
 ---
 
-# Universal Usability (Highest Priority)
+## Universal Usability (Highest Priority)
 
 Hyperion must be the easiest operating system ever created.
 
@@ -111,7 +115,7 @@ Hyperion performs the planning.
 
 ---
 
-# Adaptive Complexity
+## Adaptive Complexity
 
 Hyperion must automatically adapt to the user's experience level.
 
@@ -146,7 +150,7 @@ The OS learns naturally.
 
 ---
 
-# Human Language First
+## Human Language First
 
 Conversation is the primary interface.
 
@@ -172,7 +176,7 @@ Examples:
 
 ---
 
-# Visual Interfaces Still Matter
+## Visual Interfaces Still Matter
 
 Conversation should never replace visual interfaces.
 
@@ -198,7 +202,7 @@ When the task ends, the workspace disappears.
 
 ---
 
-# Intent Engine
+## Intent Engine
 
 Every interaction becomes an Intent Graph.
 
@@ -244,7 +248,7 @@ Continuous monitoring
 
 ---
 
-# Dynamic Capability Model
+## Dynamic Capability Model
 
 Applications are replaced by capabilities.
 
@@ -276,7 +280,7 @@ The operating system decides which software, models, APIs, or services fulfill e
 
 ---
 
-# Universal Object System
+## Universal Object System
 
 Everything becomes a semantic object.
 
@@ -330,7 +334,7 @@ version history
 
 ---
 
-# Semantic Filesystem
+## Semantic Filesystem
 
 Folders become optional.
 
@@ -364,7 +368,7 @@ Traditional folders remain available only for compatibility.
 
 ---
 
-# Persistent Memory
+## Persistent Memory
 
 Hyperion maintains:
 
@@ -406,7 +410,7 @@ Nothing is hidden.
 
 ---
 
-# Knowledge Graph
+## Knowledge Graph
 
 Hyperion replaces isolated files with an evolving knowledge graph.
 
@@ -422,7 +426,7 @@ Filename unnecessary.
 
 ---
 
-# Agent Runtime
+## Agent Runtime
 
 Hyperion includes specialized AI agents.
 
@@ -460,7 +464,7 @@ Agents collaborate automatically.
 
 ---
 
-# Multi-Agent Collaboration
+## Multi-Agent Collaboration
 
 Complex goals automatically decompose.
 
@@ -494,7 +498,7 @@ The user simply watches progress and provides guidance when desired.
 
 ---
 
-# Context Engine
+## Context Engine
 
 Every interaction inherits context automatically.
 
@@ -524,7 +528,7 @@ deployments
 
 ---
 
-# Local-First Intelligence
+## Local-First Intelligence
 
 Everything possible executes locally.
 
@@ -546,7 +550,7 @@ Cloud execution occurs only when beneficial and with the user's consent accordin
 
 ---
 
-# Resource Scheduler
+## Resource Scheduler
 
 Hyperion schedules:
 
@@ -580,7 +584,7 @@ Distributed compute
 
 ---
 
-# Dynamic Workspaces
+## Dynamic Workspaces
 
 Instead of static desktops:
 
@@ -614,7 +618,7 @@ Workspace disappears.
 
 ---
 
-# Explainability
+## Explainability
 
 Every autonomous action answers:
 
@@ -632,7 +636,7 @@ Nothing is hidden.
 
 ---
 
-# Safety
+## Safety
 
 Replace endless permission dialogs with intent-aware reasoning.
 
@@ -654,7 +658,7 @@ rather than:
 
 ---
 
-# Privacy
+## Privacy
 
 Privacy is fundamental.
 
@@ -678,7 +682,7 @@ Users can inspect, edit, export, or erase everything the system remembers.
 
 ---
 
-# Accessibility
+## Accessibility
 
 Accessibility is built into the architecture.
 
@@ -718,7 +722,7 @@ Every feature should be accessible from day one.
 
 ---
 
-# Human Control
+## Human Control
 
 Hyperion should be proactive, never controlling.
 
@@ -740,7 +744,7 @@ The user always has the final decision.
 
 ---
 
-# Compatibility
+## Compatibility
 
 Support existing software whenever practical through compatibility layers, virtualization, or containers, without compromising Hyperion's architecture.
 
@@ -762,7 +766,7 @@ Containers
 
 ---
 
-# Networking
+## Networking
 
 Represent the internet semantically.
 
@@ -784,7 +788,7 @@ instead of merely URLs.
 
 ---
 
-# Distributed Computing
+## Distributed Computing
 
 Hyperion should seamlessly execute work across:
 
@@ -808,7 +812,7 @@ The scheduler decides automatically.
 
 ---
 
-# Device Integration
+## Device Integration
 
 Treat all connected devices as part of one intelligent environment.
 
@@ -834,7 +838,7 @@ IoT
 
 ---
 
-# Reliability
+## Reliability
 
 Every autonomous action must be:
 
@@ -852,7 +856,7 @@ fault tolerant
 
 ---
 
-# Developer Platform
+## Developer Platform
 
 Developers build **Capabilities**, not traditional applications.
 
@@ -892,7 +896,7 @@ context propagation
 
 ---
 
-# Plugin Architecture
+## Plugin Architecture
 
 Plugins may contribute:
 
@@ -916,7 +920,7 @@ Memory providers
 
 ---
 
-# Kernel Architecture
+## Kernel Architecture
 
 Design and justify either a microkernel or hybrid kernel architecture.
 
@@ -944,7 +948,7 @@ AI inference scheduling
 
 ---
 
-# Performance Goals
+## Performance Goals
 
 - Cold boot in under 5 seconds
 - Near-instant wake from sleep
@@ -956,7 +960,7 @@ AI inference scheduling
 
 ---
 
-# Engineering Deliverables
+## Engineering Deliverables
 
 Produce a comprehensive engineering specification including:
 
@@ -1018,49 +1022,49 @@ For every subsystem include:
 
 ---
 
-# Incremental Implementation Plan
+## Incremental Implementation Plan
 
 Build Hyperion in production-ready phases.
 
-### Phase 1
+#### Phase 1
 - Core kernel
 - Hardware abstraction layer
 - Scheduler
 - IPC
 - Capability security
 
-### Phase 2
+#### Phase 2
 - Semantic object store
 - Knowledge graph
 - Context engine
 
-### Phase 3
+#### Phase 3
 - Local AI runtime
 - Intent engine
 - Planner
 - Memory engine
 
-### Phase 4
+#### Phase 4
 - Agent runtime
 - Multi-agent orchestration
 - Workflow execution
 
-### Phase 5
+#### Phase 5
 - Dynamic UI generation
 - Adaptive interface engine
 - Accessibility framework
 
-### Phase 6
+#### Phase 6
 - Semantic filesystem
 - Workspace generation
 - Universal search
 
-### Phase 7
+#### Phase 7
 - Distributed execution
 - Device federation
 - Networking
 
-### Phase 8
+#### Phase 8
 - Privacy
 - Security
 - Rollback
@@ -1068,12 +1072,12 @@ Build Hyperion in production-ready phases.
 - Explainability
 - Observability
 
-### Phase 9
+#### Phase 9
 - Developer SDK
 - Plugin ecosystem
 - Capability marketplace
 
-### Phase 10
+#### Phase 10
 - Optimization
 - Benchmarking
 - Documentation
@@ -1082,7 +1086,7 @@ Build Hyperion in production-ready phases.
 
 ---
 
-# Success Criteria
+## Success Criteria
 
 Hyperion should represent a genuine paradigm shift in computing.
 

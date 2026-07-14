@@ -118,7 +118,7 @@ pub struct FetchedPage {
 pub enum ExtractionMethod {
     StructuredData,
     ModelBased,
-    /// PRODUCTION_BOOT_PROMPT.md M10: a real, deterministic extraction from a real fetched HTML
+    /// docs/998-roadmap.md M10: a real, deterministic extraction from a real fetched HTML
     /// document's own tags (`<title>`, `<meta name="description">`) -- no model runs. Distinct
     /// from [`Self::ModelBased`] specifically because it would be dishonest to claim a model
     /// produced this: the same "don't claim more than what actually ran" discipline M8 already
@@ -146,7 +146,7 @@ pub struct ExtractedEntity {
 #[derive(Debug, Clone)]
 pub struct DomainEgressGrant {
     /// A pattern is an exact domain (`"example.com"`), a wildcard-subdomain pattern
-    /// (`"*.example.com"`), or a bare `"*"` matching any domain (PRODUCTION_BOOT_PROMPT.md M10 --
+    /// (`"*.example.com"`), or a bare `"*"` matching any domain (docs/998-roadmap.md M10 --
     /// see [`crate::hub`]'s own `domain_matches` doc comment for what this does and doesn't loosen).
     pub domain_patterns: Vec<String>,
     pub rate_limit_per_window: u32,

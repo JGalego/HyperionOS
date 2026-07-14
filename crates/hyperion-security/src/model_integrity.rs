@@ -4,7 +4,7 @@ use hyperion_crypto::VerifyingKey;
 use crate::types::{CanaryResult, ModelIntegrityRecord, PromotionStatus};
 
 /// docs/17 T8's mitigation: content-addressed + signature-verified model artifacts (here, a real
-/// Ed25519 signature check via `hyperion-ai-runtime`'s own `verify`, PRODUCTION_BOOT_PROMPT.md
+/// Ed25519 signature check via `hyperion-ai-runtime`'s own `verify`, docs/998-roadmap.md
 /// M9) and a canary differential test blocking promotion on score drift, both gates evaluated
 /// *before* a candidate model can replace the baseline the Risk Assessment Engine's own judgment
 /// ultimately runs on top of.

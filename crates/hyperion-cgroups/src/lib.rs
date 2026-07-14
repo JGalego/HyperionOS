@@ -1,6 +1,6 @@
 //! Real cgroups v2 + real scheduling policy enforcement for `hyperion-scheduler`'s admission and
 //! fairness decisions, per
-//! [PRODUCTION_BOOT_PROMPT.md](../../../PRODUCTION_BOOT_PROMPT.md) M4.
+//! [docs/998-roadmap.md](../../../docs/998-roadmap.md) M4.
 //!
 //! Reuses `hyperion-scheduler`'s admission-control and DRF/EDF fairness math as-is — nothing
 //! here recomputes *whether* or *how much* to admit. This crate only decides what real cgroup

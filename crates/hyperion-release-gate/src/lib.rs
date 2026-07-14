@@ -32,7 +32,7 @@
 //! this crate produces should correspond to exactly one signed ledger
 //! entry, and [`release::verify_completeness`] is the real check that a
 //! given set of builds all have one. [`types::HardwareReleaseCriteria`]
-//! (PRODUCTION_BOOT_PROMPT.md M13) extends `evaluate_release` to also gate on this roadmap's own
+//! (docs/998-roadmap.md M13) extends `evaluate_release` to also gate on this roadmap's own
 //! real hardware/boot surface — image build reproducibility, both real reference platforms
 //! (M11/M12) boot-tested, and a real staged update applied to (and rolled back from) a real
 //! running booted system (`boot/scripts/update-rollback-test.sh`, docs/41 Phase 10's literal

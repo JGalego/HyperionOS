@@ -3,7 +3,7 @@ name = "hyperion-cgroups"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Real Linux cgroups v2 + real scheduling policy enforcement for hyperion-scheduler's admission/fairness decisions (PRODUCTION_BOOT_PROMPT.md M4)."
+description = "Real Linux cgroups v2 + real scheduling policy enforcement for hyperion-scheduler's admission/fairness decisions (docs/998-roadmap.md M4)."
 
 [dependencies]
 hyperion-scheduler = { workspace = true }

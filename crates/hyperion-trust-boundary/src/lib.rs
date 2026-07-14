@@ -3,7 +3,7 @@
 //! Rehosts `hyperion-capability`'s token/derivation/revocation-graph algorithm (reused as-is;
 //! see that crate) so that minting, deriving, and revoking a [`CapabilityToken`] has a real
 //! effect on a real Linux process, per
-//! [PRODUCTION_BOOT_PROMPT.md](../../../PRODUCTION_BOOT_PROMPT.md) M2 and
+//! [docs/998-roadmap.md](../../../docs/998-roadmap.md) M2 and
 //! [docs/03-kernel-architecture.md](../../../docs/03-kernel-architecture.md)'s sandboxing
 //! spectrum. [`spawn`] forks and applies the real enforcement (namespaces, Landlock, seccomp)
 //! that a [`SpawnGrant`]'s `RightsMask` and [`TrustDepth`] call for; [`SpawnedBoundary::revoke`]

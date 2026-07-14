@@ -1,5 +1,5 @@
 //! A real, feature-gated [`InferenceBackend`] speaking Google's real Gemini
-//! (`generativelanguage.googleapis.com`) API -- PRODUCTION_BOOT_PROMPT.md's "Phase 2: cloud
+//! (`generativelanguage.googleapis.com`) API -- docs/998-roadmap.md's "Phase 2: cloud
 //! providers." Like [`crate::anthropic_backend`], Gemini's wire protocol is genuinely different
 //! from the OpenAI-compatible shape [`crate::openai_compat_backend`] already covers (a
 //! `?key=...` query-string API key, a `contents`/`parts` request shape, a

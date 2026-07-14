@@ -190,7 +190,7 @@ impl ContextPropagation {
         }
     }
 
-    /// Real Ed25519 signing (PRODUCTION_BOOT_PROMPT.md M9), over the envelope's own JSON bytes
+    /// Real Ed25519 signing (docs/998-roadmap.md M9), over the envelope's own JSON bytes
     /// with `integrity.signature` held `None` -- the same "zero the integrity field, serialize
     /// the whole struct, sign/hash that" shape the checksum stand-in this replaces already used,
     /// just with a real signature instead of a hash no forger needs a key to reproduce.

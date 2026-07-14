@@ -1,6 +1,6 @@
 //! Translates `hyperion_scheduler`'s admission/fairness decisions into real cgroup v2
 //! configuration. Reuses the scheduler's own admission-control and fairness math as-is
-//! (PRODUCTION_BOOT_PROMPT.md M4's reuse map) — this module decides what real cgroup knobs
+//! (docs/998-roadmap.md M4's reuse map) — this module decides what real cgroup knobs
 //! *express* a decision the scheduler already made, never a second fairness computation of its
 //! own that could disagree with it.
 

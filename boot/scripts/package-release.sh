@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PRODUCTION_BOOT_PROMPT.md M13: packages the already-built, already boot-tested x86_64/aarch64
+# docs/998-roadmap.md M13: packages the already-built, already boot-tested x86_64/aarch64
 # images into a signed, versioned release -- a real BLAKE3 hash + real Ed25519 signature (M9's
 # real device keystore) over each image's own bytes, written as a `.release.json` manifest
 # alongside it, then both images + manifests copied into a single, clearly labeled release

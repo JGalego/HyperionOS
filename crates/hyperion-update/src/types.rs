@@ -89,7 +89,7 @@ impl RolloutPolicy {
 /// `touched_objects` — exactly what
 /// `hyperion_recovery::RecoveryService::recovery_point_create` needs to
 /// snapshot, since this crate has no separate expand/contract migration
-/// DSL (see this crate's doc comment). `signature` (PRODUCTION_BOOT_PROMPT.md M9) is a real
+/// DSL (see this crate's doc comment). `signature` (docs/998-roadmap.md M9) is a real
 /// Ed25519 signature over [`crate::orchestrator::sign`]'s canonical bytes — see that function's
 /// own doc comment on this workspace's single-device-identity model.
 #[derive(Debug, Clone)]

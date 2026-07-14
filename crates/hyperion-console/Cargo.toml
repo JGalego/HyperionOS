@@ -3,7 +3,7 @@ name = "hyperion-console"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Real text console: a typed utterance drives the real Intent Engine, real Agent invocation, and hyperion-workspace's real compiled accessibility tree, rendered as real text (PRODUCTION_BOOT_PROMPT.md M7, stage 1)."
+description = "Real text console: a typed utterance drives the real Intent Engine, real Agent invocation, and hyperion-workspace's real compiled accessibility tree, rendered as real text (docs/998-roadmap.md M7, stage 1)."
 
 [[bin]]
 name = "hyperion-console"
@@ -21,7 +21,7 @@ hyperion-knowledge-graph = { workspace = true }
 hyperion-netstack = { workspace = true }
 hyperion-workspace = { workspace = true }
 serde_json = { workspace = true }
-# For src/secret_input.rs's real termios ECHO-off guard (PRODUCTION_BOOT_PROMPT.md "Phase 2:
+# For src/secret_input.rs's real termios ECHO-off guard (docs/998-roadmap.md "Phase 2:
 # cloud providers") -- already pinned at the workspace level (hyperion-init/hyperion-cgroups/
 # hyperion-trust-boundary/hyperion-supervisor already depend on it), so this is zero new external
 # crate surface, just a new direct dependency of this crate.
@@ -32,22 +32,22 @@ tempfile = { workspace = true }
 
 [features]
 # Real, feature-gated on-device inference for this console's own real
-# `assistant.respond` Capability call (PRODUCTION_BOOT_PROMPT.md M8) -- off by default for
+# `assistant.respond` Capability call (docs/998-roadmap.md M8) -- off by default for
 # the exact same reason `hyperion-ai-runtime`'s own `candle` feature is: a real boot/release
 # image build opts in explicitly; every host-side dev/test build stays fast and network-free
 # on `MockBackend`.
 candle = ["hyperion-ai-runtime/candle"]
 # Real, feature-gated HTTP/TLS/DNS for this console's own real `web.research` Capability call
-# (PRODUCTION_BOOT_PROMPT.md M10) -- same reasoning as `candle` above, forwarding to
+# (docs/998-roadmap.md M10) -- same reasoning as `candle` above, forwarding to
 # `hyperion-netstack`'s own `real-http` feature.
 real-http = ["hyperion-netstack/real-http"]
 # Real, feature-gated HTTP inference against any OpenAI-compatible local engine (Ollama, vLLM,
 # a self-hosted LiteLLM proxy) via the console's own `/backend`/`use backend` meta-command
-# (PRODUCTION_BOOT_PROMPT.md "Phase 1: local-engine backends") -- same reasoning as `candle`
+# (docs/998-roadmap.md "Phase 1: local-engine backends") -- same reasoning as `candle`
 # above, forwarding to `hyperion-ai-runtime`'s own `openai-compat` feature.
 openai-compat = ["hyperion-ai-runtime/openai-compat"]
 # Real, feature-gated HTTP inference against Anthropic's/Google's own real cloud APIs
-# (PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers") -- same reasoning as `candle` above,
+# (docs/998-roadmap.md "Phase 2: cloud providers") -- same reasoning as `candle` above,
 # forwarding to `hyperion-ai-runtime`'s own `anthropic`/`gemini` features. OpenAI itself needs no
 # separate feature here: it's reached via the existing `openai-compat` feature's own backend.
 anthropic = ["hyperion-ai-runtime/anthropic"]

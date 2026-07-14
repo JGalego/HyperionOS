@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Provisions qemu-system-x86_64 + OVMF UEFI firmware, and qemu-system-aarch64 (PRODUCTION_BOOT_PROMPT.md
+# Provisions qemu-system-x86_64 + OVMF UEFI firmware, and qemu-system-aarch64 (docs/998-roadmap.md
 # M11's second reference platform -- no firmware needed there, since board/hyperion-aarch64 boots
 # via direct kernel load, not UEFI), all without root.
 #

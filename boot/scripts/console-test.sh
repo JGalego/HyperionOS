@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PRODUCTION_BOOT_PROMPT.md M7 stage 1's exit criterion, proven for real: "a real utterance typed
+# docs/998-roadmap.md M7 stage 1's exit criterion, proven for real: "a real utterance typed
 # at the real booted console produces a real Intent Graph, a real Agent invocation, and real text
 # output rendered to the real TTY." Boots the real image with ttyS0 backed by a real Unix domain
 # socket (not boot-test.sh's `-serial file:...`, which only ever captures output -- this can also

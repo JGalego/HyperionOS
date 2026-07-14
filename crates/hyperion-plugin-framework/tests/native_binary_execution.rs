@@ -1,4 +1,4 @@
-//! `PluginRegistry::invoke_native_binary` -- AUTONOMY_ROADMAP.md's Slice 1: an installed
+//! `PluginRegistry::invoke_native_binary` -- docs/998-roadmap.md's Slice 1: an installed
 //! `NativeBinary` capability actually runs, for real, inside a real
 //! `hyperion-trust-boundary::spawn` sandbox, instead of the previous "data only, no execution"
 //! gap this crate's own doc comment named. Linux-only, matching `hyperion-trust-boundary`'s own

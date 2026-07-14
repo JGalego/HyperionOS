@@ -1,5 +1,5 @@
 //! A minimal, real, dependency-free HTTP/1.1 server -- shared plumbing for `/mcp-server` and
-//! `/a2a-server` (AUTONOMY_ROADMAP.md's Social pillar). Not a general-purpose web server: parses
+//! `/a2a-server` (docs/998-roadmap.md's Social pillar). Not a general-purpose web server: parses
 //! just enough of a real HTTP/1.1 request (method, path, `Content-Length`, body) to dispatch to a
 //! handler, and writes a real, minimal HTTP/1.1 response. Real sockets, real bytes over the wire --
 //! an external client (`curl`, a real MCP/A2A client, another Hyperion instance) genuinely

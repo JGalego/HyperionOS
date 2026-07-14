@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PRODUCTION_BOOT_PROMPT.md M12: real, measured cold-boot timing against docs/36's ~4.5s budget --
+# docs/998-roadmap.md M12: real, measured cold-boot timing against docs/36's ~4.5s budget --
 # "firmware -> login/shell -> first real Intent handled," end to end, not the old in-process
 # `hyperion_sim::boot` 250ms slice that only ever measured a sub-phase of a boot that didn't yet
 # exist. Reuses console-test.sh's exact socket-backed-serial mechanism (so a real utterance can be
@@ -25,7 +25,7 @@ trap 'rm -f "$SOCK" "${VARS_COPY:-}"' EXIT
 # (600ms) + platform services (500ms) + knowledge layer attach (350ms) + cognition layer + resident
 # model load (1,800ms) + experience layer first frame (400ms) + reserved margin (350ms) = ~4.5s.
 # That budget's own per-phase boundaries (a from-scratch microkernel's L0-L6 layers) don't map onto
-# this roadmap's real Linux-hosted MVP boot sequence 1:1 (see PRODUCTION_BOOT_PROMPT.md's own §0
+# this roadmap's real Linux-hosted MVP boot sequence 1:1 (see docs/998-roadmap.md's own §0
 # Decision Record) -- measured here as one real, honest end-to-end number against the same total,
 # exactly as M12's own text asks for, rather than forcing a false per-phase correspondence.
 BUDGET_S="4.5"

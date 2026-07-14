@@ -1,5 +1,5 @@
 //! Real terminal-echo suppression for the one real secret this console ever reads from a live
-//! user: a cloud provider API key (PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers", the
+//! user: a cloud provider API key (docs/998-roadmap.md "Phase 2: cloud providers", the
 //! "connect my `<provider>` account" flow). Bare `libc` termios calls, matching the one existing
 //! real ioctl/libc precedent in this workspace (`hyperion-init::linux::spawn_interactive`'s
 //! `TIOCSCTTY` call) rather than a new dependency (`rpassword`/`termion`/`nix`) for what's a very

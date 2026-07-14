@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PRODUCTION_BOOT_PROMPT.md M6's real power-loss simulation: boots with a real, dedicated,
+# docs/998-roadmap.md M6's real power-loss simulation: boots with a real, dedicated,
 # pre-formatted ext4 data disk attached (a second virtio-blk drive, distinct from the boot disk),
 # lets the guest's own hyperion-init start a real WAL write loop against it
 # (crates/hyperion-init/src/linux/storage_probe.rs), then hard-kills qemu outright (SIGKILL, not

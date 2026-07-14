@@ -60,7 +60,7 @@
 //!   `hyperion-recovery`'s bounded, per-object snapshot needs — this
 //!   crate has no separate migration-plan representation or "run the
 //!   declared inverse" step; reverting is entirely `restore_to`'s job.
-//! - ~~**Real signature.**~~ — now real (PRODUCTION_BOOT_PROMPT.md M9):
+//! - ~~**Real signature.**~~ — now real (docs/998-roadmap.md M9):
 //!   [`orchestrator::UpdateOrchestrator::apply_update`] checks a real Ed25519 signature (via
 //!   [`hyperion_crypto`]) over [`orchestrator::sign`]'s canonical bytes, not the `DefaultHasher`
 //!   (SipHash) stand-in this crate used before — that stand-in was doubly non-cryptographic:

@@ -2,7 +2,8 @@
 
 **Hyperion** is an intent-native operating system: humans express goals, and the system determines
 how those goals become reality. This index is the entry point to the full specification —
-42 documents covering vision, architecture, every subsystem, and the plan to build it.
+45 documents covering vision, architecture, every subsystem, the plan to build it, and its
+real-world status.
 
 If you are new to this specification, read [01](01-vision-and-philosophy.md) and
 [02](02-core-architecture.md) first — every other document assumes their vocabulary (Intent,
@@ -116,6 +117,19 @@ subsystem via the tables below.
 | Doc | Title | What it covers |
 |---|---|---|
 | [41](41-implementation-phases.md) | Implementation Phases | The ten-phase build sequence, entry/exit criteria, and risks for every phase |
+
+## 14. History, Roadmap & Status
+
+Numbered 997-999, deliberately outside the 01-41 sequence above: these aren't architecture
+specification, they're process — where the project came from, where it's going, and a running log
+of what's actually been verified. Living documents, updated as real work lands, not written once
+and left to drift.
+
+| Doc | Title | What it covers |
+|---|---|---|
+| [997](997-origin-prompt.md) | Origin Prompt | The original mission prompt used to bootstrap Hyperion's design, kept verbatim for historical record |
+| [998](998-roadmap.md) | Roadmap | Production boot milestones (M0-M13), the Resourceful/Social/Self-Sustaining autonomy pillars, and the backlog of future work |
+| [999](999-usage-scenarios.md) | Usage Scenarios | Living acceptance-test log of real, verified console scenarios |
 
 ---
 *Start with [01 — Vision & Philosophy](01-vision-and-philosophy.md).*

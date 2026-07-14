@@ -46,7 +46,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
-  # PRODUCTION_BOOT_PROMPT.md M0/M1: the boot image is a separate build system
+  # docs/998-roadmap.md M0/M1: the boot image is a separate build system
   # (Buildroot), not a cargo workspace member, so it gets its own job rather
   # than folding into `test`/`lint` above. Only runs when boot/ itself or the
   # crates it packages (hyperion-init) change, since a from-scratch Buildroot
@@ -78,13 +78,13 @@ jobs:
       - run: boot/scripts/boot-test.sh
         env:
           BOOT_TEST_TIMEOUT: "300"
-      # PRODUCTION_BOOT_PROMPT.md M6: re-validates hyperion-storage's crash-consistency-by-replay
+      # docs/998-roadmap.md M6: re-validates hyperion-storage's crash-consistency-by-replay
       # guarantee against a real power-loss simulation (a real, dedicated block device, hard-
       # killed mid-write), not just the existing host-tempfile fault-injection tests.
       - run: boot/scripts/storage-crash-test.sh
         env:
           STORAGE_TEST_TIMEOUT: "300"
-      # PRODUCTION_BOOT_PROMPT.md M7 stage 1: a real utterance typed at the real booted console
+      # docs/998-roadmap.md M7 stage 1: a real utterance typed at the real booted console
       # (over a real Unix-socket serial port, not just boot-test.sh's output-only log capture)
       # produces a real Intent Graph, a real Agent invocation, and real rendered text -- proven
       # for both the one real HTN-decomposed utterance shape and the undecomposed fallback path.
@@ -95,7 +95,7 @@ jobs:
         env:
           CONSOLE_TEST_TIMEOUT: "300"
 
-  # PRODUCTION_BOOT_PROMPT.md M11: Hyperion's second reference platform. A separate job (not a
+  # docs/998-roadmap.md M11: Hyperion's second reference platform. A separate job (not a
   # matrix leg of boot-image above) because it needs its own cross-toolchain and its own Buildroot
   # output directory (see build-image-aarch64.sh's own comment on why output/ and output-aarch64/
   # can't be shared) -- catching an aarch64-only regression here, on every push, rather than only

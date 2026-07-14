@@ -68,7 +68,7 @@ pub struct Implementation {
     pub requires_consent: bool,
     /// Real execution info for `Runtime::NativeBinary`/`ComposedCapability` -- `None` for
     /// `LocalModel`/`CloudApi` (each already dispatches through its own real backend elsewhere).
-    /// AUTONOMY_ROADMAP.md's "tool creation" slice: this crate's own publish pipeline
+    /// docs/998-roadmap.md's "tool creation" slice: this crate's own publish pipeline
     /// (`prepare_submission` → `publish`) now installs a `NativeBinary` submission as a genuinely
     /// *runnable* capability when this is `Some` -- naming an existing, real, already-vetted
     /// program is "tool creation" in the safe, honest sense this workspace can support today; an

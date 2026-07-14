@@ -1,7 +1,7 @@
 # Hyperion boot image
 
 Builds the Linux-hosted MVP image described in
-[PRODUCTION_BOOT_PROMPT.md](../PRODUCTION_BOOT_PROMPT.md) — see that document for the full
+[docs/998-roadmap.md](../docs/998-roadmap.md) — see that document for the full
 roadmap and the decision record (§0) for why this is a Linux-hosted MVP rather than the
 from-scratch hybrid microkernel [docs/03](../docs/03-kernel-architecture.md) specifies.
 

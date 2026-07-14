@@ -129,7 +129,7 @@ pub enum PromotionStatus {
 
 /// docs/17 T8's `ModelIntegrityRecord`, narrowed to what
 /// [`crate::model_integrity::canary_gate_model_promotion`] actually checks: a real Ed25519
-/// signature check (PRODUCTION_BOOT_PROMPT.md M9, via `hyperion-ai-runtime`'s own `verify`) for
+/// signature check (docs/998-roadmap.md M9, via `hyperion-ai-runtime`'s own `verify`) for
 /// "content-addressed + signature-verified," and a deterministic score-drift comparison standing
 /// in for a real canary differential test suite.
 #[derive(Debug, Clone, Copy)]

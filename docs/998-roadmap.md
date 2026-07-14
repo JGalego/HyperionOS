@@ -1,4 +1,10 @@
-# Hyperion Production Boot Roadmap
+# Roadmap
+
+Hyperion's roadmap in three parts: the production boot milestones that take it from a hosted
+simulator to a real, booting image; the Resourceful/Social/Self-Sustaining autonomy pillars; and
+the backlog of product-level work that's real and named but not yet scheduled.
+
+## Production Boot Roadmap
 
 **Purpose of this document:** a self-contained prompt for driving Hyperion from its current
 state — 31 Rust crates implementing Phases 2-10's *logic* as an in-process, `std`, hosted
@@ -8,7 +14,7 @@ message of a session (or a `/loop`) to resume this work; the **Status** section 
 living checklist — update it as milestones close, the same way `MEMORY.md`'s project notes track
 completed phases.
 
-## 0a. Execution Mode — read this too
+### 0a. Execution Mode — read this too
 
 **Do not stop.** Once a milestone's approach is clear from this document, execute it —
 implementation choices, library selections, and sub-step ordering within a milestone's stated
@@ -32,10 +38,10 @@ Everything else — which crate to touch first, how to structure a commit, wheth
 pass hardening something before moving on — is a normal engineering judgment call. Make it and keep
 moving.
 
-## 0. Decision Record — read this before anything else
+### 0. Decision Record — read this before anything else
 
 **Decision (made 2026-07-11, by the project owner):** target a **Linux-hosted MVP**, not the
-from-scratch hybrid microkernel [docs/03-kernel-architecture.md](docs/03-kernel-architecture.md)
+from-scratch hybrid microkernel [docs/03-kernel-architecture.md](03-kernel-architecture.md)
 specifies. A real Linux kernel does the address-space management, thread scheduling, driver I/O,
 and filesystem work; Hyperion's capability/scheduler/IPC model is implemented as a **real,
 enforced userspace layer** on top of it (Linux namespaces, seccomp-bpf, Landlock, cgroups v2,
@@ -58,7 +64,7 @@ If a future session wants to revisit this decision (e.g. to actually build the f
 microkernel once the Linux-hosted MVP has validated Phases 2-10 on real hardware), that is a
 new decision to make explicitly, not an assumption to slide back into.
 
-## 1. Current State (verified 2026-07-11)
+### 1. Current State (verified 2026-07-11)
 
 - 31 crates under `crates/*`, all plain `std`, all workspace members of one Cargo workspace, zero
   `no_std`, zero bootloader, zero hardware I/O. Every "Real:" claim in every crate's `lib.rs` doc
@@ -75,7 +81,7 @@ new decision to make explicitly, not an assumption to slide back into.
 - Every crate's own "Deliberately deferred" bullets are the master inventory of what's missing —
   this roadmap organizes closing them, it does not re-enumerate every one inline.
 
-## 2. Assumption to confirm or correct
+### 2. Assumption to confirm or correct
 
 **Reference hardware for the first bootable milestone: x86_64, UEFI firmware.** This is the
 pragmatic choice for "boots from a USB drive" specifically — UEFI+x86_64 has the most mature
@@ -87,7 +93,7 @@ both platforms simultaneously. If the actual target hardware is different (a spe
 specific enterprise server), say so before starting Milestone 1; the bootloader and driver choices
 below assume UEFI.
 
-## 3. Status
+### 3. Status
 
 | Milestone | State |
 |---|---|
@@ -1527,14 +1533,14 @@ touched crate. Live-verified end to end in a real running console binary: `/redo
 focus on the European market only` followed by `/result market_research` shows the real,
 regenerated text with the steering text folded in, not the stale original.
 
-## 4. Milestones
+### 4. Milestones
 
 Each milestone below states what it delivers, what from the existing 31 crates is genuinely
 reusable (the algorithms, not the process model), what's net-new, and its exit criteria — mirroring
 docs/41's own phase-definition shape so this roadmap reads as a continuation of that document, not
 a break from its conventions.
 
-### M0 — Toolchain, Decision Record, QEMU Harness
+#### M0 — Toolchain, Decision Record, QEMU Harness
 
 **Delivers:** a working build pipeline that can produce a bootable disk image and iterate on it in
 seconds, before any real Hyperion logic is involved.
@@ -1558,7 +1564,7 @@ seconds, before any real Hyperion logic is involved.
 login prompt from an image Buildroot produced, with no Hyperion code involved yet — this proves the
 pipeline, not the OS.
 
-### M1 — Bootable "Hello Hyperion" Image
+#### M1 — Bootable "Hello Hyperion" Image
 
 **Delivers:** the literal ask — a `.img` that boots from a real USB drive on real x86_64 UEFI
 hardware into something visibly Hyperion (even if it's just a branded console banner and a shell).
@@ -1573,7 +1579,7 @@ least one real x86_64 UEFI machine from a USB drive to the same banner/shell wit
 This is the milestone that actually answers "does Hyperion boot from a USB drive" — everything
 after this is making what boots do something real.
 
-### M2 — Real Capability / Trust Boundary Enforcement
+#### M2 — Real Capability / Trust Boundary Enforcement
 
 **Delivers:** `hyperion-capability`'s token/table/monitor *algorithm* (derivation, attenuation,
 revocation graph — this logic is sound and should be reused, not rewritten) rehosted so that
@@ -1593,7 +1599,7 @@ the token measurably removes that process's real ability to do something it coul
 before (a syscall it can no longer make, a file it can no longer open), verified by a test that
 attempts the now-forbidden action and observes it fail.
 
-### M3 — Real IPC Transport
+#### M3 — Real IPC Transport
 
 **Delivers:** `hyperion-ipc`'s frame/channel model (Request/Response/Notification, `ipc_call`/
 `ipc_notify`) carried over a **real transport** — Unix domain sockets for the MVP (io_uring-based
@@ -1604,7 +1610,7 @@ real IPC call/notify frame across a real socket; a call from a process whose cap
 revoked is rejected at the transport boundary, not just by a library-level check the process could
 route around if it weren't actually sandboxed.
 
-### M4 — Real Scheduler Enforcement
+#### M4 — Real Scheduler Enforcement
 
 **Delivers:** `hyperion-scheduler`'s `ResourceVector`/`ResourceLedger`/DRF+EDF dispatch algorithm
 mapped onto real Linux cgroups v2 controllers (`cpu`, `memory`, `io`, and the GPU controller where
@@ -1618,7 +1624,7 @@ Background sharing CPU/RAM) is re-run against real cgroups on real Linux and its
 assertions hold when measured from `/sys/fs/cgroup` accounting, not just from in-memory ledger
 state.
 
-### M5 — Real Init & Supervision Tree
+#### M5 — Real Init & Supervision Tree
 
 **Delivers:** a real `hyperion-init` (PID 1) that mounts the real root filesystem, starts the
 Capability Monitor (M2), the IPC bus (M3), and the scheduler enforcement daemon (M4), then starts
@@ -1632,7 +1638,7 @@ restarted with a fresh capability grant within a bounded time, without a full re
 crashing sibling services — the real version of the "microreboot" claim already tested in-process
 in `hyperion-recovery`.
 
-### M6 — Real Persistent Storage
+#### M6 — Real Persistent Storage
 
 **Delivers:** `hyperion-storage`'s WAL-backed object store pointed at a **real, dedicated block
 device or partition** (an attached NVMe/SSD for actual daily-driver persistence — writing heavily
@@ -1642,7 +1648,7 @@ host's existing filesystem in a temp directory, as every current test does.
 real power-loss simulation (e.g. `qemu`'s ability to hard-kill the VM mid-write) on the real block
 device, not just a simulated partial-write test against a host tempfile.
 
-### M7 — Real Console UI, Then Real Display
+#### M7 — Real Console UI, Then Real Display
 
 **Delivers, staged:**
 1. **Text console first:** drive `hyperion-workspace`'s compiled UI/accessibility trees through a
@@ -1657,7 +1663,7 @@ device, not just a simulated partial-write test against a host tempfile.
 **Exit criteria (stage 1):** a real utterance typed at the real booted console produces a real
 Intent Graph, a real Agent invocation, and real text output rendered to the real TTY.
 
-### M8 — Real Local AI Runtime
+#### M8 — Real Local AI Runtime
 
 **Delivers:** `hyperion-ai-runtime`'s mock model execution replaced with a real on-device inference
 engine — **Candle** (Rust-native) is the natural fit for this codebase's own Rust-first convention
@@ -1668,7 +1674,7 @@ docs/36's latency budget on the reference hardware.
 real output driven by a real model's real inference, on the booted image, not the deterministic
 mock backend every current test uses.
 
-### M9 — Real Cryptography
+#### M9 — Real Cryptography
 
 **Delivers:** every "non-cryptographic checksum stand-in" this workspace uses as a deliberate,
 documented placeholder — `hyperion-ai-runtime::checksum`, `hyperion-plugin-framework::signature`,
@@ -1679,14 +1685,14 @@ keystore at minimum; TPM-backed sealing as a stretch goal where the reference ha
 **Exit criteria:** a tampered plugin manifest/update package/audit-ledger entry is rejected by a
 real signature or hash-chain check, not a checksum a forger could trivially reproduce.
 
-### M10 — Real Networking
+#### M10 — Real Networking
 
 **Delivers:** `hyperion-netstack`'s `MockFetchBackend`/`MockExtractionBackend` replaced with a real
 HTTP client (`reqwest`/`hyper`) over the booted machine's real NIC, real DNS, real TLS.
 **Exit criteria:** `web.research`/`web.fetch.raw` fetch a real URL over the real network from the
 booted image and merge a real extracted entity into the real Knowledge Graph.
 
-### M11 — Second Reference Platform
+#### M11 — Second Reference Platform
 
 **Delivers:** bring-up on a second, lower-tier reference platform (Raspberry Pi 4/5, aarch64) to
 satisfy docs/41 Phase 1's literal two-platform exit criterion — re-run M0-M4 for this target
@@ -1696,7 +1702,7 @@ platform validates the *rest* of the stack, not an additional USB-boot claim).
 **Exit criteria:** the same Hyperion image (kernel config and Buildroot target adjusted for
 aarch64) boots to the M7-stage-1 console loop on real Raspberry Pi hardware.
 
-### M12 — Boot Benchmarking Against docs/36
+#### M12 — Boot Benchmarking Against docs/36
 
 **Delivers:** real cold-boot timing on real hardware (both reference platforms), measured
 end-to-end (firmware → login/shell → first real Intent handled), against docs/36's full boot
@@ -1707,7 +1713,7 @@ platforms; if over budget, the gap and its cause are named explicitly (kernel in
 size, service startup ordering, model load time) rather than the milestone being closed on
 optimism.
 
-### M13 — Release Engineering for a Bootable Artifact
+#### M13 — Release Engineering for a Bootable Artifact
 
 **Delivers:** extend the existing `hyperion-release-gate` crate's criteria to cover the new
 hardware/boot surface: image build reproducibility, boot-tested on both reference platforms per
@@ -1718,7 +1724,7 @@ published as the actual release artifact.
 **Exit criteria:** a fresh USB drive, written from a tagged release image, boots on both reference
 platforms and passes a smoke test exercising M7 stage 1's real Intent→Agent→output loop.
 
-## 5. What changes about "one commit per item"
+### 5. What changes about "one commit per item"
 
 The Rust-logic sprint that preceded this roadmap gated every commit on
 `cargo build/test/fmt/clippy --workspace`. Systems/boot work doesn't decompose the same way — a
@@ -1736,7 +1742,7 @@ half of a Rust function is. Gate milestones instead on:
   crypto primitives' own unit tests), layered under a milestone-level manual/CI boot-and-smoke-test
   gate for the integrated result.
 
-## 6. Reuse map (what NOT to rewrite)
+### 6. Reuse map (what NOT to rewrite)
 
 | Existing crate | What's reused as-is | What's rehosted/replaced |
 |---|---|---|
@@ -1752,17 +1758,222 @@ half of a Rust function is. Gate milestones instead on:
 | `hyperion-release-gate` | Existing release-criteria structure | Extended with hardware/boot criteria (M13) |
 | Every other crate (context, intent, memory, coordination, federation, device, explainability, observability, privacy, security, threat-model, plugin-framework, sdk, api-gateway, compat, scalability, update) | Runs unmodified as a real supervised service once M5's init/supervision exists | Nothing structural — these become real once their *environment* (M2-M6) is real |
 
-## 7. Explicit Non-Goals for This Roadmap
+### 7. Explicit Non-Goals for This Roadmap
 
 Named here so no future session assumes silent scope creep:
 - Formal verification of the enforcement layer (docs/03's seL4-class assurance target) — not
   attempted; the Linux-hosted enforcement in M2 is real but not formally proven.
 - A from-scratch hybrid microkernel — explicitly deferred per §0's decision record, not abandoned.
 - Real hardware virtualization/VM Trust-Depth-3 sandboxing for foreign-kernel guests
-  ([27 — Compatibility Layer](docs/27-compatibility-layer.md)'s Windows path) — out of scope until
+  ([27 — Compatibility Layer](27-compatibility-layer.md)'s Windows path) — out of scope until
   well after M13.
 - GPU driver work beyond basic KMS/DRM framebuffer output — a real GPU compute/NPU driver story is
   a separate, later project, not part of M7's display milestone.
-- Multi-device federation over a real network ([21 — Distributed Execution](docs/21-distributed-execution.md))
+- Multi-device federation over a real network ([21 — Distributed Execution](21-distributed-execution.md))
   — M10 gets one device onto a real network; federating two *real, separately booted* Hyperion
   machines is a follow-on roadmap, not part of this one.
+
+## Autonomy Roadmap
+
+CLAUDE.md's "Autonomy" section states the commitment in full — resourceful, social,
+self-sustaining. This document is the living record of what's actually real today versus what's
+deliberately deferred, in this project's own "deliberately deferred, and why" convention (see
+every crate's own doc comment for precedent). Nothing below is marked real until it's built,
+tested, and gated (`cargo build/test/fmt/clippy`) — the same standard this document's own
+Production Boot Roadmap section and [999 — Usage Scenarios](999-usage-scenarios.md) already hold
+themselves to.
+
+### Resourceful — use existing tools, create new ones
+
+**Real today:**
+
+- `hyperion-plugin-framework::PluginRegistry` already does real Ed25519-signed
+  install/uninstall/query of capability implementations (this document's own Production Boot
+  Roadmap section, M9).
+- `hyperion-trust-boundary::spawn` already does real Linux sandboxing (user namespaces, Landlock,
+  seccomp-bpf) of a forked process (M2).
+- **Slice 1, landed.** Those two connect for real: `ImplementationDescriptor`/`CapabilityManifest`
+  carry a real `NativeBinaryDescriptor` for `ImplementationKind::NativeBinary`, validated (program
+  must really exist and really be executable) at install time;
+  `PluginRegistry::invoke_native_binary` runs it inside a real `hyperion_trust_boundary::spawn`
+  sandbox (real temp-dir I/O, a real bounded timeout, a real non-blocking `try_wait` poll loop —
+  fixed live after an earlier version hung forever, since `is_alive()` alone can't distinguish "still
+  running" from "exited but unreaped"); `AgentRuntime::invoke` dispatches an unrecognized
+  `capability_ref` to it when a wired `PluginRegistry` has a matching installed implementation,
+  instead of falling through to `stubs::dispatch`'s echo. Proven end to end: a real, statically
+  linked (musl) tool, installed and invoked through the real console/agent-runtime path, produces
+  its own real output.
+
+**Also being built this pass** (pulled forward from an earlier, more conservative draft of this
+roadmap, per direct instruction — see this file's own git history for what "deferred" used to
+mean here):
+
+- **Tool *creation*, landed (in the safe, honest sense this workspace can support today).**
+  `hyperion-sdk::Implementation` carries a real `native_binary: Option<NativeBinaryDescriptor>`,
+  threaded through `prepare_submission` → `publish` → `PluginRegistry::install`: naming an
+  existing, real, already-vetted program as a `Runtime::NativeBinary` submission now installs it
+  as a genuinely *runnable* capability, invocable through Slice 1's real execution path the moment
+  `publish` returns — proven end to end. **Deliberately not built**: an agent synthesizing brand-new
+  code from scratch and directly executing it. Real code review/static analysis of freshly
+  generated code before ever running it is separate, substantial work this session didn't
+  attempt — naming it here rather than quietly skipping it or faking it with an unreviewed
+  auto-exec path, which would be a real security regression, not a feature.
+- **`hyperion-api-gateway`'s parallel gap, landed.** Its own `ApiGateway::dispatch_one` now checks
+  `self.registry` for a runnable `NativeBinary` implementation before falling back to
+  `hyperion_agent_runtime::dispatch_stub_capability`, the exact same real execution path Slice 1
+  built — proven end to end the same way, through `invoke_capability`.
+
+**Deliberately still deferred:**
+
+- **The other seven `Contribution` variants** (`Agent`, `HardwareSupport`, `KnowledgeProvider`,
+  `UiComponent`, `ExecutionEngine`, `AutomationWorkflow`, `MemoryProvider`) — none has an owning
+  subsystem with a real registration point yet; see `hyperion-plugin-framework`'s own doc comment.
+
+### Social — connect with other Hyperion instances
+
+**Real today:**
+
+- **`/mcp-server [port]`** — a real MCP (Model Context Protocol) server, started as a real
+  background thread from an ordinary console meta-command, over real HTTP (JSON-RPC 2.0:
+  `initialize`, `tools/list`, `tools/call`) rather than stdio — stdio stays free for the rest of
+  the session, unlike a `--mcp`-flag design that would need to own it exclusively. Exposes
+  `hyperion.ask`/`hyperion.recall`/`hyperion.graph` as real tools, each a real turn through the
+  exact same `ConsoleSession::handle_utterance` path everything else in this crate uses — no new
+  bypass of the capability/consent model.
+- **`/a2a-server [port]`** — a real A2A (Agent2Agent) server, same shape: a real Agent Card at the
+  real spec-defined `/.well-known/agent-card.json`, and the real `SendMessage` JSON-RPC method
+  (the spec's own minimal "send a message, get a reply" flow), backed by the same live session.
+- **`/mcp-call <host> <port> <tool> <json args>`** and **`/a2a-call <host> <port> <message
+  text>`** — the real outbound half: Hyperion calling *out* to a real, already-known MCP/A2A
+  endpoint, including another Hyperion instance's own server. Verified live: two real
+  `hyperion-console` processes, one running `/a2a-server`, the other running `/a2a-call` against
+  it, genuinely exchanging a real reply pulled from the *first* process's own conversation history.
+  Not discovery — the endpoint is named, not found (see deferred, below).
+- **`/standby`** — blocks on a real read of this process's own stdin until the user provides real
+  input, then exits. Exists specifically so a scenario that starts a background server doesn't
+  have the whole process (server included) exit the instant the scenario file ends — the real
+  mechanism for "keep this alive long enough to test the server from another terminal, on my own
+  schedule."
+- Both servers share one real `Arc<Mutex<ConsoleSession>>` with the console's own interactive/
+  scenario-file loop — a real MCP/A2A tool call and a real typed utterance affect (and can observe)
+  the very same conversation, not two divergent copies.
+
+**Deliberately still deferred:**
+
+- **Real cross-instance discovery, identity, and trust.** Every existing multi-device concept in
+  this workspace (`hyperion-federation`, `hyperion-device`) models *one user's own devices* inside
+  one process — there is no concept anywhere of a *different* user/instance as a peer yet. This is
+  a real, separate identity model, not a small extension of what exists. `/mcp-call`/`/a2a-call`
+  work only because the caller already knows the exact host/port to name.
+- **mDNS/DNS-SD advertise + discover.** The natural next slice for the gap above's *discovery*
+  half (not identity/trust): `/mcp-server`/`/a2a-server` publishing a real
+  `_hyperion-mcp._tcp.local.`/`_hyperion-a2a._tcp.local.` service record on the real port they
+  bound, and a way to browse for the same service types on the LAN — closing
+  `hyperion-device`'s own already-named "real discovery protocols (mDNS/BLE/Matter/cloud-relay)"
+  gap at the same time. Not started this pass.
+- **The rest of each real spec.** MCP: resources, prompts, notifications, the SSE-streaming half
+  of "Streamable HTTP," stdio transport. A2A: `GetTask`/`ListTasks`/streaming/push notifications
+  (no real task store exists here — every dispatch completes synchronously before `SendMessage`
+  returns, so there's nothing to poll).
+- **A2A, gossip, or any custom/invented protocol.** Worth exactly when a real, concrete need
+  outgrows what MCP already covers — not before.
+- **Real network transport for federation** (`hyperion-federation`'s own deferred list: heartbeat
+  timing, ambient anti-entropy, `SyncEnvelope`-wrapped encrypted payloads) — orthogonal to, and a
+  prerequisite for, real multi-*device* (not just multi-*instance*) social behavior.
+
+### Self-Sustaining — degrade safely, recover, come out stronger
+
+**Real today:**
+
+- `hyperion-agent-runtime`'s circuit breaker already suspends an instance after
+  `CIRCUIT_BREAKER_THRESHOLD` consecutive failures (M8-era).
+- `hyperion-recovery`'s undo/redo/crash-recovery journal already exists (real, but purely
+  reactive — restores last-known-good, no learning).
+- `hyperion-supervisor`'s exponential backoff + give-up policy already exists for OS *processes*.
+- **Slice 3, landed.** A `Suspended` `AgentInstance` now has a real way back:
+  `AgentRuntime::prepare_invoke` auto-resumes it once a real, adaptive backoff window
+  (`backoff_duration`, capped exponential, re-derived from `hyperion-supervisor`'s own proven
+  shape for OS processes) has elapsed, with a real, explainable audit entry
+  (`auto_resumed_after_backoff`) — instead of staying stuck until something external intervenes.
+  `QuotaState.times_suspended` (the instance's real *whole-life* suspension count, distinct from
+  `consecutive_failures`, which already resets on any success) makes a repeat offender's next
+  backoff measurably longer — verified live: a second suspension's backoff genuinely outlasts the
+  first. A real streak of `SUCCESS_STREAK_TO_DECAY` (3) consecutive successes after a resume
+  decays `times_suspended` back down by one, each decay its own audited event
+  (`backoff_decayed`) — the actual "recovers, and comes out stronger" mechanic, not a fixed
+  penalty forever or a reset to baseline on the first success.
+- **Slice 3b, landed.** That same suspend/auto-resume/backoff-decay history now survives a real
+  process restart. `AgentRuntime` gains an `Option<Arc<MemoryEngine>>` (same optional-real-backend
+  shape as `Option<Arc<NetstackHub>>`/`Option<Arc<PluginRegistry>>`): `spawn` seeds a fresh
+  instance's `times_suspended` by querying `hyperion-memory`'s Procedural tier for that
+  specialization's own remembered history, and every suspend/auto-resume/decay
+  (`record_resilience_event`) writes back into it — so the "this instance is a repeat offender"
+  signal outlives the process, not just the in-memory `AgentInstance`. Proven end to end: opening
+  the exact same on-disk Knowledge Graph path twice, with a fresh `AgentRuntime`/`MemoryEngine`
+  each time and nothing else shared (the closest a single test process can get to a genuine
+  restart) — a specialization's suspension count is really there the second time, and a
+  *different* specialization's fresh instance genuinely starts at zero (no cross-contamination).
+
+**Deliberately still deferred:**
+
+- **`hyperion-recovery` learning from what it rolls back.** Still purely reactive; no mechanism
+  connects a rollback's cause to a future decision.
+- **A model-router-style "demote, never remove" signal for agent instances generally** — the
+  closest existing precedent (`hyperion-model-router`'s circuit breaker, fed by `report_outcome`)
+  is scoped to model selection only.
+
+## Backlog
+
+Product-level work that's real, named, and intentionally not yet scheduled — distinct from this
+document's own Autonomy Roadmap section above (which tracks code that's actually landed vs.
+deliberately deferred for the Resourceful/Social/Self-Sustaining pillars) and from
+[41 — Implementation Phases](41-implementation-phases.md) (which
+tracks the build-out of subsystems already designed in `docs/`). This file is for a different
+kind of gap: things the *vision* is missing, discovered by holding Hyperion up against an outside
+argument and checking whether the architecture actually answers it — not just whether a crate
+compiles.
+
+No target release date is committed by putting something here. "v0.2.0+" means "after the current
+build-out, revisit."
+
+### v0.2.0+ — Protect the Human (cognitive load, judgment, meaning)
+
+Source: a working session (2026-07-14) that read an external keynote deck ("brains go brrr —
+finding balance in the age of Generative AI") and asked, in good faith, whether Hyperion's own
+design already answers its central claim — that AI capability is exponential while human cognitive
+bandwidth is linear/finite, and that the resulting gap shows up as burnout, eroded judgment, and
+lost meaning, not just wasted time. CLAUDE.md's own principles (User Control, Explainability,
+Progressive Complexity) already answer *some* of this well. These items are the parts that don't
+have a real architectural home yet.
+
+- **No forced "think" checkpoint before intent decomposition.** Today: utterance → Intent Engine →
+  decomposition happens with zero friction, by design (docs/05). Missing: an analogous, human-owned
+  pause *before* Hyperion decides what a goal means — not a confirmation dialog for a risky action
+  (that already exists, see `hyperion-capability`'s consent gate), but a moment for the human's own
+  reasoning to run first. Likely home: `hyperion-intent` or `hyperion-console`, as an opt-in
+  session mode, not a default that adds friction to every goal.
+- **No declared judgment/taste/empathy/context boundary, distinct from "risky."** The existing
+  consent gate triggers on irreversibility/cost/security — a different axis from "this decision is
+  a matter of taste or empathy and deserves more human involvement regardless of how reversible it
+  is" (e.g., branding a startup vs. filing its paperwork, dispatched identically today). Likely
+  home: a new classification on `AgentManifest`/`CapabilityManifest` alongside trust tier, or a new
+  field in `hyperion-coordination`'s task assignment.
+- **No cache-protection throttle for the human's own skill.** `hyperion-memory`'s tiered design
+  already protects the *system's* memory ("your brain has a cache, don't empty it completely" —
+  the deck's own framing). Nothing protects the *user's*: no signal exists for "you've delegated
+  this kind of task N times this month, want to do the next one yourself?" Likely home:
+  `hyperion-memory`'s procedural tier (it already tracks repeated task patterns) surfaced back
+  through `hyperion-explainability` rather than only used internally.
+- **No "was this meaningful" signal, only "was this fast."** `hyperion-observability` tracks system
+  health and latency; nothing tracks whether a completed goal actually mattered to the user, as
+  opposed to how quickly it was produced. Likely home: a new, optional per-goal reflection surface
+  in `hyperion-console`/`hyperion-workspace`, explicitly not a productivity metric.
+- **No teaching mode.** The model-role catalog (planning/coding/reasoning/vision/etc., docs/23) has
+  no role oriented around building the *user's* competence rather than producing an artifact —
+  nothing that explains the underlying principle instead of just the output. Likely home: a new
+  model role plus a capability that a user can explicitly invoke ("teach me this, don't just do
+  it").
+
+Each of the above is a backlog item, not a design — none has interfaces, contracts, or a chosen
+approach yet. Per CLAUDE.md's own engineering principle ("design APIs before implementation"), the
+next step on any of these is a design pass, not code.

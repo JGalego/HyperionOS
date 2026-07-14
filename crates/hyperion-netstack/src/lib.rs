@@ -29,7 +29,7 @@
 //! `hyperion-workspace` Phase 5 pipeline rather than leaving the flag
 //! sitting unused on the node's metadata.
 //!
-//! PRODUCTION_BOOT_PROMPT.md M10 adds real HTTP/TLS/DNS behind a new `real-http` Cargo feature
+//! docs/998-roadmap.md M10 adds real HTTP/TLS/DNS behind a new `real-http` Cargo feature
 //! (off by default, same reason `hyperion-ai-runtime`'s `candle` feature is): [`fetch::ReqwestFetchBackend`]
 //! is a real [`fetch::FetchBackend`] (real `reqwest` blocking client, real rustls TLS with a
 //! *bundled* root store, real DNS) and [`extract::HtmlHeuristicExtractionBackend`] is a real

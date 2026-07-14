@@ -1,7 +1,7 @@
 //! The real stdin/stdout loop around [`hyperion_console::ConsoleSession`] -- all the real logic
 //! lives there and is tested directly; this binary is only real terminal I/O plumbing (plus, now,
 //! the real MCP/A2A server and client transports -- see [`mcp`]/[`a2a`]/[`http_server`]/
-//! [`http_client`], AUTONOMY_ROADMAP.md's Social pillar).
+//! [`http_client`], docs/998-roadmap.md's Social pillar).
 
 mod a2a;
 mod http_client;
@@ -100,7 +100,7 @@ fn main() {
     // divergent copies.
     let session = Arc::new(Mutex::new(session));
 
-    // A bare positional argument is a scenario file (USAGE_SCENARIOS.md's own "how to run a
+    // A bare positional argument is a scenario file (docs/999-usage-scenarios.md's own "how to run a
     // scenario" section) -- `source .env && hyperion-console scenarios/foo.txt` in place of the
     // fragile `printf '%s\n' "..." | hyperion-console` pattern that pattern's own file had no
     // real way to check in with secrets still injected only at run time.
@@ -355,7 +355,7 @@ fn run_scenario_file(path: &str, session: &Arc<Mutex<ConsoleSession>>) {
 
 /// Expands `$NAME` references (letters, digits, underscore) against this real process's own
 /// environment -- the same interpolation a shell would already do for the
-/// `printf '%s\n' "$OPENAI_API_KEY" ... | hyperion-console` pattern USAGE_SCENARIOS.md documents,
+/// `printf '%s\n' "$OPENAI_API_KEY" ... | hyperion-console` pattern docs/999-usage-scenarios.md documents,
 /// needed here because [`run_scenario_file`] reads its file's lines literally, with no shell in
 /// between to do it. An unset reference is left untouched, not replaced with an empty string, so
 /// a scenario author sees an honest failure downstream (e.g. "you haven't connected your openai

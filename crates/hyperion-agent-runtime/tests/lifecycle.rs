@@ -167,7 +167,7 @@ fn requestable_capability_blocks_on_consent_then_proceeds_once_approved() {
 
 #[test]
 fn grant_capability_seeds_a_grant_with_no_live_pending_consent_request() {
-    // PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": proves the real seeding path a
+    // docs/998-roadmap.md "Phase 2: cloud providers": proves the real seeding path a
     // console uses at startup for a provider whose secret is already stored -- unlike
     // `resolve_consent`, this never needs a live `PendingConsent` to have fired first.
     let (monitor, token, runtime) = setup();

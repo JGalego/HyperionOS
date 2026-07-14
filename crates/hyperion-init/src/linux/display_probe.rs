@@ -1,4 +1,4 @@
-//! PRODUCTION_BOOT_PROMPT.md M7 stage 2: real DRM/KMS mode-set, the minimal bounded proof this
+//! docs/998-roadmap.md M7 stage 2: real DRM/KMS mode-set, the minimal bounded proof this
 //! roadmap's own text scoped stage 2 down to -- real pixels on a real display device, not a full
 //! compositor (no window management, no GPU acceleration, no input routing; docs/13's own
 //! structured UI trees still render to nothing here, exactly as before). Uses the kernel's

@@ -20,7 +20,7 @@ fn canonical_bytes(descriptor: &ModelDescriptor) -> Vec<u8> {
     bytes
 }
 
-/// A real Ed25519 signature over `descriptor`'s own canonical bytes (PRODUCTION_BOOT_PROMPT.md
+/// A real Ed25519 signature over `descriptor`'s own canonical bytes (docs/998-roadmap.md
 /// M9) — the value a caller populates [`ModelDescriptor::signature`] with before
 /// [`crate::runtime::LocalAiRuntime::register_model`], exactly as a real signer would produce a
 /// real artifact's real signature.

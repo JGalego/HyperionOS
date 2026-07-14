@@ -1,5 +1,5 @@
 //! Real, end-to-end coverage of `/mcp-server`, `/a2a-server`, `/standby`, `/mcp-call`, and
-//! `/a2a-call` (AUTONOMY_ROADMAP.md's Social pillar) -- spawns the actual compiled binary,
+//! `/a2a-call` (docs/998-roadmap.md's Social pillar) -- spawns the actual compiled binary,
 //! connects to its real background HTTP server over a real socket while the process is still
 //! running, and drives it with real JSON-RPC requests, exactly the same "spawn the real binary,
 //! don't mock it" discipline `tests/scenario_file.rs` already established. This behavior lives in

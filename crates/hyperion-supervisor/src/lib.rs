@@ -1,5 +1,5 @@
 //! Real Erlang/OTP-style process supervision for Hyperion's PID 1, per
-//! [PRODUCTION_BOOT_PROMPT.md](../../../PRODUCTION_BOOT_PROMPT.md) M5.
+//! [docs/998-roadmap.md](../../../docs/998-roadmap.md) M5.
 //!
 //! Reuses `hyperion-capability`'s mint/revoke algorithm (M2, unmodified) and
 //! `hyperion-recovery`'s already-real microreboot semantics as the model for what "restart" means

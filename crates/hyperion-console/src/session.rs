@@ -357,7 +357,7 @@ impl ConsoleSession {
         // A real, permissive domain-egress grant for this session's own root token, minted once
         // here rather than per-call: a real interactive assistant can't pre-enumerate every real
         // domain a user might ask about, so this uses the real "*" wildcard pattern
-        // (PRODUCTION_BOOT_PROMPT.md M10 -- see `hyperion_netstack::hub`'s own `domain_matches`
+        // (docs/998-roadmap.md M10 -- see `hyperion_netstack::hub`'s own `domain_matches`
         // doc comment for what this does and doesn't loosen: SSRF containment and the grant's
         // own rate limit still apply regardless of which domain pattern matched).
         let _ = netstack.grant_domain_egress(
@@ -412,7 +412,7 @@ impl ConsoleSession {
     /// panicking the whole console -- degrading, never crashing on a missing model, exactly the
     /// posture docs/02 §4 invariant 5 already asks this system to take everywhere else.
     ///
-    /// PRODUCTION_BOOT_PROMPT.md M9: the registered descriptor is really Ed25519-signed, not a
+    /// docs/998-roadmap.md M9: the registered descriptor is really Ed25519-signed, not a
     /// checksum stand-in -- by this session's own real device identity, a [`Keystore`] persisted
     /// under `data_dir` (the same real, dedicated partition M6 already gives the Knowledge Graph),
     /// so it's stable across reboots rather than a fresh, unverifiable identity every restart.
@@ -959,7 +959,7 @@ impl ConsoleSession {
     /// `--features real-http`, [`hyperion_netstack::MockFetchBackend`]/
     /// [`hyperion_netstack::MockExtractionBackend`] otherwise -- the exact same "swap the
     /// backend, not the call site" principle [`Self::build_ai_runtime`] already established for
-    /// M8 (PRODUCTION_BOOT_PROMPT.md M10). Off by default for the same reason: a real release
+    /// M8 (docs/998-roadmap.md M10). Off by default for the same reason: a real release
     /// image opts in explicitly; every host-side dev/test build of this console stays fast and
     /// network-free. Falls back to the mock backends (degrading, never panicking the whole
     /// console) if a `real-http` build's real client init fails for any reason.
@@ -1194,7 +1194,7 @@ impl ConsoleSession {
     /// via the same real `AgentRuntime::spawn`/`invoke` mechanism `hyperion-coordination` uses
     /// internally -- a real Agent invocation regardless of which path a given utterance takes.
     ///
-    /// PRODUCTION_BOOT_PROMPT.md M8: this default action is the "assistant" specialization's
+    /// docs/998-roadmap.md M8: this default action is the "assistant" specialization's
     /// real `assistant.respond` capability -- a real generated response from this session's own
     /// [`Self::build_ai_runtime`], not `web.search`'s canned stub string. This is *not*
     /// `hyperion-intent`'s own deferred "generative decomposition" (docs/05 §2's fallback that
@@ -1207,7 +1207,7 @@ impl ConsoleSession {
     /// and fabricating leaf tasks from output it can't actually produce reliably would be the
     /// "pretend" that crate's own doc comment already rules out.
     ///
-    /// PRODUCTION_BOOT_PROMPT.md M10: an utterance containing something that looks like a real
+    /// docs/998-roadmap.md M10: an utterance containing something that looks like a real
     /// URL routes to [`Self::run_web_research`] instead -- a real, minimal, deterministic
     /// utterance-shape check (not a general NLU pipeline), matching the same
     /// deterministic-keyword-matching convention `hyperion-intent`'s own `URGENCY_KEYWORDS`/
@@ -1221,7 +1221,7 @@ impl ConsoleSession {
             return self.run_web_research(root, url);
         }
 
-        // PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": which real Capability this
+        // docs/998-roadmap.md "Phase 2: cloud providers": which real Capability this
         // dispatches under depends on the currently-active backend -- the baseline
         // `"assistant.respond"` for local/mock/self-hosted-engine use (never gated), or a real
         // cloud provider's own requestable `"cloud.<provider>"` string, gated behind a real
@@ -1289,7 +1289,7 @@ impl ConsoleSession {
         )
     }
 
-    /// PRODUCTION_BOOT_PROMPT.md M10's real deliverable: a URL-shaped undecomposed goal drives
+    /// docs/998-roadmap.md M10's real deliverable: a URL-shaped undecomposed goal drives
     /// the "research" specialization's real `web.research` capability -- a real fetch over the
     /// real network, a real (non-model) HTML extraction, and a real merge into this session's
     /// own real Knowledge Graph via [`Self::build_netstack`], not a stub. Reuses the same real
@@ -1640,7 +1640,7 @@ impl ConsoleSession {
     }
 }
 
-/// A minimal, real, deterministic utterance-shape recognizer (PRODUCTION_BOOT_PROMPT.md M10) --
+/// A minimal, real, deterministic utterance-shape recognizer (docs/998-roadmap.md M10) --
 /// not a general NLU pipeline, just "does this utterance contain something that looks like a
 /// URL," matching the same deterministic-keyword-matching convention `hyperion-intent`'s own
 /// `URGENCY_KEYWORDS`/`CANCEL_KEYWORDS` already use. A trailing punctuation mark immediately

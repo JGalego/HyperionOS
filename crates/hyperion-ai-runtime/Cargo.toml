@@ -18,7 +18,7 @@ hf-hub = { version = "1.0", optional = true, features = ["blocking"] }
 # (see its Cargo.toml) for its own tokenizers dependency: the full default feature set also pulls
 # in `esaxx_fast` (a Unigram-tokenizer speed optimization, not a correctness requirement -- a pure
 # Rust fallback exists), which needs a real C++ toolchain to build. Real musl cross-compilation
-# (PRODUCTION_BOOT_PROMPT.md's boot image) has no such toolchain available; matching candle-core's
+# (docs/998-roadmap.md's boot image) has no such toolchain available; matching candle-core's
 # own restraint here avoids a C++ dependency this crate's own real caller never needed.
 tokenizers = { version = "0.23", optional = true, default-features = false, features = ["onig"] }
 # Not in the root workspace [workspace.dependencies] table (unlike serde/serde_json below), so
@@ -41,7 +41,7 @@ proptest = { workspace = true }
 tempfile = { workspace = true }
 
 [features]
-# Real, feature-gated on-device inference (PRODUCTION_BOOT_PROMPT.md M8) -- see
+# Real, feature-gated on-device inference (docs/998-roadmap.md M8) -- see
 # src/candle_backend.rs's own doc comment for why this stays off the default build: Candle's
 # real dependency chain is heavy, and MockBackend remains the zero-network, zero-extra-dependency
 # default every existing test already relies on.
@@ -53,18 +53,18 @@ candle = [
     "dep:hf-hub",
     "dep:tokenizers",
 ]
-# Real, feature-gated HTTP inference against any OpenAI-compatible server (PRODUCTION_BOOT_PROMPT.md
+# Real, feature-gated HTTP inference against any OpenAI-compatible server (docs/998-roadmap.md
 # "Phase 1: local-engine backends") -- Ollama, vLLM, and a self-hosted LiteLLM proxy all speak (or
 # can speak) the same `/v1/chat/completions`+`/v1/models` shape, so one backend covers all three
 # (and OpenAI itself, later) by `base_url`/`model` alone. Off by default for the same reason
 # `candle` is: every host-side dev/test build stays fast and network-free on MockBackend.
 openai-compat = ["dep:reqwest", "dep:serde", "dep:serde_json"]
 # Real, feature-gated HTTP inference against Anthropic's own Messages API
-# (PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers") -- a genuinely different, non-OpenAI-
+# (docs/998-roadmap.md "Phase 2: cloud providers") -- a genuinely different, non-OpenAI-
 # shaped wire protocol, so unlike `openai-compat` this needs its own dedicated backend rather than
 # a preset. Reuses the same optional reqwest/serde/serde_json deps `openai-compat` already
 # declares; off by default for the same reason every other real backend here is.
 anthropic = ["dep:reqwest", "dep:serde", "dep:serde_json"]
-# As `anthropic`, for Google's real Gemini API (PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud
+# As `anthropic`, for Google's real Gemini API (docs/998-roadmap.md "Phase 2: cloud
 # providers") -- also its own genuinely different wire protocol.
 gemini = ["dep:reqwest", "dep:serde", "dep:serde_json"]

@@ -1,5 +1,5 @@
 //! A real, feature-gated [`InferenceBackend`] speaking Anthropic's own real Messages API --
-//! PRODUCTION_BOOT_PROMPT.md's "Phase 2: cloud providers." Unlike [`crate::openai_compat_backend`]
+//! docs/998-roadmap.md's "Phase 2: cloud providers." Unlike [`crate::openai_compat_backend`]
 //! (which covers Ollama/vLLM/LiteLLM/OpenAI itself via one OpenAI-compatible shape), Anthropic's
 //! wire protocol is genuinely different -- its own `x-api-key`/`anthropic-version` headers, its
 //! own request/response JSON shape -- so it needs its own dedicated backend.

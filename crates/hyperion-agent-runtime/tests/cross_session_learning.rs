@@ -1,4 +1,4 @@
-//! AUTONOMY_ROADMAP.md's Self-Sustaining pillar's "cross-session learning" slice: a real
+//! docs/998-roadmap.md's Self-Sustaining pillar's "cross-session learning" slice: a real
 //! suspend/auto-resume/backoff-decay history, once wired to a real `hyperion_memory::MemoryEngine`,
 //! survives a real process restart -- not just this one running `AgentRuntime`. Proven here by
 //! opening the *same real on-disk Knowledge Graph path* twice, with a fresh `MemoryEngine` and a

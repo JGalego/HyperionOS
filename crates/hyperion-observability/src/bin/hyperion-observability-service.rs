@@ -1,5 +1,5 @@
 //! A minimal, real process entry point for `hyperion-observability`, proving
-//! [PRODUCTION_BOOT_PROMPT.md](../../../../PRODUCTION_BOOT_PROMPT.md) M5's supervision-tree
+//! [docs/998-roadmap.md](../../../../docs/998-roadmap.md) M5's supervision-tree
 //! mechanism (`hyperion-supervisor`) against real, unmodified crate logic -- per the roadmap's own
 //! reuse map, this crate needs nothing structural changed to become a real supervised service, only
 //! a real entry point that constructs its existing API and does something with it.

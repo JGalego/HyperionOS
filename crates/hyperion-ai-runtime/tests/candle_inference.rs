@@ -1,4 +1,4 @@
-//! PRODUCTION_BOOT_PROMPT.md M8's real deliverable, proven for real: a real Candle backend runs a
+//! docs/998-roadmap.md M8's real deliverable, proven for real: a real Candle backend runs a
 //! real forward pass through a real, downloaded model's real weights, producing real generated
 //! text -- not `MockBackend`'s deterministic echo.
 //!

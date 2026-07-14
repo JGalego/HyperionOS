@@ -1,5 +1,5 @@
 //! A real, feature-gated [`InferenceBackend`] using [Candle](https://github.com/huggingface/candle)
-//! (Rust-native ML, the roadmap's own named choice) -- PRODUCTION_BOOT_PROMPT.md M8.
+//! (Rust-native ML, the roadmap's own named choice) -- docs/998-roadmap.md M8.
 //!
 //! Loads Andrej Karpathy's real "TinyStories" Llama-architecture checkpoint
 //! (<https://github.com/karpathy/llama2.c>) -- specifically `stories15M.bin`, a real 15-million-

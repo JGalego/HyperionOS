@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI-able boot gate for Hyperion's second reference platform (PRODUCTION_BOOT_PROMPT.md M11):
+# CI-able boot gate for Hyperion's second reference platform (docs/998-roadmap.md M11):
 # boots the aarch64 image headless under `qemu-system-aarch64 -M virt`, waits for the same known
 # banner string boot-test.sh looks for on the serial console, and exits 0/1 accordingly. Mirrors
 # boot-test.sh's structure; the real differences are all in the qemu invocation itself -- direct

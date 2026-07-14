@@ -19,14 +19,14 @@ pub fn required_capabilities_for(predicate: &str) -> Vec<String> {
 /// The small, first-party specialization roster this phase needs — docs/11
 /// §4's built-in table, narrowed to the specializations whose baseline
 /// Capabilities actually match [`required_capabilities_for`]'s output, plus
-/// `"assistant"` (PRODUCTION_BOOT_PROMPT.md M8): the one specialization
+/// `"assistant"` (docs/998-roadmap.md M8): the one specialization
 /// whose baseline Capability (`assistant.respond`,
 /// `hyperion-agent-runtime`'s own real-inference dispatch) is never a
 /// target of [`required_capabilities_for`] — no HTN leaf predicate maps to
 /// it — because it exists for `hyperion-console`'s *undecomposed*-goal
 /// fallback (no template, no leaves, nothing for that function to be
 /// asked about), not for a template's own leaves. `"research"`'s own baseline
-/// capabilities gained `web.research` the same way (PRODUCTION_BOOT_PROMPT.md M10) — also never
+/// capabilities gained `web.research` the same way (docs/998-roadmap.md M10) — also never
 /// a target of [`required_capabilities_for`], for the same reason: it's `hyperion-console`'s
 /// *other* undecomposed-goal fallback (a URL-shaped utterance), not a template leaf. Purely
 /// additive: `market_research`'s own existing real 4-task-decomposition demo (M7) still only
@@ -48,7 +48,7 @@ pub fn default_manifests() -> Vec<AgentManifest> {
         AgentManifest {
             specialization: "assistant".to_string(),
             baseline_capabilities: vec!["assistant.respond".to_string()],
-            // PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": requestable, never baseline
+            // docs/998-roadmap.md "Phase 2: cloud providers": requestable, never baseline
             // -- these four route to the exact same dispatch `assistant.respond` does
             // (`hyperion_agent_runtime::runtime::AgentRuntime::dispatch_assistant_respond`), but
             // only when the console's currently-active backend is the matching real cloud

@@ -1,4 +1,4 @@
-# aarch64-unknown-linux-musl (PRODUCTION_BOOT_PROMPT.md M11) has no matching system cross-linker
+# aarch64-unknown-linux-musl (docs/998-roadmap.md M11) has no matching system cross-linker
 # in this workspace's build environments -- rustc's default strategy of shelling out to the host's
 # own `cc` fails here (a native x86_64 `ld` can't link aarch64 ELF objects: "Relocations in generic
 # ELF (EM: 183)"). Stable rustc's self-contained-lld linking path (`-C linker-flavor=gnu-lld-cc`)

@@ -137,7 +137,7 @@ pub enum ReleaseDecision {
     Blocked,
 }
 
-/// PRODUCTION_BOOT_PROMPT.md M13: the new hardware/boot-surface criteria a release must also
+/// docs/998-roadmap.md M13: the new hardware/boot-surface criteria a release must also
 /// satisfy, on top of docs/35's suite reports and docs/36's benchmark regression check -- a
 /// caller supplies these as already-computed facts from real boot/build tooling
 /// (`boot/scripts/build-image*.sh`'s own reproducibility check, `boot/scripts/boot-test*.sh`'s
@@ -200,7 +200,7 @@ pub struct ReleaseGateReport {
     pub decision: ReleaseDecision,
     pub blocking_suites: Vec<SuiteKind>,
     pub benchmark_outcome: Option<GateOutcome>,
-    /// PRODUCTION_BOOT_PROMPT.md M13: `false` here blocks release even if every suite and the
+    /// docs/998-roadmap.md M13: `false` here blocks release even if every suite and the
     /// benchmark gate are otherwise clean -- see [`HardwareReleaseCriteria::is_met`].
     pub hardware_criteria_met: bool,
 }

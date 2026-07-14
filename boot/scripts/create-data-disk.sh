@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PRODUCTION_BOOT_PROMPT.md M6: creates a real, dedicated, pre-formatted ext4 data disk image --
+# docs/998-roadmap.md M6: creates a real, dedicated, pre-formatted ext4 data disk image --
 # a real block device from the guest's point of view (a second virtio-blk drive), distinct from
 # the boot disk, for hyperion-storage's WAL to live on instead of a host tempfile. Pre-formatted
 # at build time by this script (which runs on the host, where mkfs.ext4 is available) rather than

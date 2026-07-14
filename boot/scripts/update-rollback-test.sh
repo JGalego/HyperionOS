@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PRODUCTION_BOOT_PROMPT.md M13: docs/41 Phase 10's literal exit criterion, proven for real --
+# docs/998-roadmap.md M13: docs/41 Phase 10's literal exit criterion, proven for real --
 # "a staged update applied to a real running booted system and rolled back without data loss."
 # Boots the real aarch64 image (direct kernel load, so the trigger flag can go straight on QEMU's
 # own -append cmdline -- see this test's own comment on why the x86_64 platform, which boots via a

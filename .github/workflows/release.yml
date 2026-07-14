@@ -1,6 +1,6 @@
 name: Release
 
-# PRODUCTION_BOOT_PROMPT.md M13: builds both reference-platform images from scratch, boot-tests
+# docs/998-roadmap.md M13: builds both reference-platform images from scratch, boot-tests
 # each the same way ci.yml does on every push, signs both with this project's real Ed25519
 # release-signing identity (a real device key, generated once with
 # hyperion-release-gate's gen-signing-key bin and stored as the HYPERION_RELEASE_SIGNING_KEY

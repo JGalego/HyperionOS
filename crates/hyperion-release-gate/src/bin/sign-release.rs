@@ -1,4 +1,4 @@
-//! PRODUCTION_BOOT_PROMPT.md M13: signs a real release image with this device's real Ed25519
+//! docs/998-roadmap.md M13: signs a real release image with this device's real Ed25519
 //! keystore (M9's `hyperion_crypto::Keystore`, the same real device identity every other signed
 //! artifact in this workspace -- model descriptors, plugin manifests, update manifests -- already
 //! verifies against) and writes a real, versioned manifest alongside it: a real BLAKE3 hash of the

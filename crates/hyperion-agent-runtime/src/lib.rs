@@ -31,7 +31,7 @@
 //! (`web.search`, `document.draft`) rather than a real Plugin Framework
 //! registry — see [`stubs`] and this crate's deferred-scope list below.
 //!
-//! PRODUCTION_BOOT_PROMPT.md M8 adds exactly one more, real, Capability alongside those two
+//! docs/998-roadmap.md M8 adds exactly one more, real, Capability alongside those two
 //! stubs: `assistant.respond` dispatches through a real, caller-supplied
 //! [`hyperion_ai_runtime::LocalAiRuntime`] (see [`AgentRuntime::new`]) rather than a stub —
 //! real inference behind the exact same Broker/quota/circuit-breaker gate every other
@@ -43,7 +43,7 @@
 //! reaches). See [`runtime::AgentRuntime::dispatch_assistant_respond`]'s own doc comment for
 //! why this is a new Capability, not a third case inside an existing stub.
 //!
-//! PRODUCTION_BOOT_PROMPT.md M10 adds one more real Capability the same way: `web.research`
+//! docs/998-roadmap.md M10 adds one more real Capability the same way: `web.research`
 //! dispatches through a real, caller-supplied [`hyperion_netstack::NetstackHub`] (see
 //! [`AgentRuntime::new_with_netstack`]) instead of the stub catch-all — real HTTP/TLS/DNS fetch,
 //! real HTML extraction, real merge into the real Knowledge Graph. Unlike `assistant.respond`,
@@ -53,7 +53,7 @@
 //! real, separate wiring gap (`hyperion-netstack` had zero real callers anywhere in this
 //! workspace before this milestone) rather than just a backend swap.
 //!
-//! PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers" adds more real Capabilities the
+//! docs/998-roadmap.md "Phase 2: cloud providers" adds more real Capabilities the
 //! same way — `cloud.openai`/`cloud.anthropic`/`cloud.gemini`/`cloud.groq` all dispatch through
 //! [`runtime::AgentRuntime::dispatch_assistant_respond`], the exact same function
 //! `assistant.respond` already uses (dispatch itself is backend-agnostic; only *which* real
@@ -120,7 +120,7 @@
 //!   multi-step reasoning *trace* to serialize: `assistant.respond` (M8, above) is one real
 //!   inference call in, one real generated string out, not an Agent that reasons over several
 //!   of its own turns and would need that turn history checkpointed.
-//! - ~~**User consent UI**~~ — now real for the one case that needed it (PRODUCTION_BOOT_PROMPT.md
+//! - ~~**User consent UI**~~ — now real for the one case that needed it (docs/998-roadmap.md
 //!   "Phase 2: cloud providers"): `hyperion-console` drives a real, synchronous yes/no prompt on
 //!   a live `PendingConsent`, then calls [`AgentRuntime::resolve_consent`] with the real answer.
 //!   A full [13 — Dynamic UI Runtime](../13-dynamic-ui-runtime.md)-style graphical consent

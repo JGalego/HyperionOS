@@ -1,4 +1,4 @@
-//! PRODUCTION_BOOT_PROMPT.md M13 release pipeline: generates a NEW real Ed25519 release-signing
+//! docs/998-roadmap.md M13 release pipeline: generates a NEW real Ed25519 release-signing
 //! keystore at the given path and prints its verifying key in hex -- the value to publish
 //! alongside releases (e.g. in the README) so a download can be checked against a known-good key
 //! independent of anything recorded inside a downloaded manifest itself. Refuses to overwrite an

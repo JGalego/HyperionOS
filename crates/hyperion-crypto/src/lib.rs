@@ -1,4 +1,4 @@
-//! Real cryptographic primitives (PRODUCTION_BOOT_PROMPT.md M9) -- Ed25519 signing, BLAKE3
+//! Real cryptographic primitives (docs/998-roadmap.md M9) -- Ed25519 signing, BLAKE3
 //! content hashing, and a minimal real software keystore.
 //!
 //! Every crate in this workspace that previously stood in for "a real signature" or "real

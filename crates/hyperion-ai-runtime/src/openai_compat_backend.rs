@@ -1,5 +1,5 @@
 //! A real, feature-gated [`InferenceBackend`] speaking the OpenAI-compatible
-//! `/v1/chat/completions` + `/v1/models` REST shape -- PRODUCTION_BOOT_PROMPT.md's "Phase 1:
+//! `/v1/chat/completions` + `/v1/models` REST shape -- docs/998-roadmap.md's "Phase 1:
 //! local-engine backends."
 //!
 //! Ollama, vLLM, and a self-hosted LiteLLM proxy all speak (or can speak) this exact shape, so

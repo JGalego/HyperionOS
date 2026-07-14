@@ -1,4 +1,4 @@
-//! AUTONOMY_ROADMAP.md's Self-Sustaining pillar: a `Suspended` `AgentInstance` has a real path
+//! docs/998-roadmap.md's Self-Sustaining pillar: a `Suspended` `AgentInstance` has a real path
 //! back -- it auto-resumes after a real, adaptive backoff window instead of staying stuck until
 //! something external intervenes, and a real repeat-offense history makes that backoff longer
 //! next time, decaying back down after a real streak of successes. Real, short wall-clock waits

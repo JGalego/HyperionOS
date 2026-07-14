@@ -28,7 +28,7 @@ fn canonical_bytes(manifest_without_signature: &UpdateManifest) -> Vec<u8> {
 }
 
 /// A real Ed25519 signature over `manifest_without_signature`'s own canonical bytes
-/// (PRODUCTION_BOOT_PROMPT.md M9) — the value a caller populates [`UpdateManifest::signature`]
+/// (docs/998-roadmap.md M9) — the value a caller populates [`UpdateManifest::signature`]
 /// with before [`UpdateOrchestrator::apply_update`]. See [`hyperion_crypto`]'s own doc comment on
 /// why this workspace verifies against one real, trusted device identity rather than a
 /// multi-publisher trust store docs/32's own "verified per 15" framing would otherwise imply.

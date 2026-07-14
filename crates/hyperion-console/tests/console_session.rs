@@ -235,7 +235,7 @@ fn a_url_shaped_utterance_routes_to_a_real_web_research_dispatch_not_assistant_r
     let joined = lines.join("\n");
 
     assert!(!lines.is_empty());
-    // This session's own internal MockFetchBackend (PRODUCTION_BOOT_PROMPT.md M10 -- see
+    // This session's own internal MockFetchBackend (docs/998-roadmap.md M10 -- see
     // `ConsoleSession::build_netstack`) has no fixture registered for this URL (it's fully
     // encapsulated inside the session, not reachable from this test), so the real
     // `NetstackHub::web_research` call really runs, really misses its cache and its mock fetch
@@ -566,7 +566,7 @@ fn a_custom_engine_backend_switch_reaches_a_real_local_server_end_to_end() {
     );
 }
 
-/// PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": the whole real cloud-consent lifecycle,
+/// docs/998-roadmap.md "Phase 2: cloud providers": the whole real cloud-consent lifecycle,
 /// against a real local fixture server (`HYPERION_OPENAI_BASE_URL` redirects `OpenAiCompatBackend`
 /// away from the real `api.openai.com` -- see `ConsoleSession::try_connect_openai`'s own doc
 /// comment: a real feature, Azure OpenAI/a corporate proxy, not just a testing seam). All three

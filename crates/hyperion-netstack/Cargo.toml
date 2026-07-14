@@ -24,7 +24,7 @@ hyperion-storage = { workspace = true }
 tempfile = { workspace = true }
 
 [features]
-# Real, feature-gated HTTP/TLS/DNS (PRODUCTION_BOOT_PROMPT.md M10) -- off by default for the same
+# Real, feature-gated HTTP/TLS/DNS (docs/998-roadmap.md M10) -- off by default for the same
 # reason hyperion-ai-runtime's own `candle` feature is: every host-side dev/test build of this
 # crate stays fast and network-free on MockFetchBackend/MockExtractionBackend; a real boot/release
 # build opts in explicitly. `rustls-tls-webpki-roots` (a bundled Mozilla root store compiled into

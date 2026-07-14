@@ -275,7 +275,7 @@ impl GraphExplorer {
     /// `/graph` (plain text) / `/graph dot` (Graphviz) -- the *whole* recorded graph at once,
     /// unlike `/recall`/`/related`/`/result` (each a targeted question about one thing). Built for
     /// checking how a session's knowledge graph actually changed -- run once before and once after
-    /// a scenario (see USAGE_SCENARIOS.md) and diff the two outputs. That comparison only works
+    /// a scenario (see docs/999-usage-scenarios.md) and diff the two outputs. That comparison only works
     /// because [`KnowledgeGraph::dump`] sorts both nodes and edges by id: two dumps of an unchanged
     /// graph are byte-for-byte identical, so every line a diff shows is a real change, never
     /// ordering noise. Deliberately shows raw ids and absolute (epoch-second) timestamps rather

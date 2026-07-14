@@ -1,5 +1,5 @@
 //! Real guest network interface bring-up at boot -- named as a deferred gap in
-//! PRODUCTION_BOOT_PROMPT.md M10 ("the guest's network interface is never brought up at real
+//! docs/998-roadmap.md M10 ("the guest's network interface is never brought up at real
 //! boot time"), closed here. The kernel itself completes a real DHCP handshake before any
 //! userspace process (including this one) ever runs, driven by the `ip=dhcp` kernel cmdline
 //! parameter and `CONFIG_IP_PNP`/`CONFIG_IP_PNP_DHCP` -- no new userspace DHCP client package

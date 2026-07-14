@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Provisions an aarch64-linux-gnu gcc/binutils cross-toolchain without root.
 #
-# PRODUCTION_BOOT_PROMPT.md M11 (second reference platform, aarch64) needs this purely as a
+# docs/998-roadmap.md M11 (second reference platform, aarch64) needs this purely as a
 # *linker driver*: this workspace cross-compiles hyperion-init/hyperion-console for
 # aarch64-unknown-linux-musl, and the host's own native `cc` can't link aarch64 ELF objects
 # ("Relocations in generic ELF (EM: 183)"). None of the linked object files need glibc itself --

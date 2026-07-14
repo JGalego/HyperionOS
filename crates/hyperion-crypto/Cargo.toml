@@ -9,7 +9,7 @@ repository.workspace = true
 # "pure" disables blake3's C/assembly SIMD backends in favor of pure Rust: hashing here is
 # audit-log chaining and small-artifact (model/plugin/update) signatures, never a bulk-throughput
 # hot path, so the perf cost is immaterial -- and it means no C cross-compiler toolchain is a
-# build-or-boot dependency for any target this workspace cross-compiles for (PRODUCTION_BOOT_PROMPT.md M11
+# build-or-boot dependency for any target this workspace cross-compiles for (docs/998-roadmap.md M11
 # hit this directly: aarch64-unknown-linux-musl has no such toolchain in this sandbox).
 blake3 = { version = "1", features = ["serde", "pure"] }
 # Real ChaCha20-Poly1305 AEAD for src/secret_store.rs -- deliberately the pure-Rust RustCrypto

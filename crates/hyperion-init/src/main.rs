@@ -1,6 +1,6 @@
 //! Hyperion's PID 1 on the Linux-hosted MVP.
 //!
-//! Per [PRODUCTION_BOOT_PROMPT.md](../../../PRODUCTION_BOOT_PROMPT.md) M1, this replaces
+//! Per [docs/998-roadmap.md](../../../docs/998-roadmap.md) M1, this replaces
 //! Buildroot's stock BusyBox init to prove the custom-init boot path end to end: mount what's
 //! needed, print a banner, bring up the real supervision tree. M5 replaced the original M1
 //! placeholder (a single hardcoded supervised shell loop) with [`hyperion_supervisor::Supervisor`]:

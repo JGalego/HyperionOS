@@ -1,5 +1,5 @@
 //! Re-runs `hyperion-scheduler/tests/synthetic_workload.rs`'s fairness claim against real
-//! cgroups v2 on real Linux, per PRODUCTION_BOOT_PROMPT.md M4's exit criteria: "its
+//! cgroups v2 on real Linux, per docs/998-roadmap.md M4's exit criteria: "its
 //! fairness/admission assertions hold when measured from `/sys/fs/cgroup` accounting, not just
 //! from in-memory ledger state." Same weights (`InteractiveAgent` = 2.0, `BackgroundAgent` =
 //! 1.0) as that test, same claim (the higher-weight class wins more capacity) -- but here

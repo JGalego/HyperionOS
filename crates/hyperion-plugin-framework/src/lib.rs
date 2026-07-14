@@ -47,7 +47,7 @@
 //!   separate `Contribution::Model` variant would duplicate that shape,
 //!   not close a real gap.
 //! - ~~**Real publisher-key signature verification.**~~ — now real
-//!   (PRODUCTION_BOOT_PROMPT.md M9): [`registry::PluginRegistry::install`] checks a real Ed25519
+//!   (docs/998-roadmap.md M9): [`registry::PluginRegistry::install`] checks a real Ed25519
 //!   signature (via [`hyperion_crypto`]) over [`review::sign`]'s canonical bytes, not a
 //!   non-cryptographic checksum a forger could reproduce. Still deferred: docs/24's own
 //!   "verify against publisher's registered key" implies a multi-publisher trust store; no such

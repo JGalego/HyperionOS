@@ -124,7 +124,7 @@ pub fn apply_landlock(
 /// about a `SIGSEGV` points back at seccomp. Both `open` and `openat` are listed for the same
 /// reason: this musl target's libc reaches for plain `open` in places glibc would use `openat`,
 /// so allowlisting only the modern syscall silently breaks musl binaries specifically. `getpid` was
-/// the next gap found the same way (PRODUCTION_BOOT_PROMPT.md M5, this time via direct evidence
+/// the next gap found the same way (docs/998-roadmap.md M5, this time via direct evidence
 /// rather than `strace`): a sandboxed process calling `std::process::id()` got back `4294967295`
 /// (`u32::MAX`) instead of its real pid -- musl's `getpid()` wrapper populates its per-process
 /// cache by issuing the real syscall on first call (a fresh `exec` wipes any earlier cache), and
@@ -135,7 +135,7 @@ pub fn apply_landlock(
 /// `hyperion-supervisor`'s own docs) -- unlike a socket, a process's own pid isn't a resource
 /// access `RightsMask` governs at all.
 ///
-/// PRODUCTION_BOOT_PROMPT.md M11: `arch_prctl`, plain `open`, plain `access`, and plain `poll`
+/// docs/998-roadmap.md M11: `arch_prctl`, plain `open`, plain `access`, and plain `poll`
 /// are x86_64-only entries, `#[cfg]`'d out on aarch64 below rather than merely unused there --
 /// aarch64's syscall table is the newer, reduced "asm-generic" set that never had these legacy
 /// dual forms to begin with (only `arch_prctl`'s job -- setting up the userspace thread pointer --

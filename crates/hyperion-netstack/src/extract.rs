@@ -29,7 +29,7 @@ impl ExtractionBackend for MockExtractionBackend {
     }
 }
 
-/// A real (PRODUCTION_BOOT_PROMPT.md M10), deterministic, non-model extraction from a real
+/// A real (docs/998-roadmap.md M10), deterministic, non-model extraction from a real
 /// fetched HTML document's own tags -- no `schema.org`/JSON-LD/OpenGraph microformat parsing (see
 /// this crate's own doc comment on that separately-named, still-deferred gap), and no ML model
 /// runs. This crate's own Mock backend's doc comment already frames the mock as reaching "no

@@ -1,4 +1,4 @@
-//! Real, end-to-end coverage of `hyperion-console <SCENARIO>` (USAGE_SCENARIOS.md's "how to run
+//! Real, end-to-end coverage of `hyperion-console <SCENARIO>` (docs/999-usage-scenarios.md's "how to run
 //! a scenario" section) -- spawns the actual compiled binary via `CARGO_BIN_EXE_hyperion-console`
 //! (set automatically by cargo for an integration test of a crate that also builds that binary),
 //! since this behavior lives in `main.rs` itself, deliberately kept out of the `ConsoleSession`

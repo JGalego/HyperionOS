@@ -46,7 +46,7 @@ else
     return 1 2>/dev/null || exit 1
 fi
 
-# PRODUCTION_BOOT_PROMPT.md M11's second reference platform: qemu-system-aarch64 needs no
+# docs/998-roadmap.md M11's second reference platform: qemu-system-aarch64 needs no
 # firmware at all (board/hyperion-aarch64 boots via direct kernel load -- see boot-test-aarch64.sh),
 # so this half just needs the binary + its shared libs on the search path.
 if command -v qemu-system-aarch64 >/dev/null 2>&1; then

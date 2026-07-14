@@ -10,8 +10,8 @@ hyperion-capability = { workspace = true }
 hyperion-crypto = { workspace = true }
 # Real, feature-free (not gated -- unlike hyperion-console's optional backends, sandboxed
 # execution is this crate's own core real/deferred split, not an opt-in extra) sandboxed execution
-# of an installed NativeBinary implementation (PRODUCTION_BOOT_PROMPT.md-era gap, closed for real
-# by AUTONOMY_ROADMAP.md's Slice 1) -- see `registry::invoke_native_binary`. Its own `spawn`/
+# of an installed NativeBinary implementation (docs/998-roadmap.md-era gap, closed for real
+# by docs/998-roadmap.md's Slice 1) -- see `registry::invoke_native_binary`. Its own `spawn`/
 # `SpawnedBoundary` are `#[cfg(target_os = "linux")]`-internal to that crate; this crate's own
 # call sites mirror the same gating rather than assuming Linux everywhere.
 hyperion-trust-boundary = { workspace = true }

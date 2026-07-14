@@ -39,7 +39,7 @@ fn canonical_bytes(
 }
 
 /// A real Ed25519 signature over an about-to-be-registered device's own
-/// manifest fields (PRODUCTION_BOOT_PROMPT.md M9) — the value a caller
+/// manifest fields (docs/998-roadmap.md M9) — the value a caller
 /// passes to [`crate::DeviceRegistry::register`].
 #[allow(clippy::too_many_arguments)]
 pub fn sign(

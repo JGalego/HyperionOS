@@ -1,4 +1,4 @@
-//! PRODUCTION_BOOT_PROMPT.md M13: verifies a real release image against its own real
+//! docs/998-roadmap.md M13: verifies a real release image against its own real
 //! `sign-release`-produced manifest -- recomputes the image's real BLAKE3 hash directly from its
 //! bytes (never trusts the manifest's own recorded hash blindly) and checks the real Ed25519
 //! signature against the manifest's own recorded verifying key. Exit code 0 means both checks

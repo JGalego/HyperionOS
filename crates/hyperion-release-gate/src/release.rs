@@ -19,7 +19,7 @@ fn require(
 /// docs/35 §1's `ReleaseGate.evaluate(build) -> ReleaseDecision`: a build
 /// passes only if every sub-suite is non-blocking (per
 /// [`SuiteReport::is_blocking`]), the benchmark regression check
-/// (docs/36) did not return [`GateOutcome::Blocked`], and (PRODUCTION_BOOT_PROMPT.md M13)
+/// (docs/36) did not return [`GateOutcome::Blocked`], and (docs/998-roadmap.md M13)
 /// `hardware`'s own criteria are met — the one consolidated gate/report spanning both docs'
 /// suites plus this roadmap's own real hardware/boot surface, matching each doc's own "Release
 /// candidate" convergence point in its architecture diagram.

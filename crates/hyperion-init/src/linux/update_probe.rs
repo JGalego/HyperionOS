@@ -1,4 +1,4 @@
-//! PRODUCTION_BOOT_PROMPT.md M13: docs/41 Phase 10's literal exit criterion -- "a staged update
+//! docs/998-roadmap.md M13: docs/41 Phase 10's literal exit criterion -- "a staged update
 //! applied to a real running booted system and rolled back without data loss" -- finally tested
 //! against a real system (this process, inside the real booted QEMU guest) rather than
 //! `hyperion-update`'s own existing in-process test harness (`tests/staged_rollout.rs`), which

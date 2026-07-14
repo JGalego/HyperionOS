@@ -2,7 +2,7 @@
 
 <img src="assets/banner.svg" alt="Hyperion -- the first intent-native operating system." width="100%" />
 
-[![CI](https://github.com/JGalego/HyperionOS/actions/workflows/ci.yml/badge.svg)](https://github.com/JGalego/HyperionOS/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/JGalego/HyperionOS?style=flat-square&color=d9a54a&label=release)](https://github.com/JGalego/HyperionOS/releases) [![License](https://img.shields.io/github/license/JGalego/HyperionOS?style=flat-square&color=8c6220)](LICENSE) [![Platforms](https://img.shields.io/badge/platforms-x86__64%20%7C%20aarch64-e6bb6e?style=flat-square)](PRODUCTION_BOOT_PROMPT.md)
+[![CI](https://github.com/JGalego/HyperionOS/actions/workflows/ci.yml/badge.svg)](https://github.com/JGalego/HyperionOS/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/JGalego/HyperionOS?style=flat-square&color=d9a54a&label=release)](https://github.com/JGalego/HyperionOS/releases) [![License](https://img.shields.io/github/license/JGalego/HyperionOS?style=flat-square&color=8c6220)](LICENSE) [![Platforms](https://img.shields.io/badge/platforms-x86__64%20%7C%20aarch64-e6bb6e?style=flat-square)](docs/998-roadmap.md)
 
 </div>
 
@@ -10,7 +10,7 @@ Hyperion is an intent-native operating system: humans express goals, and the sys
 
 Want the thinking behind it? Read [`CLAUDE.md`](CLAUDE.md).
 
-Want to know exactly what's built and what's next? See [`PRODUCTION_BOOT_PROMPT.md`](PRODUCTION_BOOT_PROMPT.md).
+Want to know exactly what's built and what's next? See [the Roadmap](docs/998-roadmap.md).
 
 ## 📑 Contents
 
@@ -138,7 +138,7 @@ This recomputes the hash directly from the image's own bytes (it never trusts th
 
 ## 🔨 Build it yourself
 
-See [PRODUCTION_BOOT_PROMPT.md](PRODUCTION_BOOT_PROMPT.md) and the scripts under [boot/scripts/](boot/scripts/) (`build-image.sh` for x86_64, `build-image-aarch64.sh` for aarch64) if you'd rather build an image from source than download one.
+See [the Roadmap](docs/998-roadmap.md) and the scripts under [boot/scripts/](boot/scripts/) (`build-image.sh` for x86_64, `build-image-aarch64.sh` for aarch64) if you'd rather build an image from source than download one.
 
 ## 💬 Try it locally
 
@@ -164,7 +164,7 @@ status: branding: Done -- [mock model 1] echo: Draft a concise, practical brandi
 status: legal_formation: Done -- [mock model 1] echo: Draft a concise, practical legal_formation -- launch my startup. (see "/result legal_formation" for the full text)
 ```
 
-See [USAGE_SCENARIOS.md](USAGE_SCENARIOS.md) for how scenarios work, the full set under [`scenarios/`](scenarios/), and how to point one at a real backend (Candle, a local engine, or a cloud provider).
+See [Usage Scenarios](docs/999-usage-scenarios.md) for how scenarios work, the full set under [`scenarios/`](scenarios/), and how to point one at a real backend (Candle, a local engine, or a cloud provider).
 
 ### Inspecting the knowledge graph
 
@@ -203,7 +203,7 @@ From a second terminal:
 curl -s http://127.0.0.1:8765/ -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"hyperion.ask","arguments":{"prompt":"my name is Alex"}}}'
 ```
 
-`/mcp-call <host> <port> <tool> <json args>` and `/a2a-call <host> <port> <message>` are the outbound half - a real Hyperion instance calling out to another one. See [USAGE_SCENARIOS.md](USAGE_SCENARIOS.md#12-social--two-real-hyperion-processes-talk-over-real-mcp-and-a2a) for a full, live-verified transcript, and [AUTONOMY_ROADMAP.md](AUTONOMY_ROADMAP.md) for what's real today across Hyperion's resourceful/social/self-sustaining pillars versus what's still deliberately deferred.
+`/mcp-call <host> <port> <tool> <json args>` and `/a2a-call <host> <port> <message>` are the outbound half - a real Hyperion instance calling out to another one. See [Usage Scenarios](docs/999-usage-scenarios.md#12-social--two-real-hyperion-processes-talk-over-real-mcp-and-a2a) for a full, live-verified transcript, and [the Roadmap](docs/998-roadmap.md) for what's real today across Hyperion's resourceful/social/self-sustaining pillars versus what's still deliberately deferred.
 
 To use a real cloud provider (OpenAI, Anthropic, Gemini, Groq) or a local engine that needs its own key, copy [`.env.example`](.env.example) to `.env`, fill in the real value, then:
 
@@ -213,7 +213,7 @@ cargo build -p hyperion-console --bin hyperion-console --features openai-compat
 HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch ./target/debug/hyperion-console scenarios/backend-cloud-groq.txt
 ```
 
-`.env` is already gitignored, so a real key never gets committed. A scenario file only ever references a key by name (`$GROQ_API_KEY`), never as a literal - see USAGE_SCENARIOS.md's "Running a scenario from a file" for how that expansion works.
+`.env` is already gitignored, so a real key never gets committed. A scenario file only ever references a key by name (`$GROQ_API_KEY`), never as a literal - see [Usage Scenarios](docs/999-usage-scenarios.md)' "Running a scenario from a file" for how that expansion works.
 
 ## 📄 License
 

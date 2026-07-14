@@ -16,7 +16,7 @@
 //! retry (docs/22 §5.1), LRU-by-value residency management with pinning
 //! (§5.2), and capability-gated, cancellation-safe invocation.
 //!
-//! PRODUCTION_BOOT_PROMPT.md M8 adds exactly the swap this crate's own doc comment already
+//! docs/998-roadmap.md M8 adds exactly the swap this crate's own doc comment already
 //! anticipated: behind the `candle` Cargo feature (off by default -- see
 //! [`candle_backend`]'s own doc comment for why), [`candle_backend::CandleBackend`] is a real
 //! [`InferenceBackend`] running a real, small Candle-loaded model on CPU. `MockBackend` remains
@@ -55,7 +55,7 @@
 //!   no real generation loop to interrupt yet. `runtime.cancel` exists in
 //!   the API surface but is a no-op stub, noted at its call site.
 //! - ~~**Real model-artifact signing** (§Security Considerations)~~ — now real
-//!   (PRODUCTION_BOOT_PROMPT.md M9): [`LocalAiRuntime::register_model`] checks a real Ed25519
+//!   (docs/998-roadmap.md M9): [`LocalAiRuntime::register_model`] checks a real Ed25519
 //!   signature (via [`hyperion_crypto`]) over [`sign`]'s canonical bytes, not a non-cryptographic
 //!   checksum a forger could reproduce without the real signing key. `hyperion-context`'s own
 //!   envelope-integrity checksum is a separate, not-yet-touched stand-in of the same shape —

@@ -61,7 +61,7 @@ pub struct QuotaState {
     /// [`crate::AgentRuntime::prepare_invoke`] can tell whether its own adaptive backoff window
     /// (keyed on [`Self::times_suspended`]) has really elapsed yet. `None` once resumed.
     pub suspended_at: Option<u64>,
-    /// AUTONOMY_ROADMAP.md's Self-Sustaining pillar: this instance's *whole-life* suspension
+    /// docs/998-roadmap.md's Self-Sustaining pillar: this instance's *whole-life* suspension
     /// count, distinct from [`Self::consecutive_failures`] (which already resets to `0` on any
     /// success -- the real "is this instance still in trouble right now" signal). This one never
     /// resets on a single success; it's the real "has this instance made the same kind of mistake

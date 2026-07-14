@@ -165,7 +165,7 @@ fn a_published_capability_lands_in_the_real_registry_as_a_candidate() {
     assert_eq!(entry.owning_plugins, vec![handle.plugin_id]);
 }
 
-/// AUTONOMY_ROADMAP.md's "tool creation" slice, proven end to end at this crate's own real entry
+/// docs/998-roadmap.md's "tool creation" slice, proven end to end at this crate's own real entry
 /// point: naming a real, existing, executable program as a `Runtime::NativeBinary`
 /// `Implementation` and publishing it doesn't just land a labeled placeholder in the registry --
 /// it's genuinely *runnable* the moment `publish` returns, through the exact same real, sandboxed

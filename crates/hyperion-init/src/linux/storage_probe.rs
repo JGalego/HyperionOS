@@ -1,5 +1,5 @@
 //! Mounts Hyperion's real, dedicated persistent-storage partition, per
-//! [PRODUCTION_BOOT_PROMPT.md](../../../PRODUCTION_BOOT_PROMPT.md) M6 -- `hyperion-storage`'s
+//! [docs/998-roadmap.md](../../../docs/998-roadmap.md) M6 -- `hyperion-storage`'s
 //! WAL-backed engine pointed at a real block device instead of a host tempfile, per the roadmap's
 //! own reuse-map entry ("WAL format, replay/recovery logic" reused as-is; only *where* the WAL
 //! file lives changes). `hyperion-storage`'s own `Wal` already relies on ordinary regular-file

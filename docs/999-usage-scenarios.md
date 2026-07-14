@@ -1,9 +1,9 @@
-# Hyperion Usage Scenarios — a living acceptance-test log
+# Usage Scenarios — a living acceptance-test log
 
 This document is the durable record of docs/41's Phase 2 ("model real usage") and Phase 3
 ("compare reality vs. expectations") work: realistic scenarios actually driven against the real,
 compiled system, what was observed, and what happened as a result. It is meant to grow the same
-way [35 — Testing Strategy](docs/35-testing-strategy.md)'s golden corpus grows — from real
+way [35 — Testing Strategy](35-testing-strategy.md)'s golden corpus grows — from real
 sessions, not only hand-authored cases — except this file is the human-readable log; the durable,
 machine-checked form of each finding below lives as a real regression test in the relevant crate
 (linked per entry).
@@ -12,7 +12,8 @@ machine-checked form of each finding below lives as a real regression test in th
 plus all ten of the per-backend scenario files under [`scenarios/`](scenarios/) (scenario 10
 below), against `hyperion-console` only (the one real, natively-buildable, non-GUI entry point
 this sandbox can drive with piped stdin or a scenario file — see "How scenarios are run" below).
-Scenarios 11 and 13 (AUTONOMY_ROADMAP.md's Resourceful and Self-Sustaining pillars) are the first
+Scenarios 11 and 13 ([998 — Roadmap](998-roadmap.md)'s Autonomy Roadmap section, Resourceful and
+Self-Sustaining pillars) are the first
 two verified via `cargo test` rather than a driven console session — named honestly as such, since
 neither has a console-level trigger today; see each entry's own "Open finding."
 `hyperion-shell` (a real
@@ -381,7 +382,7 @@ backend" section carries the corrected, verified claims and the ten scenario fil
 
 ### 11. Resourceful — a real installed plugin actually runs (no echo)
 
-**AUTONOMY_ROADMAP.md's Slice 1/1b.** Unlike scenarios 1-10, this one has **no CLI-drivable path
+**[998 — Roadmap](998-roadmap.md)'s Autonomy Roadmap, Slice 1/1b.** Unlike scenarios 1-10, this one has **no CLI-drivable path
 today** — `hyperion-console` never routes an utterance's text into an arbitrary capability's raw
 JSON args, so there's no slash command or utterance that reaches `PluginRegistry::invoke_native_binary`
 by hand. Real, honest verification here is `cargo test`, run fresh, not assumed from memory:
@@ -423,7 +424,7 @@ tracked here rather than silently left implicit.
 
 ### 12. Social — two real Hyperion processes talk over real MCP and A2A
 
-**AUTONOMY_ROADMAP.md's Slice 2.** Unlike scenario 11, this one *is* fully CLI-drivable — a human
+**[998 — Roadmap](998-roadmap.md)'s Autonomy Roadmap, Slice 2.** Unlike scenario 11, this one *is* fully CLI-drivable — a human
 can run every step below by hand. Two real, separately-launched `hyperion-console` processes,
 talking over real HTTP, JSON-RPC 2.0 (MCP) and the real A2A spec:
 
@@ -501,7 +502,7 @@ same three flows lives in `crates/hyperion-console/tests/mcp_a2a_server.rs`.
 
 ### 13. Self-sustaining — a suspended agent auto-resumes, and remembers across a restart
 
-**AUTONOMY_ROADMAP.md's Slice 3/3b.** Like scenario 11, there is no console-level trigger for this
+**[998 — Roadmap](998-roadmap.md)'s Autonomy Roadmap, Slice 3/3b.** Like scenario 11, there is no console-level trigger for this
 — nothing in `hyperion-console`'s utterance-parsing layer ever constructs the `{"force_fail":
 true}` JSON that trips `hyperion-agent-runtime`'s circuit breaker on purpose; that's a raw
 `AgentRuntime::invoke` argument only reachable from Rust code today. Real, honest verification is

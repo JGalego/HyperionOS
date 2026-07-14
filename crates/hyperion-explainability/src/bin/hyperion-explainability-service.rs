@@ -1,5 +1,5 @@
 //! A minimal, real process entry point for `hyperion-explainability`, proving
-//! [PRODUCTION_BOOT_PROMPT.md](../../../../PRODUCTION_BOOT_PROMPT.md) M5's supervision-tree
+//! [docs/998-roadmap.md](../../../../docs/998-roadmap.md) M5's supervision-tree
 //! mechanism (`hyperion-supervisor`) against a second, independent real Phase 2-10 subsystem --
 //! see `hyperion-observability`'s own `src/bin/hyperion-observability-service.rs` for the full
 //! reasoning on why this process mints its own local capability domain rather than trying to

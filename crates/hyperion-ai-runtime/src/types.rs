@@ -28,7 +28,7 @@ pub struct QuantizedVariant {
     pub expected_tokens_per_sec: f32,
 }
 
-/// docs/22 §Data Structures' `ModelDescriptor`. `signature` (PRODUCTION_BOOT_PROMPT.md M9) is a
+/// docs/22 §Data Structures' `ModelDescriptor`. `signature` (docs/998-roadmap.md M9) is a
 /// real Ed25519 signature over [`crate::sign`]'s canonical bytes — see this crate's doc comment.
 /// `None` until a caller signs it via [`crate::sign`]; [`crate::runtime::LocalAiRuntime::register_model`]
 /// always rejects a `None` or invalid signature, never treats "unsigned" as "trust it anyway."

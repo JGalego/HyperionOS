@@ -14,7 +14,7 @@ pub enum FetchError {
     Tls(String),
     #[error("timed out fetching {0}")]
     Timeout(String),
-    /// PRODUCTION_BOOT_PROMPT.md M10: a real connection-establishment failure that a real
+    /// docs/998-roadmap.md M10: a real connection-establishment failure that a real
     /// backend's error classification could confirm was neither DNS nor TLS (e.g. TCP reset,
     /// network unreachable) -- empirically, a real closed port in this workspace's own dev
     /// sandbox doesn't even produce this shape (it hangs to a real client-side [`Self::Timeout`]
@@ -95,7 +95,7 @@ impl FetchBackend for Arc<MockFetchBackend> {
     }
 }
 
-/// A real [`FetchBackend`] (PRODUCTION_BOOT_PROMPT.md M10) -- a real HTTP client, real TLS
+/// A real [`FetchBackend`] (docs/998-roadmap.md M10) -- a real HTTP client, real TLS
 /// (rustls, with a *bundled* Mozilla root store rather than reading the OS's own trust store: the
 /// actual target rootfs ships no `ca-certificates` package today, so a verifier reading a
 /// nonexistent on-disk store would fail every real handshake on the booted image -- see this

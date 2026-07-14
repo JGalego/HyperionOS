@@ -2,7 +2,7 @@
 
 > **Implementation note (added 2026-07-11):** the hybrid microkernel this document specifies is
 > the long-term architectural target, not what the current bootable build actually runs. Per
-> [PRODUCTION_BOOT_PROMPT.md](../PRODUCTION_BOOT_PROMPT.md) §0's decision record, the first
+> [43 — Roadmap](998-roadmap.md) §0's decision record, the first
 > bootable Hyperion targets a **Linux-hosted MVP**: a real Linux kernel supplies address-space
 > management, scheduling, and driver I/O, while this document's capability/Trust-Boundary model is
 > implemented as a real, enforced userspace layer on top of it (seccomp-bpf, Landlock, user/mount/pid/

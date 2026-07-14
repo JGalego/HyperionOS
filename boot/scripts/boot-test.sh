@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI-able boot gate (PRODUCTION_BOOT_PROMPT.md section 5): boots the image
+# CI-able boot gate (docs/998-roadmap.md section 5): boots the image
 # headless, waits for a known banner string to appear on the serial console
 # within a timeout, and exits 0/1 accordingly. No KVM in this environment, so
 # the timeout is generous for TCG software emulation.

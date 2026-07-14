@@ -1,5 +1,5 @@
 //! A minimal, real, dependency-free HTTP/1.1 client -- the outbound half of `/mcp-call`/
-//! `/a2a-call` (AUTONOMY_ROADMAP.md's Social pillar: Hyperion calling *out* to a real, already-
+//! `/a2a-call` (docs/998-roadmap.md's Social pillar: Hyperion calling *out* to a real, already-
 //! known MCP/A2A endpoint, including another Hyperion instance's own `/mcp-server`/`/a2a-server`).
 //! Deliberately hand-rolled rather than pulling in `reqwest` (already real elsewhere in this
 //! workspace, e.g. `hyperion-netstack`): this client only ever needs one shape (`POST`/`GET` a

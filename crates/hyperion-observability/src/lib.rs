@@ -12,7 +12,7 @@
 //! as-is rather than redefined.
 //!
 //! Real: [`ledger::AuditLedger::append`] is the *only* write path into
-//! the ledger, hash-chained with a real BLAKE3 hash (PRODUCTION_BOOT_PROMPT.md M9 — see
+//! the ledger, hash-chained with a real BLAKE3 hash (docs/998-roadmap.md M9 — see
 //! [`ledger`]'s own doc comment; `entry_hash = H(prev_hash || canonical(payload) || seq)`) so
 //! [`ledger::AuditLedger::verify_chain`] can detect both a broken hash link and a `seq` gap — the
 //! first corruption is reported at its exact `seq`, never silently repaired, per docs/34 §5;

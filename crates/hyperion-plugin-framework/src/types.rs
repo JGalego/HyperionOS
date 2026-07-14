@@ -106,7 +106,7 @@ pub enum Contribution {
     Capability(CapabilityManifest),
 }
 
-/// docs/24 §4's `PluginManifest`. `signature` (PRODUCTION_BOOT_PROMPT.md M9) is a real Ed25519
+/// docs/24 §4's `PluginManifest`. `signature` (docs/998-roadmap.md M9) is a real Ed25519
 /// signature over [`crate::review::sign`]'s canonical bytes — see that function's own doc
 /// comment on this workspace's single-device-identity model. `None` until a caller signs it.
 #[derive(Debug, Clone)]

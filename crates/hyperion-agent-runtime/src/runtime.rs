@@ -22,13 +22,13 @@ use crate::types::{
 
 /// The one Capability this crate dispatches to a real backend instead of [`stubs::dispatch`] --
 /// see [`AgentRuntime::dispatch_assistant_respond`]'s own doc comment for why this is a
-/// genuinely new Capability rather than a third stub, and PRODUCTION_BOOT_PROMPT.md's M8 note
+/// genuinely new Capability rather than a third stub, and docs/998-roadmap.md's M8 note
 /// for why the fallback path needed a real one at all.
 const ASSISTANT_RESPOND_CAPABILITY: &str = "assistant.respond";
-/// PRODUCTION_BOOT_PROMPT.md M10's real Capability alongside `assistant.respond` -- see
+/// docs/998-roadmap.md M10's real Capability alongside `assistant.respond` -- see
 /// [`AgentRuntime::dispatch_web_research`]'s own doc comment.
 const WEB_RESEARCH_CAPABILITY: &str = "web.research";
-/// PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": the real, requestable (never
+/// docs/998-roadmap.md "Phase 2: cloud providers": the real, requestable (never
 /// baseline -- see `hyperion-coordination::catalog::default_manifests`) Capabilities a real
 /// cloud dispatch is gated behind. Each routes to the exact same
 /// [`AgentRuntime::dispatch_assistant_respond`] as the baseline `assistant.respond` case below --
@@ -64,7 +64,7 @@ fn now() -> u64 {
 const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
 const DEFAULT_QUOTA: u32 = 100;
 
-/// AUTONOMY_ROADMAP.md's Self-Sustaining pillar: a `Suspended` instance's real path back, once
+/// docs/998-roadmap.md's Self-Sustaining pillar: a `Suspended` instance's real path back, once
 /// `hyperion-supervisor::backoff_duration` proved the right *shape* for OS processes (capped
 /// exponential, keyed on a real per-target failure count) -- re-derived here, not copy-pasted,
 /// since this crate's own clock ([`now`]) is second-granularity, unlike that crate's millisecond
@@ -139,7 +139,7 @@ pub struct AgentRuntime {
     /// [`Self::new_with_netstack_and_plugins`].
     plugins: Option<Arc<PluginRegistry>>,
     /// A real, durable, cross-session record of this instance's own suspend/auto-resume/
-    /// backoff-decay history -- AUTONOMY_ROADMAP.md's Self-Sustaining pillar's "cross-session
+    /// backoff-decay history -- docs/998-roadmap.md's Self-Sustaining pillar's "cross-session
     /// learning" slice. `Option`, same reasoning as [`Self::netstack`]/[`Self::plugins`]: most
     /// callers have no `MemoryEngine` (itself needing a real `Arc<KnowledgeGraph>`) at all. See
     /// [`Self::spawn`]'s own doc comment for what a fresh instance actually does with it.
@@ -153,7 +153,7 @@ impl AgentRuntime {
 
     /// As [`Self::new`], additionally wiring a real [`NetstackHub`] so `web.research` dispatches
     /// to real network fetch/extraction/Knowledge-Graph-merge instead of falling through to
-    /// [`stubs::dispatch`]'s catch-all echo (PRODUCTION_BOOT_PROMPT.md M10).
+    /// [`stubs::dispatch`]'s catch-all echo (docs/998-roadmap.md M10).
     pub fn new_with_netstack(
         ai_runtime: Arc<LocalAiRuntime>,
         netstack: Option<Arc<NetstackHub>>,
@@ -163,7 +163,7 @@ impl AgentRuntime {
 
     /// As [`Self::new_with_netstack`], additionally wiring a real [`PluginRegistry`] so an
     /// unrecognized `capability_ref` with an installed, real `NativeBinary` implementation
-    /// dispatches to it for real (AUTONOMY_ROADMAP.md's Slice 1), instead of falling through to
+    /// dispatches to it for real (docs/998-roadmap.md's Slice 1), instead of falling through to
     /// [`stubs::dispatch`]'s catch-all echo.
     pub fn new_with_netstack_and_plugins(
         ai_runtime: Arc<LocalAiRuntime>,
@@ -249,7 +249,7 @@ impl AgentRuntime {
     /// When [`Self::memory`] is real, a fresh instance doesn't start with a blank slate: it looks
     /// up this manifest's own `specialization` in Procedural memory for the most recent real
     /// suspend/resume history recorded under it (see [`Self::record_resilience_event`]) and seeds
-    /// `quota.times_suspended` from that, instead of always `0` -- AUTONOMY_ROADMAP.md's
+    /// `quota.times_suspended` from that, instead of always `0` -- docs/998-roadmap.md's
     /// Self-Sustaining pillar's "cross-session learning": a specialization with a real, recent
     /// history of trouble starts the *next* process's instance a little more cautious too, rather
     /// than the adaptive backoff resetting to nothing the moment this process restarts.
@@ -524,7 +524,7 @@ impl AgentRuntime {
             let required = backoff_duration(instance.quota.times_suspended);
             if elapsed >= required {
                 // A real path back: auto-resume, for real, rather than staying stuck until
-                // something external intervenes -- AUTONOMY_ROADMAP.md's Self-Sustaining pillar.
+                // something external intervenes -- docs/998-roadmap.md's Self-Sustaining pillar.
                 instance.state = LifecycleState::Bound;
                 instance.quota.suspended_at = None;
                 Self::audit(
@@ -615,7 +615,7 @@ impl AgentRuntime {
     }
 
     /// The one Capability [`Self::invoke`] dispatches to a real backend rather than
-    /// [`stubs::dispatch`]'s hand-written stand-ins -- PRODUCTION_BOOT_PROMPT.md M8's exit
+    /// [`stubs::dispatch`]'s hand-written stand-ins -- docs/998-roadmap.md M8's exit
     /// criterion made real on the path the actually-booted console exercises, not only in
     /// `hyperion-api-gateway`/`hyperion-model-router` (which the booted console's own real
     /// call path -- `hyperion-console` -> [`Self::invoke`] -- never reaches; see this crate's
@@ -703,7 +703,7 @@ impl AgentRuntime {
     /// `web.search`. Deliberately honest about what this still is *not*: a real generated summary
     /// from whichever `InferenceBackend` is active, not a live query against a real search engine
     /// -- this workspace has no search-provider integration at all (a real, separate, future
-    /// feature akin to PRODUCTION_BOOT_PROMPT.md's cloud-provider phase, not something to fake
+    /// feature akin to docs/998-roadmap.md's cloud-provider phase, not something to fake
     /// here). The returned `"note"` field carries that caveat through to anything that renders
     /// this result, so nothing downstream can mistake it for a verified web search.
     fn dispatch_market_research(
@@ -781,7 +781,7 @@ impl AgentRuntime {
         }
     }
 
-    /// PRODUCTION_BOOT_PROMPT.md M10's real Capability: dispatches to a real, caller-supplied
+    /// docs/998-roadmap.md M10's real Capability: dispatches to a real, caller-supplied
     /// [`NetstackHub`] instead of [`stubs::dispatch`]'s catch-all echo -- the real fix for the
     /// same two-link dead chain M8 found for `assistant.respond`, one milestone later:
     /// `hyperion-netstack` had zero real (non-test) callers anywhere in this workspace, and
@@ -860,7 +860,7 @@ impl AgentRuntime {
         Ok(())
     }
 
-    /// PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers": grants `capability_ref` directly,
+    /// docs/998-roadmap.md "Phase 2: cloud providers": grants `capability_ref` directly,
     /// with no live [`GrantDecision::PendingConsent`] required first -- unlike
     /// [`Self::resolve_consent`] (which only ever resolves a request `invoke` itself just made,
     /// and errors if there isn't one), this is for seeding an *already-consented* capability at

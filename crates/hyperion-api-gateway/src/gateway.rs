@@ -449,7 +449,7 @@ impl ApiGateway {
             });
 
         let Some(class) = local_model_class else {
-            // AUTONOMY_ROADMAP.md's Slice 1, closed here too: this gateway's own `registry` was
+            // docs/998-roadmap.md's Slice 1, closed here too: this gateway's own `registry` was
             // real data-only, same gap `hyperion-agent-runtime::AgentRuntime::invoke` had, before
             // that crate wired the identical real, sandboxed `NativeBinary` execution path. A
             // contract with a real, installed, runnable implementation dispatches to it for real,

@@ -1,5 +1,5 @@
 //! `/a2a-server`: a real A2A (Agent2Agent) server, exposing a real, live [`ConsoleSession`] as an
-//! Agent Card + one real JSON-RPC method (AUTONOMY_ROADMAP.md's Social pillar). Deliberately a
+//! Agent Card + one real JSON-RPC method (docs/998-roadmap.md's Social pillar). Deliberately a
 //! narrow, honest subset of the real spec (<https://a2a-protocol.org>): the Agent Card is served
 //! at the real, spec-defined well-known path (`/.well-known/agent-card.json`), and only
 //! `SendMessage` is implemented (the spec's own "send a message and get a reply" minimal flow --

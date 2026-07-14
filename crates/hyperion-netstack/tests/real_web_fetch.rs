@@ -1,4 +1,4 @@
-//! PRODUCTION_BOOT_PROMPT.md M10's real deliverable, proven for real: a real HTTP client fetches
+//! docs/998-roadmap.md M10's real deliverable, proven for real: a real HTTP client fetches
 //! a real URL over the real network, a real (non-model) HTML extractor pulls a real entity out of
 //! the real response, and `NetstackHub::web_research` merges it into a real Knowledge Graph --
 //! not `MockFetchBackend`/`MockExtractionBackend`'s deterministic fixtures.

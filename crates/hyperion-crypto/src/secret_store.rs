@@ -1,5 +1,5 @@
 //! A real, encrypted-at-rest secret store for arbitrary named secrets -- built for cloud
-//! provider API keys (PRODUCTION_BOOT_PROMPT.md "Phase 2: cloud providers"), but general enough
+//! provider API keys (docs/998-roadmap.md "Phase 2: cloud providers"), but general enough
 //! for any future caller needing the same "small number of named secrets, encrypted, persisted
 //! to one file" shape.
 //!

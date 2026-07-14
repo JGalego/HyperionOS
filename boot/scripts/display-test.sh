@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PRODUCTION_BOOT_PROMPT.md M7 stage 2: real DRM/KMS mode-set, proven for real. Boots with a real
+# docs/998-roadmap.md M7 stage 2: real DRM/KMS mode-set, proven for real. Boots with a real
 # virtio-gpu-pci display device attached (every other boot script in this repo attaches none, so
 # this is the first to actually exercise crates/hyperion-init/src/linux/display_probe.rs), waits
 # for its own real DISPLAY: PASS/FAIL marker, then captures the *actual emulated display's* real

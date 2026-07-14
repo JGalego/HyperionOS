@@ -37,7 +37,7 @@ fn to_capability_manifest(
         implementation_kind: implementation_kind(implementation.runtime),
         quality_score,
         version: contract.version,
-        // AUTONOMY_ROADMAP.md's "tool creation" slice: carried straight through from the
+        // docs/998-roadmap.md's "tool creation" slice: carried straight through from the
         // submission now, so a `Runtime::NativeBinary` `Implementation` that names a real,
         // existing, executable program installs as a genuinely *runnable* capability -- not just
         // a labeled placeholder -- the moment it's published.

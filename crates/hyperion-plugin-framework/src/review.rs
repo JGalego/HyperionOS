@@ -25,7 +25,7 @@ fn canonical_bytes(manifest_without_signature: &PluginManifest) -> Vec<u8> {
 }
 
 /// A real Ed25519 signature over `manifest_without_signature`'s own canonical bytes
-/// (PRODUCTION_BOOT_PROMPT.md M9) — the value a caller populates [`PluginManifest::signature`]
+/// (docs/998-roadmap.md M9) — the value a caller populates [`PluginManifest::signature`]
 /// with before [`crate::registry::PluginRegistry::install`].
 pub fn sign(manifest_without_signature: &PluginManifest, keystore: &Keystore) -> Signature {
     keystore.sign(&canonical_bytes(manifest_without_signature))

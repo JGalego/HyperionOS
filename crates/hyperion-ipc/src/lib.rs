@@ -8,7 +8,7 @@
 //!
 //! Two transports exist side by side, both built on the same [`Frame`] shape
 //! and call/notify semantics, per
-//! [PRODUCTION_BOOT_PROMPT.md](../../../PRODUCTION_BOOT_PROMPT.md) M3's reuse map:
+//! [docs/998-roadmap.md](../../../docs/998-roadmap.md) M3's reuse map:
 //! [`IpcBus`] is the original hosted-simulator translation (every Trust Boundary is
 //! a thread in one process, so a "frame" is an in-memory value moved between
 //! threads, never actually encoded); [`Endpoint`] (`transport`) is the real

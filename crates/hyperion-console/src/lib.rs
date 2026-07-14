@@ -1,5 +1,5 @@
 //! Hyperion's real text console, per
-//! [PRODUCTION_BOOT_PROMPT.md](../../../PRODUCTION_BOOT_PROMPT.md) M7 stage 1: "a real utterance
+//! [docs/998-roadmap.md](../../../docs/998-roadmap.md) M7 stage 1: "a real utterance
 //! typed at the real booted console produces a real Intent Graph, a real Agent invocation, and
 //! real text output rendered to the real TTY." This crate is that pipeline; `main.rs` is only the
 //! real stdin/stdout loop around it.

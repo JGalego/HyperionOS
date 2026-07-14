@@ -932,7 +932,7 @@ fn invoke_capability_with_no_registered_contract_is_not_eligible() {
     assert!(matches!(result, Err(ApiError::NoEligibleImplementation)));
 }
 
-/// AUTONOMY_ROADMAP.md's Slice 1, closed here too: this gateway's own `registry` had the exact
+/// docs/998-roadmap.md's Slice 1, closed here too: this gateway's own `registry` had the exact
 /// same "data only, no execution" gap `hyperion-agent-runtime::AgentRuntime::invoke` did,
 /// independently documented in this crate's own code -- now wired to the same real, sandboxed
 /// `NativeBinary` execution path. Linux-only, matching `hyperion-trust-boundary`'s own gating.

@@ -167,7 +167,7 @@ fn record_release_decision_requires_write_rights() {
     assert!(matches!(result, Err(ReleaseGateError::Unauthorized)));
 }
 
-/// PRODUCTION_BOOT_PROMPT.md M13: unmet hardware criteria block release the same way an unmet
+/// docs/998-roadmap.md M13: unmet hardware criteria block release the same way an unmet
 /// suite or benchmark gate already do -- every *other* axis clean, only this one failing.
 #[test]
 fn unmet_hardware_criteria_blocks_release_even_with_every_suite_and_benchmark_clean() {

@@ -32,7 +32,7 @@ struct CircuitState {
     opened_at: Option<u64>,
 }
 
-/// PRODUCTION_BOOT_PROMPT.md M10: a bare `"*"` pattern matches any domain -- a real, deliberately
+/// docs/998-roadmap.md M10: a bare `"*"` pattern matches any domain -- a real, deliberately
 /// minimal addition for a general-purpose interactive caller (`hyperion-console`'s own real
 /// undecomposed-goal fallback) that cannot pre-enumerate every real domain a user might ask
 /// about. This does *not* weaken this crate's other real security checks, which all still apply

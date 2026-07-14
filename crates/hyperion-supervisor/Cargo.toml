@@ -3,7 +3,7 @@ name = "hyperion-supervisor"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Real Erlang/OTP-style process supervision tree for hyperion-init's PID 1 (PRODUCTION_BOOT_PROMPT.md M5)."
+description = "Real Erlang/OTP-style process supervision tree for hyperion-init's PID 1 (docs/998-roadmap.md M5)."
 
 [dependencies]
 hyperion-capability = { workspace = true }

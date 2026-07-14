@@ -1,6 +1,6 @@
 //! A real transport for the frame/channel model [`crate::bus`] already defines: Unix domain
 //! datagram sockets instead of an in-process `mpsc` bus, per
-//! [PRODUCTION_BOOT_PROMPT.md](../../../PRODUCTION_BOOT_PROMPT.md) M3. Reuses [`crate::Frame`],
+//! [docs/998-roadmap.md](../../../docs/998-roadmap.md) M3. Reuses [`crate::Frame`],
 //! [`crate::Channel`], [`crate::Request`]/[`crate::Response`]/[`crate::Notification`], and the
 //! call/notify semantics as-is; only what actually carries a frame between two real, separate
 //! Linux processes is new.

@@ -115,7 +115,7 @@ pub enum AuditPayload {
 }
 
 /// docs/34 §1's `AuditLogEntry` — the tamper-evident, append-only, never-rolled-up ledger.
-/// `prev_hash`/`entry_hash` (PRODUCTION_BOOT_PROMPT.md M9) are real BLAKE3 content hashes, not a
+/// `prev_hash`/`entry_hash` (docs/998-roadmap.md M9) are real BLAKE3 content hashes, not a
 /// non-cryptographic `DefaultHasher` (SipHash) value — see [`crate::ledger`]'s own doc comment.
 /// A hardware-root-of-trust/Merkle-anchor `signature` on top of this hash chain remains this
 /// crate's deferred real-crypto piece: the milestone's own exit criterion accepts a real
