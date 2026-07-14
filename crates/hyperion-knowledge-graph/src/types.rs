@@ -142,6 +142,21 @@ pub enum LinkOutcome {
     SuppressedByTombstone(EdgeId),
 }
 
+/// [`crate::graph::KnowledgeGraph::dump`]'s return value -- every live node and edge the caller's
+/// own Trust Boundary can see, both sorted ascending by id. That sort is the whole point: `NodeId`/
+/// `EdgeId` are monotonically assigned (never reused, never reordered), so two dumps of an
+/// unchanged graph are byte-for-byte identical regardless of the underlying `HashMap`'s own
+/// unspecified iteration order -- the property a caller diffing two dumps (e.g. before/after a
+/// scenario) depends on. Tombstoned edges are omitted, matching [`crate::graph::KnowledgeGraph::
+/// query`]/[`crate::graph::KnowledgeGraph::traverse`]'s own "active edges only" view -- a caller
+/// comparing two dumps sees a deleted edge disappear, exactly as intended, without this crate
+/// needing to represent deletion explicitly.
+#[derive(Debug, Clone, Default)]
+pub struct GraphSnapshot {
+    pub nodes: Vec<(NodeId, NodeRecord)>,
+    pub edges: Vec<(EdgeId, EdgeRecord)>,
+}
+
 /// docs/09 §6's `graph.explain(node_id | edge_id) -> ProvenanceChain`.
 #[derive(Debug, Clone)]
 pub enum ProvenanceChain {

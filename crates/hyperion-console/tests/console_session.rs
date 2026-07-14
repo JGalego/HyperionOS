@@ -1012,6 +1012,108 @@ mod graph_exploration {
     }
 }
 
+/// `/graph` (plain text) / `/graph dot` (Graphviz) -- the whole recorded graph at once, built for
+/// checking how a session's knowledge graph changed (run before/after a scenario and diff).
+mod graph_dump {
+    use super::open_session;
+
+    #[test]
+    fn graph_of_a_fresh_session_says_its_empty() {
+        let (_dir, mut session) = open_session();
+
+        let lines = session.handle_utterance("/graph").join("\n");
+        assert!(
+            lines.contains("empty"),
+            "a brand-new session's graph really is empty, got: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn graph_lists_real_nodes_and_edges_from_a_decomposed_plan() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let lines = session.handle_utterance("/graph").join("\n");
+        assert!(lines.contains("nodes:"), "got: {lines:?}");
+        assert!(lines.contains("edges:"), "got: {lines:?}");
+        assert!(
+            lines.contains("market_research"),
+            "expected a real task node's name to appear, got: {lines:?}"
+        );
+        assert!(
+            lines.contains("depends_on"),
+            "expected a real dependency edge's predicate to appear, got: {lines:?}"
+        );
+        assert!(
+            lines.contains("produced"),
+            "expected a real produced-result edge's predicate to appear, got: {lines:?}"
+        );
+    }
+
+    /// The whole point of `/graph`: two dumps with nothing recorded in between must be identical,
+    /// so a real caller can diff a before/after pair and trust every line shown is a real change.
+    #[test]
+    fn two_consecutive_dumps_with_no_change_in_between_are_identical() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let first = session.handle_utterance("/graph").join("\n");
+        let second = session.handle_utterance("/graph").join("\n");
+        assert_eq!(
+            first, second,
+            "two dumps of an unchanged graph must be byte-for-byte identical"
+        );
+    }
+
+    /// A real utterance recorded *between* two dumps must show up as a real, visible difference --
+    /// the other half of the diffability guarantee: not just "identical when unchanged," but
+    /// "different when genuinely different."
+    #[test]
+    fn a_dump_after_a_new_utterance_differs_from_the_one_before_it() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("my name is Alex");
+
+        let before = session.handle_utterance("/graph").join("\n");
+        session.handle_utterance("a brand new second utterance");
+        let after = session.handle_utterance("/graph").join("\n");
+
+        assert_ne!(before, after);
+        assert!(
+            after.contains("a brand new second utterance"),
+            "got: {after:?}"
+        );
+    }
+
+    #[test]
+    fn graph_dot_produces_valid_looking_graphviz_syntax() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let lines = session.handle_utterance("/graph dot").join("\n");
+        assert!(
+            lines.starts_with("digraph knowledge_graph {"),
+            "got: {lines:?}"
+        );
+        assert!(lines.trim_end().ends_with('}'), "got: {lines:?}");
+        assert!(
+            lines.contains("-> "),
+            "expected at least one real DOT edge, got: {lines:?}"
+        );
+        assert!(
+            lines.contains("label="),
+            "expected labeled nodes/edges, got: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn graph_with_an_unknown_format_gives_an_honest_error() {
+        let (_dir, mut session) = open_session();
+
+        let lines = session.handle_utterance("/graph svg").join("\n");
+        assert!(lines.contains("isn't a format I know"), "got: {lines:?}");
+    }
+}
+
 /// `/redo <task> <extra instructions>` -- the real "steer this task with more information" verb,
 /// backed by `hyperion_coordination::CoordinationSession::amend_task`. Every assertion here drives
 /// a real decomposed plan through a full run first, then redoes one of its own real tasks, so the

@@ -79,5 +79,5 @@ pub use graph::KnowledgeGraph;
 pub use hyperion_storage::VersionId;
 pub use types::{
     EdgeConstraint, EdgeId, EdgeOrigin, EdgeRecord, ExplainRef, GraphError, GraphQuery,
-    LinkOutcome, NodeId, NodeRecord, ProvenanceChain, QueryHit, Subgraph,
+    GraphSnapshot, LinkOutcome, NodeId, NodeRecord, ProvenanceChain, QueryHit, Subgraph,
 };

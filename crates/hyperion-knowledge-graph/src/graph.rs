@@ -9,7 +9,8 @@ use hyperion_storage::{StorageEngine, VersionId};
 use crate::index::GraphIndex;
 use crate::types::{
     EdgeConstraint, EdgeId, EdgeOrigin, EdgeRecord, ExplainRef, GraphError, GraphQuery,
-    LinkOutcome, NodeId, NodeRecord, ObjectType, ProvenanceChain, QueryHit, Record, Subgraph,
+    GraphSnapshot, LinkOutcome, NodeId, NodeRecord, ObjectType, ProvenanceChain, QueryHit, Record,
+    Subgraph,
 };
 
 fn now() -> u64 {
@@ -342,6 +343,42 @@ impl KnowledgeGraph {
             hits.truncate(query.limit);
         }
         Ok(hits)
+    }
+
+    /// `graph.dump` -- every live node and edge the caller's own Trust Boundary can see, as one
+    /// [`GraphSnapshot`]. Unlike [`Self::query`] (nodes only, ranked and optionally truncated) or
+    /// [`Self::traverse`] (a bounded-hop walk from one anchor), this is the whole visible graph in
+    /// one call -- built for a caller that wants to inspect or diff the graph's structure itself
+    /// (e.g. `hyperion-console`'s own `/graph` meta-command, run before and after a scenario to
+    /// see what changed), not to answer a specific question about it. Real, current scale (docs/41
+    /// Phase 2/3's own scenario runs: dozens of nodes/edges per session, not thousands) makes a
+    /// full, unbounded scan the right call here -- no `limit`, unlike `query`.
+    pub fn dump(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+    ) -> Result<GraphSnapshot, GraphError> {
+        self.require(monitor, token, RightsMask::READ)?;
+        let index = self.index.lock().unwrap();
+        let caller_boundary = token.origin().0;
+
+        let mut nodes: Vec<(NodeId, NodeRecord)> = index
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.owner == caller_boundary)
+            .map(|(id, n)| (*id, n.clone()))
+            .collect();
+        nodes.sort_by_key(|(id, _)| *id);
+
+        let mut edges: Vec<(EdgeId, EdgeRecord)> = index
+            .edges
+            .iter()
+            .filter(|(_, e)| !e.tombstone && e.owner == caller_boundary)
+            .map(|(id, e)| (*id, e.clone()))
+            .collect();
+        edges.sort_by_key(|(id, _)| *id);
+
+        Ok(GraphSnapshot { nodes, edges })
     }
 
     fn satisfies_edge_constraint(

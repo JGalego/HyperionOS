@@ -57,6 +57,52 @@ transcript; the binary exits as soon as the file ends rather than falling throug
 stdin. See [`scenarios/multi-turn-demo.txt`](scenarios/multi-turn-demo.txt) for a real, runnable
 example of the scenario in "A more complex, multi-turn, multi-request-type scenario" below.
 
+### Checking how the knowledge graph changed
+
+`/graph` (plain text) / `/graph dot` (Graphviz) is a real console meta-command, alongside
+`/recall`/`/why`/`/related`/`/result` — but unlike those (each a targeted question about one
+thing), it dumps the *whole* recorded graph at once: every real node and edge the current session
+can see (`hyperion_knowledge_graph::KnowledgeGraph::dump`), sorted by id. That sort is the whole
+point: two dumps of an unchanged graph are byte-for-byte identical (verified live — see
+`hyperion-console`'s own `graph_dump::two_consecutive_dumps_with_no_change_in_between_are_identical`
+test), so running it once before a scenario and once after, then diffing the two outputs, shows
+exactly what changed — new nodes/edges as new lines, nothing as no lines, never ordering noise
+misread as a change:
+
+```
+rm -rf /tmp/hyperion-scratch
+printf '/graph\n' > /tmp/before.txt
+HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch ./target/debug/hyperion-console /tmp/before.txt \
+    > before.out
+
+HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch ./target/debug/hyperion-console \
+    scenarios/multi-turn-demo.txt
+
+printf '/graph\n' > /tmp/after.txt
+HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch ./target/debug/hyperion-console /tmp/after.txt \
+    > after.out
+
+diff before.out after.out
+```
+
+This works against the *same* `HYPERION_CONSOLE_DATA_DIR` across three separate invocations
+because the Knowledge Graph is a real, durable WAL, not in-memory-only state — it persists across
+process restarts exactly as it does across turns within one process.
+
+`/graph dot` prints the same graph as Graphviz DOT instead — verified live: `dot -Tsvg` renders it
+into a real, valid SVG:
+
+```
+printf '%s\n' "launch my startup" "/graph dot" > /tmp/graph-demo.txt
+./target/debug/hyperion-console /tmp/graph-demo.txt | sed -n '/digraph/,/^}/p' | dot -Tsvg -o graph.svg
+```
+
+Deliberately not the default: plain text stays screen-reader-friendly and diffable with plain
+`diff`, matching CLAUDE.md's accessibility-first stance — DOT is an opt-in for whoever specifically
+wants a picture. Also deliberately shows raw ids and absolute (epoch-second) timestamps rather than
+`/why`'s human "recorded 3 minutes ago" phrasing: a relative phrasing would make an unchanged dump
+look different depending on *when* you ran it, defeating the whole point of diffing two dumps.
+
 ### Running a scenario against a real backend
 
 Every scenario above ran on `MockBackend`. Each backend gets its secret differently — traced

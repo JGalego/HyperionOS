@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
 use hyperion_knowledge_graph::{
-    ExplainRef, GraphQuery, KnowledgeGraph, NodeId, NodeRecord, ProvenanceChain,
+    EdgeId, EdgeRecord, ExplainRef, GraphQuery, KnowledgeGraph, NodeId, NodeRecord, ProvenanceChain,
 };
 
 /// The most results a single `/recall`/`/related` list shows -- generous enough to browse, small
@@ -272,6 +272,75 @@ impl GraphExplorer {
         }
     }
 
+    /// `/graph` (plain text) / `/graph dot` (Graphviz) -- the *whole* recorded graph at once,
+    /// unlike `/recall`/`/related`/`/result` (each a targeted question about one thing). Built for
+    /// checking how a session's knowledge graph actually changed -- run once before and once after
+    /// a scenario (see USAGE_SCENARIOS.md) and diff the two outputs. That comparison only works
+    /// because [`KnowledgeGraph::dump`] sorts both nodes and edges by id: two dumps of an unchanged
+    /// graph are byte-for-byte identical, so every line a diff shows is a real change, never
+    /// ordering noise. Deliberately shows raw ids and absolute (epoch-second) timestamps rather
+    /// than `/why`'s human "recorded 3 minutes ago" phrasing -- a relative phrasing would make an
+    /// unchanged dump look different depending on *when* you happened to run it, defeating the
+    /// point. This is a debugging/inspection surface, not a conversational answer, so that
+    /// trade-off runs the other way from the rest of this module.
+    pub fn dump_graph(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        as_dot: bool,
+    ) -> Vec<String> {
+        let snapshot = match self.graph.dump(monitor, token) {
+            Ok(snapshot) => snapshot,
+            Err(e) => return vec![format!("I couldn't look at the graph: {e}")],
+        };
+
+        if as_dot {
+            return render_dot(&snapshot.nodes, &snapshot.edges);
+        }
+
+        if snapshot.nodes.is_empty() {
+            return vec!["The knowledge graph is empty -- nothing recorded yet.".to_string()];
+        }
+
+        let mut lines = vec![format!(
+            "{} node{}:",
+            snapshot.nodes.len(),
+            if snapshot.nodes.len() == 1 { "" } else { "s" }
+        )];
+        for (id, node) in &snapshot.nodes {
+            lines.push(format!(
+                "  [{}] {} -- {} (created {}, updated {})",
+                id.0,
+                node.object_type,
+                describe(node),
+                node.created_at,
+                node.updated_at
+            ));
+        }
+
+        lines.push(String::new());
+        lines.push(format!(
+            "{} edge{}:",
+            snapshot.edges.len(),
+            if snapshot.edges.len() == 1 { "" } else { "s" }
+        ));
+        for (id, edge) in &snapshot.edges {
+            lines.push(format!(
+                "  [{}] {} --{}--> {} (weight {:.2}{})",
+                id.0,
+                edge.subject.0,
+                edge.predicate,
+                edge.target.0,
+                edge.weight,
+                match edge.confidence {
+                    Some(c) => format!(", confidence {c:.2}"),
+                    None => String::new(),
+                },
+            ));
+        }
+        lines
+    }
+
     fn resolve(&self, n: usize) -> Option<&NodeId> {
         n.checked_sub(1).and_then(|i| self.refs.get(i))
     }
@@ -420,6 +489,46 @@ pub(crate) fn render_capability_result(value: &serde_json::Value) -> Option<Stri
         .get("text")
         .and_then(|v| v.as_str())
         .map(str::to_string)
+}
+
+/// `/graph dot`'s real output: valid Graphviz DOT (`digraph { ... }`), so it can actually be
+/// *drawn* -- `dot -Tsvg` or any online Graphviz renderer -- rather than only ever read as text.
+/// A deliberate second format, not the default: plain text (see [`GraphExplorer::dump_graph`])
+/// stays screen-reader-friendly and diffable with plain `diff`, matching CLAUDE.md's
+/// accessibility-first stance; DOT is an opt-in for whoever specifically wants a picture.
+fn render_dot(nodes: &[(NodeId, NodeRecord)], edges: &[(EdgeId, EdgeRecord)]) -> Vec<String> {
+    let mut lines = vec!["digraph knowledge_graph {".to_string()];
+    for (id, node) in nodes {
+        let label = format!(
+            "[{}] {}: {}",
+            id.0,
+            node.object_type,
+            preview(&describe(node))
+        );
+        lines.push(format!(
+            "  \"{}\" [label=\"{}\"];",
+            id.0,
+            dot_escape(&label)
+        ));
+    }
+    for (_, edge) in edges {
+        lines.push(format!(
+            "  \"{}\" -> \"{}\" [label=\"{}\"];",
+            edge.subject.0,
+            edge.target.0,
+            dot_escape(&edge.predicate)
+        ));
+    }
+    lines.push("}".to_string());
+    lines
+}
+
+/// Graphviz DOT quoted-string escaping -- just `"` and `\`, the only two characters that would
+/// otherwise break out of a `label="..."` attribute; every real label here is plain, short,
+/// generated text (a node's own [`describe`] output or an edge's own predicate), never arbitrary
+/// untrusted input, so this narrow escaping is enough.
+fn dot_escape(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn friendly_type(node: &NodeRecord) -> String {

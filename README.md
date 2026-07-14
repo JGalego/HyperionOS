@@ -149,7 +149,44 @@ cargo build -p hyperion-console --bin hyperion-console
 HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch ./target/debug/hyperion-console scenarios/backend-mock.txt
 ```
 
+```
+> my name is Alex
+status: done -- [mock model 1] echo: my name is Alex
+
+> launch my startup
+  market_research: Done
+  business_model: Done
+  branding: Done
+  legal_formation: Done
+status: market_research: Done -- [mock model 1] echo: Provide a concise research summary about market_research -- launch my startup. ... (see "/result market_research" for the full text)
+status: business_model: Done -- [mock model 1] echo: Draft a concise, practical business_model -- launch my startup. (see "/result business_model" for the full text)
+status: branding: Done -- [mock model 1] echo: Draft a concise, practical branding -- launch my startup. (see "/result branding" for the full text)
+status: legal_formation: Done -- [mock model 1] echo: Draft a concise, practical legal_formation -- launch my startup. (see "/result legal_formation" for the full text)
+```
+
 See [USAGE_SCENARIOS.md](USAGE_SCENARIOS.md) for how scenarios work, the full set under [`scenarios/`](scenarios/), and how to point one at a real backend (Candle, a local engine, or a cloud provider).
+
+### Inspecting the knowledge graph
+
+`/graph` dumps everything the current session has recorded - real nodes and edges, not a summary. Run it before and after a scenario to see exactly what changed; the output is sorted by id, so an unchanged graph dumps identically every time and any real diff is a real change:
+
+```
+> my name is Alex
+status: done -- [mock model 1] echo: my name is Alex
+
+> /graph
+1 node:
+  [0] intent -- you asked: "my name is Alex" (30% confident) (created 1784044847, updated 1784044847)
+
+0 edges:
+```
+
+`/graph dot` prints the same graph as Graphviz DOT instead, for when you actually want to draw it:
+
+```sh
+printf '%s\n' "launch my startup" "/graph dot" > /tmp/graph-demo.txt
+./target/debug/hyperion-console /tmp/graph-demo.txt | sed -n '/digraph/,/^}/p' | dot -Tsvg -o graph.svg
+```
 
 To use a real cloud provider (OpenAI, Anthropic, Gemini, Groq) or a local engine that needs its own key, copy [`.env.example`](.env.example) to `.env`, fill in the real value, then:
 

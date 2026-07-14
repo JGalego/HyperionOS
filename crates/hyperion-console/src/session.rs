@@ -747,6 +747,24 @@ impl ConsoleSession {
             );
         }
 
+        if lower.starts_with("/graph") {
+            let rest = trimmed["/graph".len()..].trim();
+            let as_dot = match rest {
+                "" => false,
+                "dot" => true,
+                other => {
+                    return Some(vec![format!(
+                        "\"/graph {other}\" isn't a format I know -- try \"/graph\" or \"/graph \
+                         dot\"."
+                    )])
+                }
+            };
+            return Some(
+                self.graph_explorer
+                    .dump_graph(&self.monitor, &self.token, as_dot),
+            );
+        }
+
         if lower.starts_with("connect") {
             for provider in [
                 CloudProvider::OpenAi,
@@ -924,6 +942,12 @@ impl ConsoleSession {
                 .to_string(),
             "  /redo <task> <extra instructions>           redo a task from the last plan with \
              more information, e.g. \"/redo market_research focus on Europe\""
+                .to_string(),
+            "  /graph                                       dump everything recorded, as text \
+             (run before/after to diff what changed)"
+                .to_string(),
+            "  /graph dot                                  the same, as Graphviz DOT -- pipe to \
+             \"dot -Tsvg\" to draw it"
                 .to_string(),
             "  /help                                        show this message".to_string(),
         ]
