@@ -131,6 +131,17 @@ This recomputes the hash directly from the image's own bytes (it never trusts th
 
 See [PRODUCTION_BOOT_PROMPT.md](PRODUCTION_BOOT_PROMPT.md) and the scripts under [boot/scripts/](boot/scripts/) (`build-image.sh` for x86_64, `build-image-aarch64.sh` for aarch64) if you'd rather build an image from source than download one.
 
+## Try the console without an image
+
+For development, the fastest loop is a native build of `hyperion-console` on your own machine - no image, no boot:
+
+```sh
+cargo build -p hyperion-console --bin hyperion-console
+HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch ./target/debug/hyperion-console scenarios/backend-mock.txt
+```
+
+See [USAGE_SCENARIOS.md](USAGE_SCENARIOS.md) for how scenarios work, the full set under [`scenarios/`](scenarios/), and how to point one at a real backend (Candle, a local engine, or a cloud provider).
+
 ## License
 
 MIT - See [LICENSE](LICENSE)
