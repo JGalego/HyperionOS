@@ -2878,6 +2878,7 @@ name = "hyperion-context"
 version = "0.1.0"
 dependencies = [
  "hyperion-capability",
+ "hyperion-crypto",
  "hyperion-ipc",
  "hyperion-knowledge-graph",
  "hyperion-storage",
@@ -2926,6 +2927,7 @@ version = "0.1.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-context",
+ "hyperion-crypto",
  "hyperion-knowledge-graph",
  "hyperion-storage",
  "hyperion-workspace",

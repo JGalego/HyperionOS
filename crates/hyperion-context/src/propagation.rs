@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
+use hyperion_crypto::{Keystore, Signature, VerifyingKey};
 use hyperion_knowledge_graph::{GraphError, KnowledgeGraph, NodeId};
 use serde::{Deserialize, Serialize};
 
@@ -15,20 +16,6 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("system clock before Unix epoch")
         .as_secs()
-}
-
-/// A non-cryptographic checksum, not a real digital signature — see this
-/// crate's doc comment's "Real signatures and trust-level classification"
-/// deferral. Enough to prove and test fail-closed-on-tamper behavior; not a
-/// security boundary until [15 — Security Architecture](../15-security-architecture.md)
-/// (Phase 8) supplies real key material.
-fn checksum(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for &b in bytes {
-        hash ^= b as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
 }
 
 /// docs/07 §Algorithms 2: the recipient's classification, driving which
@@ -118,9 +105,13 @@ pub struct EnvelopeStaleness {
     pub captured_at: u64,
 }
 
+/// `None` until [`ContextPropagation::export`] signs it -- mirrors
+/// `hyperion-plugin-framework`'s/`hyperion-update`'s own `Option<Signature>`
+/// manifest field, the established shape for "a real Ed25519 signature over
+/// this struct's own other fields, computed with that field held out."
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Integrity {
-    pub checksum: u64,
+    pub signature: Option<Signature>,
 }
 
 /// docs/07 §Data Structures' `ContextEnvelope` — the wire format a
@@ -199,25 +190,31 @@ impl ContextPropagation {
         }
     }
 
-    fn sign(mut envelope: ContextEnvelope) -> ContextEnvelope {
-        envelope.integrity.checksum = 0;
+    /// Real Ed25519 signing (PRODUCTION_BOOT_PROMPT.md M9), over the envelope's own JSON bytes
+    /// with `integrity.signature` held `None` -- the same "zero the integrity field, serialize
+    /// the whole struct, sign/hash that" shape the checksum stand-in this replaces already used,
+    /// just with a real signature instead of a hash no forger needs a key to reproduce.
+    fn sign(mut envelope: ContextEnvelope, keystore: &Keystore) -> ContextEnvelope {
+        envelope.integrity.signature = None;
         let bytes = serde_json::to_vec(&envelope).expect("envelope always serializes");
-        envelope.integrity.checksum = checksum(&bytes);
+        envelope.integrity.signature = Some(keystore.sign(&bytes));
         envelope
     }
 
-    fn verify(envelope: &ContextEnvelope) -> bool {
+    fn verify(envelope: &ContextEnvelope, verifying_key: &VerifyingKey) -> bool {
         let mut copy = envelope.clone();
-        let claimed = copy.integrity.checksum;
-        copy.integrity.checksum = 0;
+        let Some(claimed) = copy.integrity.signature.take() else {
+            return false; // an envelope with no signature at all fails closed, never trusted
+        };
         let bytes = serde_json::to_vec(&copy).expect("envelope always serializes");
-        checksum(&bytes) == claimed
+        hyperion_crypto::verify(&bytes, &claimed, verifying_key)
     }
 
     /// `ContextPropagation.export` — docs/07 §Algorithms 1/2: representation
     /// selection (`by_reference` only within the same Trust Boundary) and
     /// redaction (fail-closed default), then a signed, staleness-stamped
     /// envelope.
+    #[allow(clippy::too_many_arguments)]
     pub fn export(
         &self,
         monitor: &CapabilityMonitor,
@@ -226,6 +223,7 @@ impl ContextPropagation {
         target: TrustLevel,
         policy: &RedactionPolicy,
         freshness_horizon_secs: u64,
+        keystore: &Keystore,
     ) -> Result<ContextEnvelope, PropagationError> {
         let same_boundary = target == TrustLevel::SameBoundary;
         let mut entries = Vec::with_capacity(bundle.entries.len());
@@ -288,9 +286,9 @@ impl ContextPropagation {
                 freshness_horizon_secs,
                 captured_at: now(),
             },
-            integrity: Integrity { checksum: 0 },
+            integrity: Integrity { signature: None },
         };
-        Ok(Self::sign(envelope))
+        Ok(Self::sign(envelope, keystore))
     }
 
     fn freshness_report(
@@ -335,8 +333,9 @@ impl ContextPropagation {
         monitor: &CapabilityMonitor,
         token: &CapabilityToken,
         envelope: ContextEnvelope,
+        verifying_key: &VerifyingKey,
     ) -> Result<(Vec<EnvelopeEntry>, FreshnessReport), PropagationError> {
-        if !Self::verify(&envelope) {
+        if !Self::verify(&envelope, verifying_key) {
             return Err(PropagationError::IntegrityFailure);
         }
         {

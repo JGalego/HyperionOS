@@ -61,13 +61,20 @@
 //!   without Phase 3's Local AI Runtime, `summary` mode truncates metadata to
 //!   its first few fields rather than computing a real summary. Noted at the
 //!   call site in [`engine`].
-//! - **Real signatures and trust-level classification** (docs/07 §5,
-//!   §Algorithms 2) — [15 — Security Architecture](../15-security-architecture.md)'s
-//!   `classify()` and real asymmetric signing don't exist until Phase 8.
-//!   [`propagation::TrustLevel`] is caller-supplied rather than derived, and
-//!   envelope "signing" is a non-cryptographic checksum — sufficient to
-//!   prove and test the fail-closed-on-mismatch and no-replay behavior
-//!   docs/07 requires, but explicitly not a security boundary yet.
+//! - ~~Real signatures~~: now real. `hyperion-crypto` (Phase 8/M9) didn't
+//!   exist when this bullet was written; [`propagation::ContextEnvelope`]'s
+//!   `integrity.signature` is now a real Ed25519 [`hyperion_crypto::Signature`],
+//!   produced by [`propagation::ContextPropagation::export`]'s caller-supplied
+//!   `Keystore` and checked by [`propagation::ContextPropagation::import`]'s
+//!   caller-supplied `VerifyingKey` — the same real signing/verifying split
+//!   `hyperion-plugin-framework`/`hyperion-update` already established, not a
+//!   checksum standing in for it anymore.
+//! - **Trust-level classification** (docs/07 §5) — [15 — Security
+//!   Architecture](../15-security-architecture.md)'s `classify()` still
+//!   doesn't exist; [`propagation::TrustLevel`] stays caller-supplied
+//!   rather than derived. A real, unforgeable signature and a real,
+//!   *automatically derived* trust classification are different gaps —
+//!   closing the first doesn't imply the second.
 //! - **A production transport call site.** docs/07 §Interfaces says
 //!   "Context Propagation owns only the envelope contract... not the
 //!   bytes-on-the-wire transport" — this crate still has no built-in

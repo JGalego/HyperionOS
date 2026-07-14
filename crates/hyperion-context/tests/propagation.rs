@@ -9,6 +9,7 @@ use hyperion_context::{
     merge, Budget, ContextEngine, ContextPropagation, MergeOutcome, PropagationError,
     RedactionAction, RedactionPolicy, Representation, Scope, TrustLevel,
 };
+use hyperion_crypto::Keystore;
 use hyperion_knowledge_graph::KnowledgeGraph;
 use serde_json::json;
 
@@ -17,17 +18,19 @@ fn setup() -> (
     CapabilityMonitor,
     hyperion_capability::CapabilityToken,
     Arc<KnowledgeGraph>,
+    Keystore,
 ) {
     let dir = tempfile::tempdir().unwrap();
     let mut monitor = CapabilityMonitor::new();
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
-    (dir, monitor, token, graph)
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
+    (dir, monitor, token, graph, keystore)
 }
 
 #[test]
 fn category_absent_from_policy_is_redacted_by_default() {
-    let (_dir, monitor, token, graph) = setup();
+    let (_dir, monitor, token, graph, keystore) = setup();
     let engine = ContextEngine::new(graph.clone());
     let propagation = ContextPropagation::new(graph.clone());
 
@@ -60,6 +63,7 @@ fn category_absent_from_policy_is_redacted_by_default() {
             TrustLevel::SandboxedCapability,
             &policy,
             3600,
+            &keystore,
         )
         .unwrap();
 
@@ -71,7 +75,7 @@ fn category_absent_from_policy_is_redacted_by_default() {
 
 #[test]
 fn same_boundary_export_uses_by_reference_not_by_value() {
-    let (_dir, monitor, token, graph) = setup();
+    let (_dir, monitor, token, graph, keystore) = setup();
     let engine = ContextEngine::new(graph.clone());
     let propagation = ContextPropagation::new(graph.clone());
 
@@ -106,6 +110,7 @@ fn same_boundary_export_uses_by_reference_not_by_value() {
             TrustLevel::SameBoundary,
             &policy,
             3600,
+            &keystore,
         )
         .unwrap();
 
@@ -117,7 +122,7 @@ fn same_boundary_export_uses_by_reference_not_by_value() {
 
 #[test]
 fn cross_boundary_export_materializes_by_value() {
-    let (_dir, monitor, token, graph) = setup();
+    let (_dir, monitor, token, graph, keystore) = setup();
     let engine = ContextEngine::new(graph.clone());
     let propagation = ContextPropagation::new(graph.clone());
 
@@ -152,6 +157,7 @@ fn cross_boundary_export_materializes_by_value() {
             TrustLevel::RemoteDevice,
             &policy,
             3600,
+            &keystore,
         )
         .unwrap();
 
@@ -163,7 +169,7 @@ fn cross_boundary_export_materializes_by_value() {
 
 #[test]
 fn tampered_envelope_is_rejected_on_import() {
-    let (_dir, monitor, token, graph) = setup();
+    let (_dir, monitor, token, graph, keystore) = setup();
     let engine = ContextEngine::new(graph.clone());
     let propagation = ContextPropagation::new(graph.clone());
 
@@ -197,17 +203,21 @@ fn tampered_envelope_is_rejected_on_import() {
             TrustLevel::RemoteDevice,
             &policy,
             3600,
+            &keystore,
         )
         .unwrap();
 
-    envelope.integrity.checksum ^= 0xdead_beef;
-    let result = propagation.import(&monitor, &token, envelope);
+    // Real content tampered after signing, old (now-invalid) signature left in place -- a
+    // stronger proof than corrupting the signature bytes themselves: this confirms the real
+    // Ed25519 signature actually covers the envelope's content, not just its own presence.
+    envelope.bundle_session_id = "forged-session".to_string();
+    let result = propagation.import(&monitor, &token, envelope, &keystore.verifying_key());
     assert!(matches!(result, Err(PropagationError::IntegrityFailure)));
 }
 
 #[test]
-fn replayed_envelope_id_is_rejected_the_second_time() {
-    let (_dir, monitor, token, graph) = setup();
+fn an_envelope_signed_by_a_different_keystore_is_rejected() {
+    let (_dir, monitor, token, graph, keystore) = setup();
     let engine = ContextEngine::new(graph.clone());
     let propagation = ContextPropagation::new(graph.clone());
 
@@ -241,19 +251,74 @@ fn replayed_envelope_id_is_rejected_the_second_time() {
             TrustLevel::RemoteDevice,
             &policy,
             3600,
+            &keystore,
+        )
+        .unwrap();
+
+    // A forger with their own real Ed25519 keypair can never produce a signature the real
+    // sender's verifying key accepts -- unlike a checksum, which any forger can recompute over
+    // altered content without needing any key at all.
+    let forger_dir = tempfile::tempdir().unwrap();
+    let forger_keystore = Keystore::open_or_create(&forger_dir.path().join("forger.key")).unwrap();
+    let result = propagation.import(&monitor, &token, envelope, &forger_keystore.verifying_key());
+    assert!(matches!(result, Err(PropagationError::IntegrityFailure)));
+}
+
+#[test]
+fn replayed_envelope_id_is_rejected_the_second_time() {
+    let (_dir, monitor, token, graph, keystore) = setup();
+    let engine = ContextEngine::new(graph.clone());
+    let propagation = ContextPropagation::new(graph.clone());
+
+    let node = graph
+        .put_node(
+            &monitor,
+            &token,
+            None,
+            "document",
+            None,
+            json!({"title": "doc"}),
+        )
+        .unwrap();
+    let scope = Scope {
+        intent_id: "i".into(),
+        session_id: "s".into(),
+        mentions: Vec::new(),
+        anchors: vec![node],
+    };
+    let bundle = engine
+        .assemble(&monitor, &token, &scope, Budget::default())
+        .unwrap();
+    let mut rules = HashMap::new();
+    rules.insert("document".to_string(), RedactionAction::Pass);
+    let policy = RedactionPolicy::new(TrustLevel::RemoteDevice, rules);
+    let envelope = propagation
+        .export(
+            &monitor,
+            &token,
+            &bundle,
+            TrustLevel::RemoteDevice,
+            &policy,
+            3600,
+            &keystore,
         )
         .unwrap();
 
     assert!(propagation
-        .import(&monitor, &token, envelope.clone())
+        .import(
+            &monitor,
+            &token,
+            envelope.clone(),
+            &keystore.verifying_key()
+        )
         .is_ok());
-    let result = propagation.import(&monitor, &token, envelope);
+    let result = propagation.import(&monitor, &token, envelope, &keystore.verifying_key());
     assert!(matches!(result, Err(PropagationError::Replayed(_))));
 }
 
 #[test]
 fn entry_stale_beyond_horizon_is_downgraded_not_trusted() {
-    let (_dir, monitor, token, graph) = setup();
+    let (_dir, monitor, token, graph, keystore) = setup();
     let engine = ContextEngine::new(graph.clone());
     let propagation = ContextPropagation::new(graph.clone());
 
@@ -289,6 +354,7 @@ fn entry_stale_beyond_horizon_is_downgraded_not_trusted() {
             TrustLevel::RemoteDevice,
             &policy,
             0,
+            &keystore,
         )
         .unwrap();
 
@@ -307,7 +373,9 @@ fn entry_stale_beyond_horizon_is_downgraded_not_trusted() {
         )
         .unwrap();
 
-    let (entries, report) = propagation.import(&monitor, &token, envelope).unwrap();
+    let (entries, report) = propagation
+        .import(&monitor, &token, envelope, &keystore.verifying_key())
+        .unwrap();
     assert!(report
         .per_entry
         .values()
@@ -319,7 +387,7 @@ fn entry_stale_beyond_horizon_is_downgraded_not_trusted() {
 
 #[test]
 fn merge_picks_up_non_overlapping_edits_and_surfaces_true_conflicts() {
-    let (_dir, monitor, token, graph) = setup();
+    let (_dir, monitor, token, graph, _keystore) = setup();
     let engine = ContextEngine::new(graph.clone());
 
     let a = graph

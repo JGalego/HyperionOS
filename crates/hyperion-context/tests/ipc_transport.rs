@@ -16,6 +16,7 @@ use hyperion_context::{
     Budget, ContextEngine, ContextEnvelope, ContextPropagation, RedactionAction, RedactionPolicy,
     Representation, Scope, TrustLevel,
 };
+use hyperion_crypto::Keystore;
 use hyperion_ipc::{
     channel_open, ChannelClass, FrameBody, IpcBus, Notification, Operation, SchemaId,
 };
@@ -38,6 +39,7 @@ fn an_exported_envelope_survives_a_real_ipc_hop_and_imports_cleanly() {
 
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
     let node_id = graph
         .put_node(
             &monitor,
@@ -76,6 +78,7 @@ fn an_exported_envelope_survives_a_real_ipc_hop_and_imports_cleanly() {
             TrustLevel::TrustedAgent,
             &policy,
             3600,
+            &keystore,
         )
         .unwrap();
     // A real byte payload, not a Rust reference handed across a function
@@ -124,7 +127,12 @@ fn an_exported_envelope_survives_a_real_ipc_hop_and_imports_cleanly() {
 
     let monitor = Arc::try_unwrap(monitor).unwrap().into_inner().unwrap();
     let (entries, _freshness) = propagation
-        .import(&monitor, &receiver_root, received_envelope)
+        .import(
+            &monitor,
+            &receiver_root,
+            received_envelope,
+            &keystore.verifying_key(),
+        )
         .expect("a freshly exported, unmodified, unreplayed envelope must import cleanly");
 
     assert_eq!(entries.len(), 1);
