@@ -7,9 +7,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use hyperion_agent_runtime::{AgentRuntime, InvokeOutcome};
-use hyperion_ai_runtime::{sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant};
+use hyperion_ai_runtime::{
+    sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
+};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
-use hyperion_context::{Budget, ContextBundle, ContextEngine, ExpertiseEstimate, ExpertiseLevel, Scope};
+use hyperion_context::{
+    Budget, ContextBundle, ContextEngine, ExpertiseEstimate, ExpertiseLevel, Scope,
+};
 use hyperion_coordination::{CoordinationSession, TaskStatus};
 use hyperion_crypto::Keystore;
 use hyperion_intent::{HandleOutcome, IntentEngine};
@@ -146,7 +150,10 @@ impl EmbeddedSession {
     /// `run_decomposed_plan`, there is no per-tick progress callback here (see lib.rs's
     /// deferred-scope list): this call blocks the background thread [`crate::ShellApp`] spawned
     /// for it until the whole plan converges, then returns once.
-    fn run_decomposed_plan(&mut self, ticket: &hyperion_intent::ExecutionTicket) -> (String, Vec<TaskOutcome>) {
+    fn run_decomposed_plan(
+        &mut self,
+        ticket: &hyperion_intent::ExecutionTicket,
+    ) -> (String, Vec<TaskOutcome>) {
         let session_id = match self.coordination.create_session(
             &self.monitor,
             &self.token,
@@ -313,9 +320,7 @@ impl IntentSink for EmbeddedSession {
                 return TurnOutcome {
                     graph: None,
                     tree: None,
-                    narration: vec![format!(
-                        "I understood that, but couldn't act on it: {e}"
-                    )],
+                    narration: vec![format!("I understood that, but couldn't act on it: {e}")],
                 }
             }
         };

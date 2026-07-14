@@ -102,29 +102,44 @@ impl eframe::App for ShellApp {
 
         let mut activated: Option<String> = None;
 
-        if panels.iter().any(|p| p.region_affinity == RegionAffinity::TopBar) {
+        if panels
+            .iter()
+            .any(|p| p.region_affinity == RegionAffinity::TopBar)
+        {
             egui::TopBottomPanel::top("top_region").show(ctx, |ui| {
                 render_region(ui, panels, RegionAffinity::TopBar, &mut activated);
             });
         }
-        if panels.iter().any(|p| p.region_affinity == RegionAffinity::Left) {
+        if panels
+            .iter()
+            .any(|p| p.region_affinity == RegionAffinity::Left)
+        {
             egui::SidePanel::left("left_region").show(ctx, |ui| {
                 render_region(ui, panels, RegionAffinity::Left, &mut activated);
             });
         }
-        if panels.iter().any(|p| p.region_affinity == RegionAffinity::Right) {
+        if panels
+            .iter()
+            .any(|p| p.region_affinity == RegionAffinity::Right)
+        {
             egui::SidePanel::right("right_region").show(ctx, |ui| {
                 render_region(ui, panels, RegionAffinity::Right, &mut activated);
             });
         }
-        if panels.iter().any(|p| p.region_affinity == RegionAffinity::BottomBar) {
+        if panels
+            .iter()
+            .any(|p| p.region_affinity == RegionAffinity::BottomBar)
+        {
             egui::TopBottomPanel::bottom("bottom_region").show(ctx, |ui| {
                 render_region(ui, panels, RegionAffinity::BottomBar, &mut activated);
             });
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            if panels.iter().any(|p| p.region_affinity == RegionAffinity::Center) {
+            if panels
+                .iter()
+                .any(|p| p.region_affinity == RegionAffinity::Center)
+            {
                 render_region(ui, panels, RegionAffinity::Center, &mut activated);
             } else if let Some(outcome) = &self.current {
                 // Fell out of the Intent Engine with no compiled workspace at all (a parse
