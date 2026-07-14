@@ -41,12 +41,22 @@
 //!   [`types::Scope::anchors`] — no dedicated `device_id`-as-anchor
 //!   special case was needed the way [`types::Scope::intent_id`] required
 //!   one, since `anchors` was never an inert field to begin with.
-//! - **Adaptive Complexity / `ExpertiseEstimate`** (docs/06 §5.4) is a read
-//!   over vocabulary complexity and error-recovery behavior this crate has
-//!   no source for yet (needs Phase 3's Intent Engine and Phase 4's Agent
-//!   Runtime); [`engine::ContextEngine::current_expertise`] always returns a
-//!   fixed, zero-confidence `Novice` estimate rather than fabricating a
-//!   signal, and says so in its own `evidence` field.
+//! - **Adaptive Complexity / `ExpertiseEstimate`** (docs/06 §5.4) is fully a
+//!   read over vocabulary complexity, capability tier, and error-recovery
+//!   behavior in docs/06's fuller design — sources this crate still cannot
+//!   read from directly: `hyperion-intent` already depends on this crate (it
+//!   passes a real `ContextEngine` into `IntentEngine::new`), so a reverse
+//!   dependency back onto Intent Engine or Agent Runtime would be a real
+//!   cycle, not just an unwired gap, even though both now exist (Phases 3/4).
+//!   [`engine::ContextEngine::current_expertise`] instead reads the one real
+//!   signal this crate does have a source for — the calling session's own
+//!   working-set activity (how many distinct Semantic Objects it has
+//!   touched, how repeatedly) — narrower than docs/06's full design but a
+//!   genuinely computed, non-fabricated estimate once a session has real
+//!   activity to read, rather than an always-fixed stub; a session with no
+//!   activity yet still reports the same fixed, zero-confidence `Novice`
+//!   estimate this method always returned, honestly labeled as such in its
+//!   own `evidence` field.
 //! - **Semantic summarization** (docs/06 §2's `summary` inclusion mode) —
 //!   without Phase 3's Local AI Runtime, `summary` mode truncates metadata to
 //!   its first few fields rather than computing a real summary. Noted at the

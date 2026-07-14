@@ -265,7 +265,7 @@ impl ContextEngine {
             entries,
             assembled_at: now_ts,
             budget,
-            expertise_signal: self.current_expertise("general"),
+            expertise_signal: working_set.expertise_estimate("general"),
         })
     }
 
@@ -410,16 +410,23 @@ impl ContextEngine {
     }
 
     /// `ContextEngine.currentExpertise` — see this crate's doc comment's
-    /// Adaptive Complexity deferral: always a fixed, zero-confidence
-    /// estimate, honestly labeled rather than fabricated.
-    pub fn current_expertise(&self, domain: &str) -> ExpertiseEstimate {
-        ExpertiseEstimate {
-            domain: domain.to_string(),
-            level: ExpertiseLevel::Novice,
-            evidence: vec![
-                "no signal source yet — Intent Engine (Phase 3) not implemented".to_string(),
-            ],
-            confidence: 0.0,
+    /// Adaptive Complexity deferral: a real signal derived from `session_id`'s
+    /// own working-set activity, narrower than docs/06's fuller vocabulary-
+    /// complexity/capability-tier read, honestly labeled as such rather than
+    /// fabricated. A session with no working-set activity yet (never
+    /// assembled a bundle, or an unrecognized `session_id`) reports the same
+    /// fixed, zero-confidence `Novice` estimate this method always returned
+    /// before.
+    pub fn current_expertise(&self, session_id: &str, domain: &str) -> ExpertiseEstimate {
+        let working_sets = self.working_sets.lock().unwrap();
+        match working_sets.get(session_id) {
+            Some(working_set) => working_set.expertise_estimate(domain),
+            None => ExpertiseEstimate {
+                domain: domain.to_string(),
+                level: ExpertiseLevel::Novice,
+                evidence: vec!["no working-set activity yet for this session".to_string()],
+                confidence: 0.0,
+            },
         }
     }
 }

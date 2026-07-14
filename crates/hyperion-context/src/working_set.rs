@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use hyperion_knowledge_graph::NodeId;
 
+use crate::types::{ExpertiseEstimate, ExpertiseLevel};
+
 /// docs/06 §Algorithms 3: "a per-session working set... produces new
 /// bundles as incremental diffs against it," and §Recovery Mechanisms:
 /// "thrashing is dampened with hysteresis: once an entity is included in
@@ -51,5 +53,38 @@ impl WorkingSet {
 
     pub(crate) fn active_node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.entries.keys().copied()
+    }
+
+    /// docs/06 §5.4's `ExpertiseEstimate`, narrowed to the one signal this
+    /// crate actually has a source for: how broadly and how repeatedly this
+    /// session's working set has been touched. Not docs/06's fuller
+    /// vocabulary-complexity/capability-tier read (that needs a live signal
+    /// from `hyperion-intent`/`hyperion-agent-runtime`, which this crate
+    /// cannot depend on -- `hyperion-intent` already depends on
+    /// `hyperion-context`, so the reverse edge would be a real cycle) --
+    /// see this crate's doc comment. A session with no activity yet reports
+    /// the same fixed `Novice`/zero-confidence estimate this method always
+    /// returned before; only a session with real accumulated activity now
+    /// gets a genuinely computed one.
+    pub(crate) fn expertise_estimate(&self, domain: &str) -> ExpertiseEstimate {
+        let distinct_entries = self.entries.len();
+        let total_hits: u32 = self.entries.values().map(|e| e.hits).sum();
+
+        let (level, confidence) = match distinct_entries + total_hits as usize {
+            0 => (ExpertiseLevel::Novice, 0.0),
+            1..=4 => (ExpertiseLevel::Novice, 0.2),
+            5..=14 => (ExpertiseLevel::Intermediate, 0.5),
+            15..=29 => (ExpertiseLevel::Advanced, 0.7),
+            _ => (ExpertiseLevel::Expert, 0.85),
+        };
+
+        ExpertiseEstimate {
+            domain: domain.to_string(),
+            level,
+            evidence: vec![format!(
+                "{distinct_entries} distinct working-set entries, {total_hits} cumulative hits this session"
+            )],
+            confidence,
+        }
     }
 }
