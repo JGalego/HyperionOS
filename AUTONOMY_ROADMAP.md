@@ -34,9 +34,10 @@ mean here):
 - **Tool *creation*.** An agent authoring a brand-new plugin end to end: drafts a small script and
   manifest, runs it through `hyperion-sdk`'s existing harness/validation, installs it through
   `PluginRegistry::install` — using Slice 1's execution path, now real.
-- **`hyperion-api-gateway`'s parallel gap.** It holds its own `Arc<PluginRegistry>` with the exact
-  same "data only, no execution" problem independently documented in its own code; wired to the
-  same execution path Slice 1 builds for `hyperion-agent-runtime`.
+- **`hyperion-api-gateway`'s parallel gap, landed.** Its own `ApiGateway::dispatch_one` now checks
+  `self.registry` for a runnable `NativeBinary` implementation before falling back to
+  `hyperion_agent_runtime::dispatch_stub_capability`, the exact same real execution path Slice 1
+  built — proven end to end the same way, through `invoke_capability`.
 
 **Deliberately still deferred:**
 

@@ -449,6 +449,26 @@ impl ApiGateway {
             });
 
         let Some(class) = local_model_class else {
+            // AUTONOMY_ROADMAP.md's Slice 1, closed here too: this gateway's own `registry` was
+            // real data-only, same gap `hyperion-agent-runtime::AgentRuntime::invoke` had, before
+            // that crate wired the identical real, sandboxed `NativeBinary` execution path. A
+            // contract with a real, installed, runnable implementation dispatches to it for real,
+            // instead of falling straight to the stub.
+            if self
+                .registry
+                .query(&request.contract_id)
+                .is_some_and(|entry| {
+                    entry
+                        .implementations
+                        .iter()
+                        .any(|i| i.native_binary.is_some())
+                })
+            {
+                return self
+                    .registry
+                    .invoke_native_binary(&request.contract_id, request.inputs.clone())
+                    .map_err(|e| e.to_string());
+            }
             return hyperion_agent_runtime::dispatch_stub_capability(
                 &request.contract_id,
                 &request.inputs,

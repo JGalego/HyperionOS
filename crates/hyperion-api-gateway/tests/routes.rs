@@ -931,3 +931,130 @@ fn invoke_capability_with_no_registered_contract_is_not_eligible() {
     );
     assert!(matches!(result, Err(ApiError::NoEligibleImplementation)));
 }
+
+/// AUTONOMY_ROADMAP.md's Slice 1, closed here too: this gateway's own `registry` had the exact
+/// same "data only, no execution" gap `hyperion-agent-runtime::AgentRuntime::invoke` did,
+/// independently documented in this crate's own code -- now wired to the same real, sandboxed
+/// `NativeBinary` execution path. Linux-only, matching `hyperion-trust-boundary`'s own gating.
+#[cfg(target_os = "linux")]
+#[test]
+fn invoke_capability_dispatches_to_a_real_installed_native_binary_plugin() {
+    use hyperion_plugin_framework::{CapabilityGrantRequest, NativeBinaryDescriptor, Operation};
+
+    fn uppercase_tool_bin() -> std::path::PathBuf {
+        let target = "x86_64-unknown-linux-musl";
+        let status = std::process::Command::new("cargo")
+            .args([
+                "build",
+                "--target",
+                target,
+                "--bin",
+                "uppercase_tool",
+                "-p",
+                "hyperion-plugin-framework",
+            ])
+            .status()
+            .expect("run cargo build for the musl uppercase_tool binary");
+        assert!(
+            status.success(),
+            "building the musl uppercase_tool binary failed"
+        );
+
+        let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("crates/hyperion-api-gateway has a workspace root two levels up")
+            .to_path_buf();
+        workspace_root
+            .join("target")
+            .join(target)
+            .join("debug")
+            .join("uppercase_tool")
+    }
+
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let context = Arc::new(ContextEngine::new(graph.clone()));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
+    let memory = Arc::new(MemoryEngine::new(graph.clone()));
+    let registry = Arc::new(PluginRegistry::new());
+    let (_key_dir, keystore) = keystore();
+    let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry.clone(),
+        explainability,
+        router,
+        context,
+        ai_runtime,
+    );
+    gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
+
+    let mut manifest = PluginManifest {
+        plugin_id: 1,
+        publisher: "acme-plugins".to_string(),
+        signature: None,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "text.uppercase".to_string(),
+            contract: SemanticContract {
+                inputs: vec!["text".to_string()],
+                outputs: vec!["text".to_string()],
+                side_effects: vec![SideEffect::None],
+            },
+            implementation_kind: ImplementationKind::NativeBinary,
+            quality_score: 0.5,
+            version: 1,
+            native_binary: Some(NativeBinaryDescriptor {
+                program: uppercase_tool_bin(),
+                args: vec![],
+            }),
+        })],
+        requested_permissions: vec![CapabilityGrantRequest {
+            operation: Operation::Execute,
+            scope: "text.uppercase".to_string(),
+            justification: "run the real sandboxed tool".to_string(),
+        }],
+        min_trust_depth: TrustDepth::D1,
+    };
+    manifest.signature = Some(sign(&manifest, &keystore));
+    registry
+        .install(
+            &mut monitor,
+            &root,
+            manifest,
+            TrustDepth::D2,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    let response = gateway
+        .invoke_capability(
+            &monitor,
+            &root,
+            InvokeRequest {
+                contract_id: "text.uppercase".to_string(),
+                inputs: serde_json::json!({"text": "hello from the real gateway"}),
+                agent_id: 42,
+                intent_id: 7,
+                risk: RiskHints::default(),
+                confirmed: false,
+            },
+            1_000,
+        )
+        .unwrap();
+
+    assert_eq!(
+        response.outputs.get("text").and_then(|v| v.as_str()),
+        Some("HELLO FROM THE REAL GATEWAY"),
+        "expected the real sandboxed plugin's real output, got: {:?}",
+        response.outputs
+    );
+}
