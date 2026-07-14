@@ -8,10 +8,13 @@ sessions, not only hand-authored cases — except this file is the human-readabl
 machine-checked form of each finding below lives as a real regression test in the relevant crate
 (linked per entry).
 
-**Status: a starting set, not the "dozens" docs/41 asks for.** ~10 scenarios have been run so far,
+**Status: a starting set, not the "dozens" docs/41 asks for.** ~13 scenarios have been run so far,
 plus all ten of the per-backend scenario files under [`scenarios/`](scenarios/) (scenario 10
 below), against `hyperion-console` only (the one real, natively-buildable, non-GUI entry point
 this sandbox can drive with piped stdin or a scenario file — see "How scenarios are run" below).
+Scenarios 11 and 13 (AUTONOMY_ROADMAP.md's Resourceful and Self-Sustaining pillars) are the first
+two verified via `cargo test` rather than a driven console session — named honestly as such, since
+neither has a console-level trigger today; see each entry's own "Open finding."
 `hyperion-shell` (a real
 GUI needing a display) and full-system scenarios (package management, multi-user permissions,
 process management, actual filesystem operations) have not been run at all yet and are named as
@@ -375,6 +378,165 @@ got wrong, both corrected in place rather than left standing:
 
 **Status:** Verified live, not a fix — this file's own "Running a scenario against a real
 backend" section carries the corrected, verified claims and the ten scenario files themselves.
+
+### 11. Resourceful — a real installed plugin actually runs (no echo)
+
+**AUTONOMY_ROADMAP.md's Slice 1/1b.** Unlike scenarios 1-10, this one has **no CLI-drivable path
+today** — `hyperion-console` never routes an utterance's text into an arbitrary capability's raw
+JSON args, so there's no slash command or utterance that reaches `PluginRegistry::invoke_native_binary`
+by hand. Real, honest verification here is `cargo test`, run fresh, not assumed from memory:
+
+```
+$ cargo test -p hyperion-plugin-framework --test native_binary_execution
+running 5 tests
+test invoking_an_uninstalled_capability_is_a_real_honest_error ... ok
+test installing_a_non_executable_file_as_a_native_binary_is_rejected ... ok
+test installing_a_native_binary_with_a_nonexistent_program_is_rejected ... ok
+test an_installed_native_binary_actually_runs_and_returns_real_output ... ok
+test a_tool_exiting_nonzero_is_a_real_honest_error_not_a_panic ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+$ cargo test -p hyperion-agent-runtime --test plugin_dispatch
+running 2 tests
+test invoke_falls_back_to_the_stub_echo_when_no_plugin_registry_is_wired ... ok
+test invoke_dispatches_an_unrecognized_capability_to_a_real_installed_plugin ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+$ cargo test -p hyperion-api-gateway
+running 14 tests
+...
+test invoke_capability_dispatches_to_a_real_installed_native_binary_plugin ... ok
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+Each proves the real thing end to end: a tiny musl-built binary
+(`crates/hyperion-plugin-framework/src/bin/uppercase_tool.rs`) is installed with a real
+`NativeBinaryDescriptor`, then invoked through the exact real sandboxed path
+(`hyperion_trust_boundary::spawn`) via three separate real call sites —
+`PluginRegistry::invoke_native_binary` directly, `AgentRuntime::invoke`'s dispatch chain, and
+`ApiGateway::dispatch_one`'s own — and its own real stdout comes back, not a canned response.
+
+**Status:** Verified live via `cargo test`, not a fix. **Open finding, named honestly:** there is
+no way to demo this from `hyperion-console` today (no utterance or slash command reaches a
+plugin's `capability_ref`) — a real gap for whoever picks up making this interactively drivable,
+tracked here rather than silently left implicit.
+
+### 12. Social — two real Hyperion processes talk over real MCP and A2A
+
+**AUTONOMY_ROADMAP.md's Slice 2.** Unlike scenario 11, this one *is* fully CLI-drivable — a human
+can run every step below by hand. Two real, separately-launched `hyperion-console` processes,
+talking over real HTTP, JSON-RPC 2.0 (MCP) and the real A2A spec:
+
+```sh
+cargo build -p hyperion-console --bin hyperion-console
+printf '/mcp-server 8765\n/standby\n' > /tmp/mcp-demo.txt
+HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-mcp-demo ./target/debug/hyperion-console /tmp/mcp-demo.txt
+```
+```
+> /mcp-server 8765
+Real MCP server listening on http://127.0.0.1:8765 -- JSON-RPC 2.0 (initialize, tools/list, tools/call). ...
+> /standby
+Standing by -- press Enter at this terminal when you're done testing, to stop.
+```
+
+From a second terminal, real `curl` calls against the real running server:
+
+```sh
+curl -s http://127.0.0.1:8765/ -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+```
+```json
+{"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{}},"protocolVersion":"2024-11-05","serverInfo":{"name":"hyperion-console","version":"0.1.0"}}}
+```
+
+Two `tools/call hyperion.ask` turns in the same connection prove real conversational continuity —
+the exact same `prompt_with_recent_history` mechanism scenario 9 established, now reachable over
+the wire, not just in-process:
+
+```sh
+curl -s http://127.0.0.1:8765/ -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"hyperion.ask","arguments":{"prompt":"my name is Alex"}}}'
+curl -s http://127.0.0.1:8765/ -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"hyperion.ask","arguments":{"prompt":"what is my name"}}}'
+```
+```json
+{"id":3,"jsonrpc":"2.0","result":{"content":[{"text":"status: done -- [mock model 1] echo: my name is Alex","type":"text"}],"isError":false}}
+{"id":4,"jsonrpc":"2.0","result":{"content":[{"text":"status: done -- [mock model 1] echo: Recent conversation, most recent last:\nmy name is Alex\n\nNow respond to: what is my name","type":"text"}],"isError":false}}
+```
+
+`/recall` over the same tool confirms both turns landed in the one shared session's real
+conversation history (`[1] you asked: \"what is my name\" (30% confident)`, `[2] you asked: \"my
+name is Alex\" (30% confident)`).
+
+A2A, the outbound half this time — a real *second* `hyperion-console` process runs `/a2a-call`
+against a real running `/a2a-server`, injecting a turn from an entirely separate process into the
+server's session:
+
+```sh
+printf '/a2a-server 8766\n/standby\n' > /tmp/a2a-demo.txt
+HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-a2a-demo ./target/debug/hyperion-console /tmp/a2a-demo.txt &
+
+printf '/a2a-call 127.0.0.1 8766 my name is Jordan\n' > /tmp/a2a-call-demo.txt
+HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-a2a-caller ./target/debug/hyperion-console /tmp/a2a-call-demo.txt
+```
+```
+> /a2a-call 127.0.0.1 8766 my name is Jordan
+status: done -- [mock model 1] echo: my name is Jordan
+```
+
+A raw `SendMessage` call against the real spec-defined endpoint, from a third vantage point
+(plain `curl`), shows the turn the second process injected is really there in the server's own
+memory — not two divergent conversations:
+
+```sh
+curl -s http://127.0.0.1:8766/.well-known/agent-card.json
+curl -s http://127.0.0.1:8766/ -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"what is my name"}]},"configuration":{"returnImmediately":false}}}'
+```
+```json
+{"capabilities":{"extendedAgentCard":false,"pushNotifications":false,"streaming":false},"id":"hyperion-console","interfaces":[{"type":"json-rpc","url":"/"}],"name":"Hyperion","provider":{"name":"Hyperion","url":"https://github.com/JGalego/HyperionOS"},"skills":[{"description":"A real utterance through Hyperion's real Intent Engine and Agent dispatch.","id":"hyperion.ask","name":"Ask Hyperion"}]}
+{"id":1,"jsonrpc":"2.0","result":{"contextId":"task-2","id":"task-2","status":{"message":{"messageId":"task-2-reply","parts":[{"text":"status: done -- [mock model 1] echo: Recent conversation, most recent last:\nmy name is Jordan\n\nNow respond to: what is my name"}],"role":"ROLE_AGENT"},"state":"TASK_STATE_COMPLETED","timestamp":"2026-07-14T18:39:18Z"}}}
+```
+
+**Status:** Verified live, exactly as shown above, not a fix. `/standby` is what makes any of this
+possible by hand at all — without it, a scenario file ending would tear the whole process (server
+included) down before a second terminal could ever reach it. Automated regression coverage for the
+same three flows lives in `crates/hyperion-console/tests/mcp_a2a_server.rs`.
+
+### 13. Self-sustaining — a suspended agent auto-resumes, and remembers across a restart
+
+**AUTONOMY_ROADMAP.md's Slice 3/3b.** Like scenario 11, there is no console-level trigger for this
+— nothing in `hyperion-console`'s utterance-parsing layer ever constructs the `{"force_fail":
+true}` JSON that trips `hyperion-agent-runtime`'s circuit breaker on purpose; that's a raw
+`AgentRuntime::invoke` argument only reachable from Rust code today. Real, honest verification is
+`cargo test`, run fresh:
+
+```
+$ cargo test -p hyperion-agent-runtime --test adaptive_backoff
+running 4 tests
+test an_immediate_retry_after_suspension_gets_an_honest_still_recovering_message ... ok
+test a_real_success_streak_after_resume_decays_times_suspended_back_down ... ok
+test after_the_real_backoff_window_elapses_the_instance_auto_resumes_and_actually_runs ... ok
+test a_second_suspensions_backoff_is_measurably_longer_than_the_first ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.22s
+
+$ cargo test -p hyperion-agent-runtime --test cross_session_learning
+running 2 tests
+test a_different_specialization_has_no_remembered_history ... ok
+test a_specializations_suspension_history_survives_a_real_restart ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+Together these prove, with real wall-clock waits (no clock-injection seam in this crate) and a
+real on-disk Knowledge Graph opened twice against the same path (simulating a genuine process
+restart): three consecutive real failures suspend an instance; an immediate retry gets an honest
+"still recovering, try again" message instead of a bare technical error; the instance auto-resumes
+and actually runs once its real adaptive backoff window elapses; a *second* suspension's backoff
+is measurably longer than the first (the system gets more cautious about a repeat offender); a
+real streak of consecutive successes after a resume decays that caution back down (it "comes out
+stronger," not permanently scarred); and none of this resets to a blank slate across a real
+restart — a specialization's own suspension history survives, while an unrelated specialization's
+fresh instance still starts at zero.
+
+**Status:** Verified live via `cargo test`, not a fix. **Open finding, named honestly:** same gap
+as scenario 11 — no interactive way exists yet to force a real capability failure from the
+console, so this pillar can only be demonstrated today by someone willing to read Rust test code.
 
 ## Open findings (named, not fixed)
 

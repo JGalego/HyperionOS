@@ -188,6 +188,23 @@ printf '%s\n' "launch my startup" "/graph dot" > /tmp/graph-demo.txt
 ./target/debug/hyperion-console /tmp/graph-demo.txt | sed -n '/digraph/,/^}/p' | dot -Tsvg -o graph.svg
 ```
 
+### Talking to another Hyperion instance
+
+`/mcp-server` and `/a2a-server` turn a running console into a real MCP or A2A server over HTTP; `/standby` keeps the process alive afterward so you can test it from another terminal:
+
+```sh
+printf '/mcp-server 8765\n/standby\n' > /tmp/mcp-demo.txt
+HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-mcp-demo ./target/debug/hyperion-console /tmp/mcp-demo.txt
+```
+
+From a second terminal:
+
+```sh
+curl -s http://127.0.0.1:8765/ -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"hyperion.ask","arguments":{"prompt":"my name is Alex"}}}'
+```
+
+`/mcp-call <host> <port> <tool> <json args>` and `/a2a-call <host> <port> <message>` are the outbound half - a real Hyperion instance calling out to another one. See [USAGE_SCENARIOS.md](USAGE_SCENARIOS.md#12-social--two-real-hyperion-processes-talk-over-real-mcp-and-a2a) for a full, live-verified transcript, and [AUTONOMY_ROADMAP.md](AUTONOMY_ROADMAP.md) for what's real today across Hyperion's resourceful/social/self-sustaining pillars versus what's still deliberately deferred.
+
 To use a real cloud provider (OpenAI, Anthropic, Gemini, Groq) or a local engine that needs its own key, copy [`.env.example`](.env.example) to `.env`, fill in the real value, then:
 
 ```sh
