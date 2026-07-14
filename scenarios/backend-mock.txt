@@ -1,0 +1,21 @@
+# The zero-setup baseline: MockBackend, no build features, no secrets, no external services.
+# This is what anyone cloning the repo gets by default -- run it with:
+#
+#   cargo build -p hyperion-console --bin hyperion-console
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/backend-mock.txt
+#
+# Every response is a deterministic "[mock model N] echo: <prompt>" -- never a real answer, only
+# ever a real deterministic fixture proving the real pipeline (Intent Engine, Agent dispatch,
+# working-memory continuity) runs end to end with nothing external in the loop.
+
+my name is Alex
+
+what is my name
+
+/backend
+
+launch my startup
+
+/result market_research

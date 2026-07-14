@@ -1,0 +1,21 @@
+# A real, paid, external Gemini API call -- needs a genuinely valid GEMINI_API_KEY in .env and
+# this binary built with `--features gemini`. Connecting and switching in the same session grants
+# this one running session immediate use -- no separate "yes/no" consent prompt fires here; that
+# only happens on a *fresh* process reusing an already-stored key.
+#
+#   cargo build -p hyperion-console --bin hyperion-console --features gemini
+#   set -a && source .env && set +a
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/backend-cloud-gemini.txt
+#
+# Edit "gemini-1.5-flash" below if your account should use a different model. `/backend gemini
+# <model>` does a real, eager connectivity check right then -- an invalid key fails outright and
+# the session stays on whichever backend was active before, rather than half-switching.
+
+connect my gemini account
+$GEMINI_API_KEY
+
+/backend gemini gemini-1.5-flash
+
+what is the capital of France

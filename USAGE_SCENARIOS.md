@@ -9,8 +9,10 @@ machine-checked form of each finding below lives as a real regression test in th
 (linked per entry).
 
 **Status: a starting set, not the "dozens" docs/41 asks for.** ~10 scenarios have been run so far,
-against `hyperion-console` only (the one real, natively-buildable, non-GUI entry point this
-sandbox can drive with piped stdin — see "How scenarios are run" below). `hyperion-shell` (a real
+plus all ten of the per-backend scenario files under [`scenarios/`](scenarios/) (scenario 10
+below), against `hyperion-console` only (the one real, natively-buildable, non-GUI entry point
+this sandbox can drive with piped stdin or a scenario file — see "How scenarios are run" below).
+`hyperion-shell` (a real
 GUI needing a display) and full-system scenarios (package management, multi-user permissions,
 process management, actual filesystem operations) have not been run at all yet and are named as
 gaps in coverage, not silently treated as covered. Anyone picking this up should add scenarios in
@@ -57,34 +59,62 @@ example of the scenario in "A more complex, multi-turn, multi-request-type scena
 
 ### Running a scenario against a real backend
 
-Every scenario above ran on `MockBackend`. To exercise the same scenarios against a real model,
-each backend gets its secret differently — traced through `hyperion-console::session.rs`, not
-guessed:
+Every scenario above ran on `MockBackend`. Each backend gets its secret differently — traced
+through `hyperion-console::session.rs`, not guessed — and each now has its own real, runnable
+scenario file under [`scenarios/`](scenarios/) instead of a hand-built `printf` command:
 
-- **Candle (real local inference).** No secret at all — it downloads a small public model from
-  Hugging Face Hub with no auth needed. Just build with `--features candle`.
-  ```
-  cargo build -p hyperion-console --bin hyperion-console --features candle
-  ```
-- **Local engines (ollama/vllm/litellm/custom).** Read directly from dedicated, per-engine
-  environment variables at `/backend` switch time (`EngineKind::api_key_env_var`) — all optional
-  (Ollama/vLLM usually don't need one; a self-hosted LiteLLM proxy often does). Needs
-  `--features openai-compat`. Copy [`.env.example`](.env.example) to `.env` (already gitignored —
-  never commit real values), fill in what you need, then:
-  ```
-  cargo build -p hyperion-console --bin hyperion-console --features openai-compat
-  set -a && source .env && set +a
-  HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
-      printf '/backend ollama llama3.2\nwhat is the capital of France\n' | \
-      ./target/debug/hyperion-console
-  ```
-  **Verified live, and worth knowing before you trust a "Switched to..." message:** unlike the
-  cloud path below, a local-engine switch is lenient, not an eager hard gate. With no real Ollama
-  running at all, the switch still reported success (a warning that the model name wasn't in the
-  server's own list, "continuing anyway"), and the real failure only surfaced on the next actual
-  request (`openai-compat backend error: ... 404 Not Found`). A successful "Switched to..."
-  message here is not proof the backend actually works yet — only the next real request tells you
-  that.
+| Backend | Scenario file | Build feature | Needs |
+| --- | --- | --- | --- |
+| Mock (default) | [`backend-mock.txt`](scenarios/backend-mock.txt) | none | nothing |
+| Candle (local inference) | [`backend-candle.txt`](scenarios/backend-candle.txt) | `candle` | network, first run only (HF Hub download) |
+| Ollama | [`backend-local-ollama.txt`](scenarios/backend-local-ollama.txt) | `openai-compat` | a real `ollama serve` with the model pulled |
+| vLLM | [`backend-local-vllm.txt`](scenarios/backend-local-vllm.txt) | `openai-compat` | a real vLLM OpenAI-compatible server |
+| LiteLLM | [`backend-local-litellm.txt`](scenarios/backend-local-litellm.txt) | `openai-compat` | a real LiteLLM proxy, `HYPERION_LITELLM_API_KEY` if it needs one |
+| Custom OpenAI-compatible | [`backend-local-custom.txt`](scenarios/backend-local-custom.txt) | `openai-compat` | your own server's base_url + model, edited into the file |
+| OpenAI | [`backend-cloud-openai.txt`](scenarios/backend-cloud-openai.txt) | `openai-compat` | a real `OPENAI_API_KEY` in `.env` |
+| Anthropic | [`backend-cloud-anthropic.txt`](scenarios/backend-cloud-anthropic.txt) | `anthropic` | a real `ANTHROPIC_API_KEY` in `.env` |
+| Gemini | [`backend-cloud-gemini.txt`](scenarios/backend-cloud-gemini.txt) | `gemini` | a real `GEMINI_API_KEY` in `.env` |
+| Groq | [`backend-cloud-groq.txt`](scenarios/backend-cloud-groq.txt) | `openai-compat` | a real `GROQ_API_KEY` in `.env` |
+
+Each file's own header comment names its exact build/run command. The general shape:
+
+```
+cargo build -p hyperion-console --bin hyperion-console --features <feature from the table>
+set -a && source .env && set +a   # only for local engines with a key, or any cloud provider
+rm -rf /tmp/hyperion-scratch
+HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+    ./target/debug/hyperion-console scenarios/<file from the table>
+```
+
+**Build `candle` on its own, in its own binary — never combined with the other features in one
+build.** This is not just tidiness: `ConsoleSession::build_ai_runtime` checks `cfg!(feature =
+"candle")` — a compile-time flag read at runtime — so *any* binary built with `--features candle`
+tries to load a real Candle model eagerly at startup, on every launch, regardless of which
+scenario file you actually pass it or whether it ever says `/backend candle`. Verified live: a
+binary built with `--features openai-compat,anthropic,gemini,candle` together took several
+minutes just to *start up* (a real, first-time Hugging Face Hub download blocking
+`ConsoleSession::open`) before any of the local-engine or cloud scenarios below could even begin —
+purely from `candle` being compiled in, with no `/backend candle` anywhere in those files. Keep a
+`candle`-only binary and an `openai-compat,anthropic,gemini`-only binary as two separate builds.
+
+- **Candle.** No secret at all — it downloads a small public model from Hugging Face Hub with no
+  auth needed, the *first* time it runs (verified live: tens of seconds to a few minutes,
+  depending on real network conditions — not something to run inside a tight timeout).
+- **Local engines (ollama/vllm/litellm/custom).** Each reads its own dedicated environment
+  variable at `/backend` switch time (`EngineKind::api_key_env_var`), all optional (Ollama/vLLM
+  usually don't need one; a self-hosted LiteLLM proxy often does). **Corrected from an earlier
+  draft of this doc, after testing against both a genuinely dead port and a real running server:**
+  `OpenAiCompatBackend::connect` (`crates/hyperion-ai-runtime/src/openai_compat_backend.rs`) makes
+  a real, eager `GET {base_url}/models` call at switch time, and only ever tolerates *one* specific
+  failure softly — the server responds, but your model name isn't in its list (a real, warn-and-
+  continue case: some servers format ids differently, and a genuinely wrong name still surfaces
+  honestly on the first real request instead). Every other failure — nothing listening on that
+  port at all, a non-2xx response, anything reqwest itself can't complete — is a real, immediate,
+  hard "I couldn't switch" error, not a lenient one. Verified live against a real Ollama server
+  actually running in this sandbox (`llama3.2:1b` real model pulled): a plain `ollama serve` with
+  no such tag hit the soft path (warned, then a real 404 on the next request); vLLM/LiteLLM/custom
+  with nothing listening on their ports all hit the hard path immediately, correctly leaving the
+  session on `MockBackend`, not half-switched.
 - **Cloud providers (openai/anthropic/gemini/groq).** Deliberately *not* read from the environment
   by the console itself — the only real path in is the interactive `connect my <provider> account`
   utterance, which stores the key encrypted at rest. Each provider needs its own build feature to
@@ -93,36 +123,19 @@ guessed:
   APIs both reuse `openai-compat` (Groq's own API is wire-compatible with OpenAI's, same as a
   local engine's, but it's still a real, paid, third-party cloud API, so it's gated as a
   `CloudProvider`, not an `EngineKind`); Anthropic and Gemini each need their own dedicated
-  feature:
-  ```
-  cargo build -p hyperion-console --bin hyperion-console --features openai-compat  # openai, groq
-  cargo build -p hyperion-console --bin hyperion-console --features anthropic      # anthropic
-  cargo build -p hyperion-console --bin hyperion-console --features gemini         # gemini
-  ```
-  **`/backend <provider> <model>` does a real, eager connectivity check right then** — it is not
-  just argument parsing. Verified live, with a deliberately fake key: the switch itself made a
-  real HTTPS call and failed outright with a real `401 Unauthorized`, and the session correctly
-  stayed on whichever backend was active before rather than half-switching. You need a genuinely
-  valid key for the switch to succeed at all:
-  ```
-  set -a && source .env && set +a
-  HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch printf '%s\n' \
-      "connect my openai account" \
-      "$OPENAI_API_KEY" \
-      "/backend openai gpt-4o-mini" \
-      "what is the capital of France" \
-      "yes" \
-      | ./target/debug/hyperion-console
-  ```
-  **Not independently verified in this sandbox (no real account to test against), based on
-  reading `run_undecomposed_goal`/`finish_consent` instead:** once the switch succeeds, the
-  consent prompt ("This would send your message to a real, paid, external OpenAI API — proceed?
-  (yes/no)") should fire on the *next* utterance — the first real dispatch, not the switch itself
-  — and `yes` answers it. If you run this with a real key and it doesn't match this description,
-  that's a real doc bug to fix, not something to assume is your own mistake.
-
-  Groq follows the identical shape — swap `openai`/`$OPENAI_API_KEY`/`gpt-4o-mini` for
-  `groq`/`$GROQ_API_KEY`/one of Groq's own real model names (e.g. `llama-3.3-70b-versatile`).
+  feature. **`/backend <provider> <model>` does a real, eager connectivity check right then** —
+  verified live against all four real providers' real APIs, with a deliberately fake key each
+  time: the switch itself made a real HTTPS call and failed outright (OpenAI, Anthropic, and Groq
+  each with a real `401 Unauthorized`; Gemini with a real `400 Bad Request` instead — a genuine,
+  provider-specific difference, not a bug in this codebase), and the session correctly stayed on
+  whichever backend was active before rather than half-switching. You need a genuinely valid key
+  for the switch to succeed at all. **Corrected from an earlier draft of this doc:** connecting
+  and switching in the *same* session grants that one running session immediate use — verified
+  live (with a fixture server standing in for the real API) via `hyperion-console`'s own
+  cloud-consent-lifecycle test (`crates/hyperion-console/tests/console_session.rs`). No `yes`/`no`
+  consent line is needed in any of the four scenario files above; a real "yes/no" consent prompt
+  only fires on a *fresh process* reusing an already-stored key without reconnecting first (not
+  covered by a scenario file yet — would need a second file that assumes the first already ran).
 
 ### A more complex, multi-turn, multi-request-type scenario
 
@@ -289,6 +302,33 @@ process lifetime, and `run_undecomposed_goal`'s prompt now includes recent conve
 the *mechanism* real (recent turns genuinely reach the prompt); it does not by itself make
 `MockBackend` answer "what is my name" correctly — echoing is all a mock backend can ever do; see
 open finding below.
+
+### 10. Running each backend for real, against its own scenario file
+
+**Utterance:** each of `scenarios/backend-{mock,candle,local-ollama,local-vllm,local-litellm,
+local-custom,cloud-openai,cloud-anthropic,cloud-gemini,cloud-groq}.txt`, run against a real build
+with the matching feature.
+
+**Observed:** all ten ran and produced the behavior their own header comments claim — including
+two things an earlier draft of this file's "Running a scenario against a real backend" section
+got wrong, both corrected in place rather than left standing:
+
+1. A build with `--features candle` combined with the other features loads a real Candle model
+   *eagerly at every startup* — `ConsoleSession::build_ai_runtime` checks `cfg!(feature =
+   "candle")`, a compile-time flag, unconditionally — so it blocked `ConsoleSession::open` for
+   several minutes (a real, first-time Hugging Face Hub download) before any of the other nine
+   scenario files' own utterances could even begin, with no `/backend candle` in any of them. Not
+   a bug — a real, deliberate, already-documented design choice for a boot image that wants Candle
+   as the default backend with no separate switch step — but a genuine surprise for a dev binary
+   built with every feature bundled together for convenience.
+2. A local-engine backend switch is lenient about exactly one failure (the server responds, but
+   your model name isn't in its list) and hard about everything else (nothing listening on that
+   port at all, a non-2xx response) — an earlier draft claimed the switch was lenient outright,
+   based on a run where a real local server (this sandbox's own already-running Ollama instance,
+   unnoticed at the time) happened to answer.
+
+**Status:** Verified live, not a fix — this file's own "Running a scenario against a real
+backend" section carries the corrected, verified claims and the ten scenario files themselves.
 
 ## Open findings (named, not fixed)
 

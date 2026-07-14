@@ -1,0 +1,20 @@
+# Any other real, self-hosted OpenAI-compatible server -- no preset default base_url like
+# Ollama/vLLM/LiteLLM get, so both base_url and model are required, and in that order:
+# "/backend custom <base_url> <model>" (every other engine takes "<model> [base_url]" instead --
+# custom is the one exception, since it has no preset to default from). Needs this binary built
+# with `--features openai-compat`. HYPERION_CUSTOM_API_KEY is read from the environment if your
+# server requires one.
+#
+#   cargo build -p hyperion-console --bin hyperion-console --features openai-compat
+#   set -a && source .env && set +a   # only needed if HYPERION_CUSTOM_API_KEY is set
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/backend-local-custom.txt
+#
+# Edit the base_url and model below to your own real server. As with the other local-engine
+# scenarios, the switch itself is lenient -- a real failure only surfaces on the next request,
+# not at switch time.
+
+/backend custom http://localhost:8080/v1 my-model
+
+what is the capital of France

@@ -1,0 +1,18 @@
+# A real, self-hosted vLLM server -- needs vLLM's own OpenAI-compatible server actually running at
+# http://localhost:8000 with the model below already loaded, and this binary built with
+# `--features openai-compat`. HYPERION_VLLM_API_KEY is read from the environment if your
+# deployment requires one (most local vLLM setups don't).
+#
+#   cargo build -p hyperion-console --bin hyperion-console --features openai-compat
+#   set -a && source .env && set +a   # only needed if HYPERION_VLLM_API_KEY is set
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/backend-local-vllm.txt
+#
+# Edit the model name below to whatever you actually launched vLLM with. As with the Ollama
+# scenario, the switch itself is lenient -- a real failure only surfaces on the next request, not
+# at switch time.
+
+/backend vllm meta-llama/Llama-3.1-8B-Instruct
+
+what is the capital of France

@@ -1,0 +1,25 @@
+# A real, local, CPU-only Candle model -- no API key, no external service, but it does need real
+# network access the *first* time (a public model download from Hugging Face Hub) and this
+# binary built with the `candle` feature:
+#
+#   cargo build -p hyperion-console --bin hyperion-console --features candle
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/backend-candle.txt
+#
+# On a build without `--features candle`, `/backend candle` correctly, honestly refuses ("this
+# build wasn't compiled with real inference support") and the rest of the file still runs, just
+# against whichever backend was already active (Mock) -- run this file against both builds to see
+# both real behaviors, exactly as scenarios/multi-turn-demo.txt already demonstrates.
+#
+# Verified live: a `candle`-feature build loads the real model eagerly at startup (see
+# USAGE_SCENARIOS.md's own note on why `candle` should never be combined with the other backend
+# features in one binary), so `/backend candle` below is usually a real no-op ("Already using the
+# candle backend") by the time it runs -- kept anyway so this file still reads correctly and still
+# does the right thing on a hypothetical future build where candle isn't the eager default.
+
+/backend candle
+
+what programming language should I learn first
+
+what did I just ask you

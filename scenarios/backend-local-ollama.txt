@@ -1,0 +1,24 @@
+# A real, self-hosted Ollama server -- needs `ollama serve` actually running at
+# http://localhost:11434 with the model below already pulled (`ollama pull llama3.2`), and this
+# binary built with `--features openai-compat`. No API key needed by default (Ollama doesn't ask
+# for one); HYPERION_OLLAMA_API_KEY is read from the environment if you've put one behind a proxy.
+#
+#   cargo build -p hyperion-console --bin hyperion-console --features openai-compat
+#   set -a && source .env && set +a   # only needed if HYPERION_OLLAMA_API_KEY is set
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/backend-local-ollama.txt
+#
+# Edit "llama3.2" below to whatever model you've actually pulled -- and to the *exact* tag your
+# server reports (check with `ollama list` or `curl http://localhost:11434/v1/models`): verified
+# live against a real running Ollama server, a plain "llama3.2" 404'd because that server had it
+# tagged "llama3.2:1b", not "llama3.2:latest"/"llama3.2". Also verified live with no server
+# running at all: the switch itself is lenient, not an eager hard gate -- it reports success even
+# with nothing listening on port 11434, and the real failure ("openai-compat backend error: ...
+# connection refused") only surfaces on the next actual request. A successful "Switched to..."
+# message alone is not proof the backend actually works yet, and a 404 there specifically often
+# means the model tag is wrong, not that the server is unreachable.
+
+/backend ollama llama3.2
+
+what is the capital of France

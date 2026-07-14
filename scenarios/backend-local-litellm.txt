@@ -1,0 +1,19 @@
+# A real, self-hosted LiteLLM proxy -- needs LiteLLM actually running at http://localhost:4000
+# (`litellm --config your-config.yaml`), routed to whichever real model you've configured behind
+# it, and this binary built with `--features openai-compat`. Unlike Ollama/vLLM, a self-hosted
+# LiteLLM proxy commonly *does* require its own key -- set HYPERION_LITELLM_API_KEY in .env if
+# yours does.
+#
+#   cargo build -p hyperion-console --bin hyperion-console --features openai-compat
+#   set -a && source .env && set +a
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/backend-local-litellm.txt
+#
+# Edit the model name below to whatever alias your LiteLLM config maps it to. As with the other
+# local-engine scenarios, the switch itself is lenient -- a real failure only surfaces on the
+# next request, not at switch time.
+
+/backend litellm gpt-4o-mini
+
+what is the capital of France

@@ -1,0 +1,22 @@
+# A real, paid, external Anthropic API call -- needs a genuinely valid ANTHROPIC_API_KEY in .env
+# and this binary built with `--features anthropic`. Connecting and switching in the same session
+# grants this one running session immediate use -- no separate "yes/no" consent prompt fires
+# here; that only happens on a *fresh* process reusing an already-stored key.
+#
+#   cargo build -p hyperion-console --bin hyperion-console --features anthropic
+#   set -a && source .env && set +a
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/backend-cloud-anthropic.txt
+#
+# Edit "claude-3-5-haiku-latest" below if your account should use a different model. `/backend
+# anthropic <model>` does a real, eager connectivity check right then -- an invalid key fails
+# outright and the session stays on whichever backend was active before, rather than
+# half-switching.
+
+connect my anthropic account
+$ANTHROPIC_API_KEY
+
+/backend anthropic claude-3-5-haiku-latest
+
+what is the capital of France
