@@ -2904,6 +2904,7 @@ dependencies = [
  "hyperion-intent",
  "hyperion-ipc",
  "hyperion-knowledge-graph",
+ "hyperion-plugin-framework",
  "serde",
  "serde_json",
  "tempfile",

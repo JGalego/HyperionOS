@@ -11,7 +11,7 @@ use hyperion_explainability::{
 use hyperion_intent::{ExecutionTicket, IntentEngine};
 use hyperion_knowledge_graph::{EdgeOrigin, KnowledgeGraph, NodeId};
 
-use crate::catalog::{best_fit_manifest, required_capabilities_for};
+use crate::catalog::{best_fit_manifest_with_plugins, required_capabilities_for};
 use crate::types::{
     AllocationRecord, ConflictKind, ConflictRecord, ConflictResolution, Escalation, SharedPlan,
     TaskNode, TaskStatus, WriteOutcome,
@@ -401,8 +401,13 @@ impl CoordinationSession {
             let agent_id = match candidate {
                 Some(id) => id,
                 None => {
-                    let manifest =
-                        best_fit_manifest(&required_capabilities).ok_or(CoordError::NoFit)?;
+                    let manifest = best_fit_manifest_with_plugins(
+                        &required_capabilities,
+                        self.agent_runtime
+                            .plugin_registry()
+                            .map(std::sync::Arc::as_ref),
+                    )
+                    .ok_or(CoordError::NoFit)?;
                     let id = self
                         .agent_runtime
                         .spawn(monitor, token, manifest, Some(task_id.0))?;

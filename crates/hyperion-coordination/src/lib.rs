@@ -90,7 +90,7 @@ mod catalog;
 mod engine;
 mod types;
 
-pub use catalog::{default_manifests, required_capabilities_for};
+pub use catalog::{best_fit_manifest_with_plugins, default_manifests, required_capabilities_for};
 pub use engine::{CoordError, CoordinationSession};
 pub use types::{
     AllocationRecord, ConflictKind, ConflictRecord, ConflictResolution, Escalation, SharedPlan,

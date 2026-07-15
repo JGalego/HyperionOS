@@ -206,6 +206,15 @@ impl AgentRuntime {
         }
     }
 
+    /// The same, optional `PluginRegistry` [`Self::invoke`] already dispatches an unrecognized
+    /// `capability_ref` through — exposed so a caller like
+    /// `hyperion-coordination::catalog::best_fit_manifest_with_plugins` can consult its real
+    /// `Contribution::Agent` entries too, without this crate growing a second, parallel
+    /// `Option<Arc<PluginRegistry>>` field anywhere else.
+    pub fn plugin_registry(&self) -> Option<&Arc<PluginRegistry>> {
+        self.plugins.as_ref()
+    }
+
     /// Real headroom remaining on the Scheduler's single
     /// `InferenceTokens` ledger this runtime's Capability invocations
     /// draw from — queryable proof that [`Self::invoke`] round-trips

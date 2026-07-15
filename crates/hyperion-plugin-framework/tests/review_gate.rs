@@ -62,7 +62,9 @@ fn requesting_network_egress_with_no_declared_side_effect_is_rejected() {
 fn requesting_network_egress_with_a_declared_side_effect_is_accepted() {
     let (_dir, keystore) = keystore();
     let mut manifest = base_manifest();
-    let Contribution::Capability(cm) = &mut manifest.contributions[0];
+    let Contribution::Capability(cm) = &mut manifest.contributions[0] else {
+        unreachable!("test fixture always installs a Capability contribution")
+    };
     cm.contract.side_effects = vec![SideEffect::NetworkEgress];
     manifest.requested_permissions = vec![CapabilityGrantRequest {
         operation: Operation::NetworkEgress,
@@ -183,7 +185,9 @@ fn a_structurally_incompatible_collision_is_rejected() {
 
     let mut incompatible = base_manifest();
     incompatible.plugin_id = 2;
-    let Contribution::Capability(cm) = &mut incompatible.contributions[0];
+    let Contribution::Capability(cm) = &mut incompatible.contributions[0] else {
+        unreachable!("test fixture always installs a Capability contribution")
+    };
     cm.contract.outputs = vec!["summary".to_string(), "extra_field".to_string()];
     incompatible.signature = Some(sign(&incompatible, &keystore));
 

@@ -17,9 +17,18 @@ fn canonical_bytes(manifest_without_signature: &PluginManifest) -> Vec<u8> {
     bytes.extend_from_slice(manifest_without_signature.publisher.as_bytes());
     bytes.extend_from_slice(&manifest_without_signature.sdk_version.to_le_bytes());
     for contribution in &manifest_without_signature.contributions {
-        let Contribution::Capability(cm) = contribution;
-        bytes.extend_from_slice(cm.capability_id.as_bytes());
-        bytes.extend_from_slice(&cm.version.to_le_bytes());
+        match contribution {
+            Contribution::Capability(cm) => {
+                bytes.extend_from_slice(cm.capability_id.as_bytes());
+                bytes.extend_from_slice(&cm.version.to_le_bytes());
+            }
+            Contribution::Agent(ac) => {
+                bytes.extend_from_slice(ac.specialization.as_bytes());
+                for capability in &ac.baseline_capabilities {
+                    bytes.extend_from_slice(capability.as_bytes());
+                }
+            }
+        }
     }
     bytes
 }
@@ -77,6 +86,15 @@ pub fn validate_manifest(
     for request in &manifest.requested_permissions {
         let justified = manifest.contributions.iter().any(|c| match c {
             Contribution::Capability(cm) => contract_requires(&cm.contract, request.operation),
+            // An `Agent` contribution has no `SemanticContract` of its own -- its baseline
+            // capabilities are each their own separately-installed `Capability` contribution
+            // with its own justification. This variant can only ever justify the two
+            // operations an agent's mere existence implies (it must be readable/inspectable and
+            // executable to be dispatched); it can never justify `Write`/`NetworkEgress` on its
+            // own, so a manifest can't smuggle a data-touching permission in behind an agent.
+            Contribution::Agent(_) => {
+                matches!(request.operation, Operation::Read | Operation::Execute)
+            }
         });
         if !justified {
             return Err(PluginError::PermissionOverreach(request.operation));

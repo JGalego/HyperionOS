@@ -98,12 +98,31 @@ pub struct CapabilityManifest {
     pub native_binary: Option<NativeBinaryDescriptor>,
 }
 
-/// docs/24 §4's `Contribution`, narrowed to the one variant this
+/// A plugin-contributed agent specialization's own manifest fields — mirrors
+/// `hyperion_agent_runtime::AgentManifest`'s shape without this crate depending on that crate
+/// (which already depends on this one; a reverse dependency would cycle). Real trust tier for a
+/// plugin-installed agent is always the least-trusted tier, assigned by
+/// `crate::registry::PluginRegistry::agent_contributions`'s caller, never chosen by the
+/// installer — no publisher-key trust store exists yet to justify anything higher (see this
+/// crate's own doc comment on `hyperion_crypto`'s single-device-identity scope).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentContribution {
+    pub specialization: String,
+    pub baseline_capabilities: Vec<String>,
+    pub requestable_capabilities: Vec<String>,
+}
+
+/// docs/24 §4's `Contribution`, narrowed to the two variants this
 /// workspace has an owning subsystem for — see this crate's doc comment
-/// on the other eight variants' deferral.
+/// on the remaining six variants' deferral. `Agent` closes
+/// docs/998-roadmap.md's own "`hyperion-coordination::catalog::default_manifests` is a
+/// hardcoded, static built-in list, not a live registry a plugin's `AgentManifest` could
+/// register into" gap: `crate::registry::PluginRegistry::agent_contributions` is that live
+/// registry.
 #[derive(Debug, Clone)]
 pub enum Contribution {
     Capability(CapabilityManifest),
+    Agent(AgentContribution),
 }
 
 /// docs/24 §4's `PluginManifest`. `signature` (docs/998-roadmap.md M9) is a real Ed25519

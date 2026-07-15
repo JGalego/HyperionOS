@@ -11,6 +11,9 @@ hyperion-capability = { workspace = true }
 hyperion-explainability = { workspace = true }
 hyperion-intent = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
+# Real, live registration point for `Contribution::Agent` -- `catalog::best_fit_manifest_with_plugins`
+# merges `PluginRegistry::agent_contributions` into this crate's own built-in roster.
+hyperion-plugin-framework = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

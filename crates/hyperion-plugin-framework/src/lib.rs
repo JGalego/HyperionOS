@@ -24,20 +24,25 @@
 //! [`registry::PluginRegistry::register_implementation`] implements the
 //! structural-compatibility check that decides whether a colliding
 //! `capability_id` competes as one more implementation or is rejected
-//! outright.
+//! outright. [`registry::PluginRegistry::agent_contributions`]
+//! (2026-07-16) is the real, live registration point for
+//! `Contribution::Agent` — install/uninstall/quarantine all treat it exactly like a
+//! `Capability` contribution (minted no separate tokens of its own; an `Agent` contribution can
+//! only ever justify `Read`/`Execute` permissions, never `Write`/`NetworkEgress` — see
+//! [`review::contract_requires`]'s sibling check in `review.rs`).
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **Seven of `Contribution`'s remaining eight non-`Capability`
-//!   variants** (`Agent`, `HardwareSupport`, `KnowledgeProvider`,
+//! - **Six of `Contribution`'s remaining seven non-`Capability`
+//!   variants** (`HardwareSupport`, `KnowledgeProvider`,
 //!   `UiComponent`, `ExecutionEngine`, `AutomationWorkflow`,
 //!   `MemoryProvider`) — none of these has an owning subsystem in this
 //!   workspace with a real registration point to call yet (a device
-//!   driver registry, a memory-provider registry). `Agent` in particular
-//!   still has no hook: `hyperion-coordination::catalog::default_manifests`
-//!   is a hardcoded, static built-in list, not a live registry a plugin's
-//!   `AgentManifest` could register into. **`Model` is not actually a
-//!   ninth gap**, on inspection: a "this implementation is backed by a
+//!   driver registry, a memory-provider registry). `Agent` (2026-07-16) is no longer one of
+//!   them: [`registry::PluginRegistry::agent_contributions`] is the real, live registration
+//!   point `hyperion-coordination::catalog::default_manifests`'s own doc comment named as
+//!   missing — a plugin's `Contribution::Agent` now really competes for task allocation
+//!   alongside the built-in roster, not just a hardcoded, static list. **`Model` is not actually a
 //!   model" contribution is already exactly what `Contribution::Capability`'s
 //!   `CapabilityManifest.implementation_kind` (`LocalSmallModel`/
 //!   `LocalLargeModel`) expresses, and `hyperion-api-gateway`'s
@@ -93,7 +98,7 @@ mod types;
 pub use registry::PluginRegistry;
 pub use review::{sign, validate_manifest};
 pub use types::{
-    CapabilityGrantRequest, CapabilityId, CapabilityManifest, Contribution,
+    AgentContribution, CapabilityGrantRequest, CapabilityId, CapabilityManifest, Contribution,
     ImplementationDescriptor, ImplementationKind, InstallState, NativeBinaryDescriptor, Operation,
     PluginError, PluginHandle, PluginId, PluginManifest, QuarantineReason, RegistryEntry,
     SemanticContract, SideEffect, TrustDepth,

@@ -1,4 +1,5 @@
 use hyperion_agent_runtime::{AgentManifest, TrustTier};
+use hyperion_plugin_framework::PluginRegistry;
 
 /// A stand-in for deriving `required_capabilities` from a sub-intent's real
 /// semantic contract (docs/12 §5.1) — this crate has no Capability
@@ -67,13 +68,41 @@ pub fn default_manifests() -> Vec<AgentManifest> {
     ]
 }
 
-/// The best-fit built-in specialization for a required-capability set —
-/// docs/12 §5.1's `registry.best_fit_specialization`, narrowed to a linear
-/// scan of [`default_manifests`] rather than a real registry query.
-pub fn best_fit_manifest(required_capabilities: &[String]) -> Option<AgentManifest> {
-    default_manifests().into_iter().find(|m| {
-        required_capabilities
-            .iter()
-            .all(|c| m.baseline_capabilities.contains(c) || m.requestable_capabilities.contains(c))
-    })
+/// A plugin-contributed `Contribution::Agent` always installs at this crate's own least-trusted
+/// `TrustTier` -- see `hyperion_plugin_framework::AgentContribution`'s own doc comment on why no
+/// installer gets to choose a higher one yet.
+fn from_contribution(contribution: hyperion_plugin_framework::AgentContribution) -> AgentManifest {
+    AgentManifest {
+        specialization: contribution.specialization,
+        baseline_capabilities: contribution.baseline_capabilities,
+        requestable_capabilities: contribution.requestable_capabilities,
+        trust_tier: TrustTier::Community,
+    }
+}
+
+/// docs/998-roadmap.md's Resourceful pillar, closed for real:
+/// `hyperion-plugin-framework::PluginRegistry::agent_contributions` is the live registry this
+/// crate's own doc comment (and that crate's) named as missing. When `plugins` is `Some`, every
+/// currently-installed, non-quarantined `Contribution::Agent` competes for a fit exactly like a
+/// built-in [`default_manifests`] entry — first-fit order still favors the built-in roster (it's
+/// checked first), so a plugin only wins when no built-in specialization already covers the
+/// required capabilities.
+pub fn best_fit_manifest_with_plugins(
+    required_capabilities: &[String],
+    plugins: Option<&PluginRegistry>,
+) -> Option<AgentManifest> {
+    let live_agents = plugins
+        .map(PluginRegistry::agent_contributions)
+        .unwrap_or_default()
+        .into_iter()
+        .map(from_contribution);
+
+    default_manifests()
+        .into_iter()
+        .chain(live_agents)
+        .find(|m| {
+            required_capabilities.iter().all(|c| {
+                m.baseline_capabilities.contains(c) || m.requestable_capabilities.contains(c)
+            })
+        })
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
@@ -7,9 +7,9 @@ use hyperion_crypto::VerifyingKey;
 
 use crate::review::validate_manifest;
 use crate::types::{
-    CapabilityId, CapabilityManifest, Contribution, ImplementationDescriptor, ImplementationKind,
-    InstallState, PluginError, PluginHandle, PluginId, PluginManifest, QuarantineReason,
-    RegistryEntry, TrustDepth,
+    AgentContribution, CapabilityId, CapabilityManifest, Contribution, ImplementationDescriptor,
+    ImplementationKind, InstallState, PluginError, PluginHandle, PluginId, PluginManifest,
+    QuarantineReason, RegistryEntry, TrustDepth,
 };
 
 fn rights_for(op: crate::types::Operation) -> RightsMask {
@@ -59,6 +59,18 @@ pub struct PluginRegistry {
     /// deliberately never takes `&mut CapabilityMonitor`).
     sandbox_tokens: Mutex<HashMap<PluginId, CapabilityToken>>,
     registry: Mutex<HashMap<CapabilityId, RegistryEntry>>,
+    /// Real registration point for `Contribution::Agent` -- docs/998-roadmap.md's Resourceful
+    /// pillar named `hyperion-coordination::catalog::default_manifests`'s hardcoded, static
+    /// built-in roster as having no live registry a plugin's own agent specialization could
+    /// register into. Keyed by `plugin_id` (not folded into `registry`, which is keyed by
+    /// `CapabilityId` and has no analogous concept for an agent specialization) so
+    /// [`Self::uninstall`]/[`Self::quarantine`] can remove/hide exactly one plugin's own
+    /// contributions without touching any other plugin's.
+    agent_contributions: Mutex<HashMap<PluginId, Vec<AgentContribution>>>,
+    /// Plugin-level quarantine, tracked separately from `registry`'s own per-`CapabilityId`
+    /// `InstallState` -- an `Agent`-only plugin owns no `RegistryEntry` for that mechanism to
+    /// touch, so [`Self::quarantine`] needs a real place to hide its contributions too.
+    quarantined_plugins: Mutex<HashSet<PluginId>>,
     next_plugin_id: AtomicU64,
     next_boundary_ordinal: AtomicU64,
 }
@@ -77,6 +89,8 @@ impl PluginRegistry {
             tokens: Mutex::new(HashMap::new()),
             sandbox_tokens: Mutex::new(HashMap::new()),
             registry: Mutex::new(HashMap::new()),
+            agent_contributions: Mutex::new(HashMap::new()),
+            quarantined_plugins: Mutex::new(HashSet::new()),
             next_plugin_id: AtomicU64::new(1),
             next_boundary_ordinal: AtomicU64::new(1),
         }
@@ -113,16 +127,17 @@ impl PluginRegistry {
         // An honest check now, not a trusted claim -- see `NativeBinaryDescriptor`'s own doc
         // comment. Checked before any minting/registration below, so a manifest that fails this
         // never partially installs, matching this function's own existing invariant.
-        let needs_sandbox_token =
-            manifest
-                .contributions
-                .iter()
-                .any(|Contribution::Capability(cm)| {
-                    cm.implementation_kind == ImplementationKind::NativeBinary
-                });
-        for Contribution::Capability(cm) in &manifest.contributions {
-            if cm.implementation_kind == ImplementationKind::NativeBinary {
-                validate_native_binary(cm.native_binary.as_ref())?;
+        let needs_sandbox_token = manifest.contributions.iter().any(|c| match c {
+            Contribution::Capability(cm) => {
+                cm.implementation_kind == ImplementationKind::NativeBinary
+            }
+            Contribution::Agent(_) => false,
+        });
+        for contribution in &manifest.contributions {
+            if let Contribution::Capability(cm) = contribution {
+                if cm.implementation_kind == ImplementationKind::NativeBinary {
+                    validate_native_binary(cm.native_binary.as_ref())?;
+                }
             }
         }
 
@@ -152,8 +167,19 @@ impl PluginRegistry {
         }
 
         for contribution in &manifest.contributions {
-            let Contribution::Capability(cm) = contribution;
-            self.register_implementation(plugin_id, cm)?;
+            match contribution {
+                Contribution::Capability(cm) => {
+                    self.register_implementation(plugin_id, cm)?;
+                }
+                Contribution::Agent(ac) => {
+                    self.agent_contributions
+                        .lock()
+                        .unwrap()
+                        .entry(plugin_id)
+                        .or_default()
+                        .push(ac.clone());
+                }
+            }
         }
 
         self.plugins.lock().unwrap().insert(plugin_id, manifest);
@@ -243,31 +269,50 @@ impl PluginRegistry {
 
         self.plugins.lock().unwrap().remove(&plugin_id);
         self.boundaries.lock().unwrap().remove(&plugin_id);
+        self.agent_contributions.lock().unwrap().remove(&plugin_id);
+        self.quarantined_plugins.lock().unwrap().remove(&plugin_id);
         Ok(())
     }
 
     /// docs/24 §6's `registry_quarantine` — disables the plugin's
     /// registry entries without a full uninstall (its tokens remain
     /// live; a quarantined entry is simply never returned as an eligible
-    /// candidate by [`Self::query`]).
+    /// candidate by [`Self::query`]/[`Self::agent_contributions`]). Keyed off
+    /// `self.plugins` rather than "did this plugin own a `Capability` registry entry" so an
+    /// `Agent`-only plugin (no `RegistryEntry` to touch at all) can be quarantined too.
     pub fn quarantine(
         &self,
         plugin_id: PluginId,
         _reason: QuarantineReason,
     ) -> Result<(), PluginError> {
+        if !self.plugins.lock().unwrap().contains_key(&plugin_id) {
+            return Err(PluginError::NoSuchPlugin);
+        }
         let mut registry = self.registry.lock().unwrap();
-        let mut touched = false;
         for entry in registry.values_mut() {
             if entry.owning_plugins.contains(&plugin_id) {
                 entry.install_state = InstallState::Quarantined;
-                touched = true;
             }
         }
-        if touched {
-            Ok(())
-        } else {
-            Err(PluginError::NoSuchPlugin)
-        }
+        drop(registry);
+        self.quarantined_plugins.lock().unwrap().insert(plugin_id);
+        Ok(())
+    }
+
+    /// The real registration point docs/998-roadmap.md's Resourceful pillar named as missing:
+    /// every currently-installed, non-quarantined plugin's own `Contribution::Agent` entries,
+    /// flattened into one list. `hyperion-coordination::catalog::best_fit_manifest_with_plugins`
+    /// is the real caller, merging this with its own built-in roster so a plugin-contributed
+    /// specialization competes for task allocation exactly like a first-party one.
+    pub fn agent_contributions(&self) -> Vec<AgentContribution> {
+        let quarantined = self.quarantined_plugins.lock().unwrap();
+        self.agent_contributions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(plugin_id, _)| !quarantined.contains(*plugin_id))
+            .flat_map(|(_, contributions)| contributions.iter().cloned())
+            .collect()
     }
 
     /// docs/24 §6's `registry_query`, narrowed to exact `capability_id`

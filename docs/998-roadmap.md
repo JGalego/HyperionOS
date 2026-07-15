@@ -1834,7 +1834,20 @@ mean here):
 
 **Deliberately still deferred:**
 
-- **The other seven `Contribution` variants** (`Agent`, `HardwareSupport`, `KnowledgeProvider`,
+- **`Contribution::Agent`, landed (2026-07-16).** `hyperion-plugin-framework::PluginRegistry`
+  gained a real, live registration point:
+  `agent_contributions()` returns every currently-installed, non-quarantined plugin's own
+  `Contribution::Agent` entries. `hyperion-coordination::catalog::best_fit_manifest_with_plugins`
+  merges those with the built-in roster (`default_manifests`), and
+  `CoordinationSession::allocate` calls it through a new `AgentRuntime::plugin_registry()`
+  accessor — so a plugin-contributed specialization really competes for task allocation, not
+  just the hardcoded static list this gap previously named. Always installs at `TrustTier::Community`
+  (the least-trusted tier — no publisher-key trust store exists yet to justify anything higher);
+  can only ever justify `Read`/`Execute` permissions on its own, never `Write`/`NetworkEgress`.
+  Proven end to end: installed, uninstalled, and quarantined agent contributions really
+  appear/disappear from `agent_contributions()`, and a plugin-contributed manifest is really
+  selected and really spawns a real `AgentInstance` when no built-in specialization fits.
+- **The other six `Contribution` variants** (`HardwareSupport`, `KnowledgeProvider`,
   `UiComponent`, `ExecutionEngine`, `AutomationWorkflow`, `MemoryProvider`) — none has an owning
   subsystem with a real registration point yet; see `hyperion-plugin-framework`'s own doc comment.
 
