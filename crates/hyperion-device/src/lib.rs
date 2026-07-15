@@ -26,6 +26,13 @@
 //! `hyperion-context` anchor with no code change on either side — docs/06
 //! §Architecture's "device/session state" signal collector, which
 //! `hyperion-context`'s own doc named as blocked on exactly this.
+//! [`hardware_support::known_capability_manifest`] (2026-07-16,
+//! docs/998-roadmap.md's Resourceful pillar) is a real "device driver registry": a plugin's
+//! `hyperion_plugin_framework::Contribution::HardwareSupport` entries are searched for a known
+//! `(device_type, manufacturer, model)`, and a real caller uses the match (if any) as the
+//! expected manifest instead of hand-authoring one with no reference — `register`'s own real
+//! signature requirement is completely untouched by this; the device (or its driver) still has
+//! to really sign whatever manifest is finally used.
 //!
 //! Deliberately deferred, and why:
 //!
@@ -67,10 +74,12 @@
 //!   a real per-surface layout algorithm neither doc's pseudocode fully
 //!   specifies.
 
+mod hardware_support;
 mod manifest;
 mod registry;
 mod types;
 
+pub use hardware_support::known_capability_manifest;
 pub use manifest::sign;
 pub use registry::{DeviceError, DeviceRegistry};
 pub use types::{

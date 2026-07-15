@@ -112,17 +112,75 @@ pub struct AgentContribution {
     pub requestable_capabilities: Vec<String>,
 }
 
-/// docs/24 §4's `Contribution`, narrowed to the two variants this
+/// Mirrors `hyperion_device::types::DeviceType` without this crate depending on that crate (the
+/// dependency runs the other way: `hyperion-device` depends on this crate for its own real
+/// registration point, not the reverse — see [`HardwareSupportContribution`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HardwareDeviceType {
+    Display,
+    Mobile,
+    Vehicle,
+    Robot,
+    Wearable,
+    HomeAppliance,
+    Peripheral,
+    Sensor,
+}
+
+/// Mirrors `hyperion_device::types::Direction`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HardwareDirection {
+    Render,
+    Sense,
+    Actuate,
+}
+
+/// Mirrors `hyperion_device::types::SafetyClass`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum HardwareSafetyClass {
+    Cosmetic,
+    Standard,
+    High,
+}
+
+/// Mirrors `hyperion_device::types::CapabilityManifestEntry`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HardwareCapabilityEntry {
+    pub capability_name: String,
+    pub direction: HardwareDirection,
+    pub safety_class: HardwareSafetyClass,
+}
+
+/// A plugin-contributed device driver profile — the real "device driver registry" entry this
+/// crate's own doc comment named as missing: a plugin can teach Hyperion the expected capability
+/// manifest for a known `(manufacturer, model)` pair, closing `hyperion-device`'s own "every
+/// device must self-declare its full manifest with no reference to consult" gap.
+/// **Never bypasses `hyperion_device::DeviceRegistry::register`'s own real signature check** —
+/// docs/20 §8's device-impersonation defense still requires the device (or its driver, standing
+/// in for it) to really sign over whatever manifest registration ultimately uses; this only
+/// supplies what a real pairing flow can *propose* as the expected manifest instead of asking an
+/// integrator to hand-write one with nothing to consult.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HardwareSupportContribution {
+    pub device_type: HardwareDeviceType,
+    pub manufacturer: String,
+    pub model: String,
+    pub capability_manifest: Vec<HardwareCapabilityEntry>,
+}
+
+/// docs/24 §4's `Contribution`, narrowed to the three variants this
 /// workspace has an owning subsystem for — see this crate's doc comment
-/// on the remaining six variants' deferral. `Agent` closes
+/// on the remaining five variants' deferral. `Agent` closes
 /// docs/998-roadmap.md's own "`hyperion-coordination::catalog::default_manifests` is a
 /// hardcoded, static built-in list, not a live registry a plugin's `AgentManifest` could
 /// register into" gap: `crate::registry::PluginRegistry::agent_contributions` is that live
-/// registry.
+/// registry. `HardwareSupport` closes the analogous "device driver registry" gap via
+/// `crate::registry::PluginRegistry::hardware_support_contributions`.
 #[derive(Debug, Clone)]
 pub enum Contribution {
     Capability(CapabilityManifest),
     Agent(AgentContribution),
+    HardwareSupport(HardwareSupportContribution),
 }
 
 /// docs/24 §4's `PluginManifest`. `signature` (docs/998-roadmap.md M9) is a real Ed25519

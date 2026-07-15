@@ -1847,7 +1847,20 @@ mean here):
   Proven end to end: installed, uninstalled, and quarantined agent contributions really
   appear/disappear from `agent_contributions()`, and a plugin-contributed manifest is really
   selected and really spawns a real `AgentInstance` when no built-in specialization fits.
-- **The other six `Contribution` variants** (`HardwareSupport`, `KnowledgeProvider`,
+- **`Contribution::HardwareSupport`, landed (2026-07-16).**
+  `PluginRegistry::hardware_support_contributions()` is the real "device driver registry"
+  `hyperion-device` had no equivalent of. `hyperion-device::known_capability_manifest` searches
+  every currently-installed, non-quarantined plugin's own driver profiles for an exact
+  `(device_type, manufacturer, model)` match and converts it into a real `CapabilityManifestEntry`
+  list — so a real pairing flow can *propose* an expected manifest instead of an integrator
+  hand-authoring one with nothing to consult. Never weakens
+  `DeviceRegistry::register`'s own real signature check (docs/20 §8's device-impersonation
+  defense) at all: the device (or its driver) still has to really sign whatever manifest
+  registration ultimately uses. A bare `HardwareSupport` contribution can only ever justify
+  `Read`, never `Write`/`NetworkEgress`/`Execute`. Proven end to end: a known
+  `(device_type, manufacturer, model)` is found and correctly converted; an unknown or
+  mismatched one isn't; uninstall/quarantine really remove it from the lookup.
+- **The other five `Contribution` variants** (`KnowledgeProvider`,
   `UiComponent`, `ExecutionEngine`, `AutomationWorkflow`, `MemoryProvider`) — none has an owning
   subsystem with a real registration point yet; see `hyperion-plugin-framework`'s own doc comment.
 

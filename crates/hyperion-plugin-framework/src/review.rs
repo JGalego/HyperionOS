@@ -28,6 +28,10 @@ fn canonical_bytes(manifest_without_signature: &PluginManifest) -> Vec<u8> {
                     bytes.extend_from_slice(capability.as_bytes());
                 }
             }
+            Contribution::HardwareSupport(hs) => {
+                bytes.extend_from_slice(hs.manufacturer.as_bytes());
+                bytes.extend_from_slice(hs.model.as_bytes());
+            }
         }
     }
     bytes
@@ -95,6 +99,10 @@ pub fn validate_manifest(
             Contribution::Agent(_) => {
                 matches!(request.operation, Operation::Read | Operation::Execute)
             }
+            // A `HardwareSupport` contribution is pure descriptive data (a device driver
+            // profile) -- it never executes, writes, or reaches the network on its own, so it
+            // can only ever justify `Read`.
+            Contribution::HardwareSupport(_) => matches!(request.operation, Operation::Read),
         });
         if !justified {
             return Err(PluginError::PermissionOverreach(request.operation));

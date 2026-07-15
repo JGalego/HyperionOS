@@ -9,6 +9,8 @@ repository.workspace = true
 hyperion-capability = { workspace = true }
 hyperion-crypto = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
+# Real "device driver registry" lookup -- see `hardware_support::known_capability_manifest`.
+hyperion-plugin-framework = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

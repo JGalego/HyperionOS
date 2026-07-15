@@ -33,16 +33,22 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **Six of `Contribution`'s remaining seven non-`Capability`
-//!   variants** (`HardwareSupport`, `KnowledgeProvider`,
+//! - **Five of `Contribution`'s remaining six non-`Capability`
+//!   variants** (`KnowledgeProvider`,
 //!   `UiComponent`, `ExecutionEngine`, `AutomationWorkflow`,
 //!   `MemoryProvider`) — none of these has an owning subsystem in this
-//!   workspace with a real registration point to call yet (a device
-//!   driver registry, a memory-provider registry). `Agent` (2026-07-16) is no longer one of
-//!   them: [`registry::PluginRegistry::agent_contributions`] is the real, live registration
-//!   point `hyperion-coordination::catalog::default_manifests`'s own doc comment named as
-//!   missing — a plugin's `Contribution::Agent` now really competes for task allocation
-//!   alongside the built-in roster, not just a hardcoded, static list. **`Model` is not actually a
+//!   workspace with a real registration point to call yet (a memory-provider registry, a UI
+//!   component registry). `Agent` (2026-07-16) and `HardwareSupport` (2026-07-16) are no longer
+//!   among them: [`registry::PluginRegistry::agent_contributions`] is the real, live
+//!   registration point `hyperion-coordination::catalog::default_manifests`'s own doc comment
+//!   named as missing — a plugin's `Contribution::Agent` now really competes for task
+//!   allocation alongside the built-in roster, not just a hardcoded, static list.
+//!   [`registry::PluginRegistry::hardware_support_contributions`] is the real "device driver
+//!   registry" `hyperion-device` had no equivalent of — a plugin can now teach Hyperion the
+//!   expected capability manifest for a known `(manufacturer, model)` pair, without weakening
+//!   `hyperion_device::DeviceRegistry::register`'s own real signature check at all (that
+//!   contribution only ever justifies `Read`, never `Write`/`NetworkEgress`/`Execute`).
+//! - **`Model` is not actually a ninth gap**, on inspection: a "this implementation is backed by a
 //!   model" contribution is already exactly what `Contribution::Capability`'s
 //!   `CapabilityManifest.implementation_kind` (`LocalSmallModel`/
 //!   `LocalLargeModel`) expresses, and `hyperion-api-gateway`'s
@@ -99,7 +105,8 @@ pub use registry::PluginRegistry;
 pub use review::{sign, validate_manifest};
 pub use types::{
     AgentContribution, CapabilityGrantRequest, CapabilityId, CapabilityManifest, Contribution,
-    ImplementationDescriptor, ImplementationKind, InstallState, NativeBinaryDescriptor, Operation,
-    PluginError, PluginHandle, PluginId, PluginManifest, QuarantineReason, RegistryEntry,
-    SemanticContract, SideEffect, TrustDepth,
+    HardwareCapabilityEntry, HardwareDeviceType, HardwareDirection, HardwareSafetyClass,
+    HardwareSupportContribution, ImplementationDescriptor, ImplementationKind, InstallState,
+    NativeBinaryDescriptor, Operation, PluginError, PluginHandle, PluginId, PluginManifest,
+    QuarantineReason, RegistryEntry, SemanticContract, SideEffect, TrustDepth,
 };

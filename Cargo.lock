@@ -2933,6 +2933,7 @@ dependencies = [
  "hyperion-context",
  "hyperion-crypto",
  "hyperion-knowledge-graph",
+ "hyperion-plugin-framework",
  "hyperion-storage",
  "hyperion-workspace",
  "serde",
