@@ -4,6 +4,7 @@
 //! [`http_client`], docs/998-roadmap.md's Social pillar).
 
 mod a2a;
+mod color;
 mod http_client;
 mod http_server;
 mod mcp;
@@ -54,7 +55,7 @@ impl Spinner {
                 while running.load(Ordering::Relaxed) {
                     print!(
                         "\r{} {label}...",
-                        SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]
+                        color::prompt(SPINNER_FRAMES[frame % SPINNER_FRAMES.len()])
                     );
                     let _ = io::stdout().flush();
                     frame += 1;
@@ -311,9 +312,9 @@ fn run_scenario_file(path: &str, session: &Arc<Mutex<ConsoleSession>>) {
 
         let utterance = expand_env_vars(trimmed);
         if awaiting_secret {
-            println!("> [key redacted]");
+            println!("{}", color::prompt("> [key redacted]"));
         } else {
-            println!("> {utterance}");
+            println!("{}", color::prompt(&format!("> {utterance}")));
         }
 
         if !awaiting_secret {
@@ -321,7 +322,7 @@ fn run_scenario_file(path: &str, session: &Arc<Mutex<ConsoleSession>>) {
                 ControlOutcome::Exit => return,
                 ControlOutcome::Handled(lines) => {
                     for line in lines {
-                        println!("{line}");
+                        println!("{}", color::status_line(&line));
                     }
                     println!();
                     continue;
@@ -336,11 +337,11 @@ fn run_scenario_file(path: &str, session: &Arc<Mutex<ConsoleSession>>) {
                 .unwrap()
                 .handle_utterance_with_progress(&utterance, &mut |event| {
                     if let TaskProgress::Done(line) = event {
-                        println!("{line}");
+                        println!("{}", color::status_line(&line));
                     }
                 });
         for output_line in output_lines {
-            println!("{output_line}");
+            println!("{}", color::status_line(&output_line));
         }
         println!();
     }
@@ -395,7 +396,7 @@ fn run_interactive(session: &Arc<Mutex<ConsoleSession>>) {
     // caller gets straight to the one line that actually matters, not decorative noise before it.
     if io::stdout().is_terminal() {
         println!();
-        println!("{BANNER}");
+        println!("{}", color::banner(BANNER));
     }
     println!();
     println!("You ask. I understand.");
@@ -404,7 +405,7 @@ fn run_interactive(session: &Arc<Mutex<ConsoleSession>>) {
     let stdin = io::stdin();
     let mut input = stdin.lock();
     loop {
-        print!("> ");
+        print!("{}", color::prompt("> "));
         if io::stdout().flush().is_err() {
             break;
         }
@@ -441,7 +442,7 @@ fn run_interactive(session: &Arc<Mutex<ConsoleSession>>) {
                 ControlOutcome::Exit => break,
                 ControlOutcome::Handled(lines) => {
                     for line in lines {
-                        println!("{line}");
+                        println!("{}", color::status_line(&line));
                     }
                     println!();
                     continue;
@@ -471,7 +472,7 @@ fn run_interactive(session: &Arc<Mutex<ConsoleSession>>) {
                         if let Some(s) = spinner.take() {
                             s.stop();
                         }
-                        println!("{line}");
+                        println!("{}", color::status_line(&line));
                     }
                 });
         // A plan that errors or breaks out of its own tick loop before a real `Done` event
@@ -481,7 +482,7 @@ fn run_interactive(session: &Arc<Mutex<ConsoleSession>>) {
         }
 
         for output_line in output_lines {
-            println!("{output_line}");
+            println!("{}", color::status_line(&output_line));
         }
         println!();
     }
