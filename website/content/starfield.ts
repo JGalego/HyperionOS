@@ -73,7 +73,7 @@ const STAR_RADII = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.9];
 // A small seeded PRNG (mulberry32) so every other section gets its own fixed starfield --
 // different from the hero's and from each other, but stable across rebuilds instead of
 // reshuffling on every deploy.
-function mulberry32(seed: number) {
+export function mulberry32(seed: number) {
   return function random() {
     seed |= 0;
     seed = (seed + 0x6d2b79f5) | 0;
@@ -83,7 +83,7 @@ function mulberry32(seed: number) {
   };
 }
 
-function hashSeed(input: string) {
+export function hashSeed(input: string) {
   let hash = 0;
   for (let i = 0; i < input.length; i++) {
     hash = (Math.imul(hash, 31) + input.charCodeAt(i)) | 0;
