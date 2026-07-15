@@ -9,11 +9,14 @@ repository.workspace = true
 hyperion-capability = { workspace = true }
 hyperion-context = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
+# Real UI-component registry lookup -- see `plugin_contracts::known_contract_for`.
+hyperion-plugin-framework = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+hyperion-crypto = { workspace = true }
 hyperion-intent = { workspace = true }
 hyperion-storage = { workspace = true }
 tempfile = { workspace = true }

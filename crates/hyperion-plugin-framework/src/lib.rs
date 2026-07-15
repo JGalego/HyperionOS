@@ -33,12 +33,13 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **Four of `Contribution`'s remaining five non-`Capability`
-//!   variants** (`UiComponent`, `ExecutionEngine`, `AutomationWorkflow`,
+//! - **Three of `Contribution`'s remaining four non-`Capability`
+//!   variants** (`ExecutionEngine`, `AutomationWorkflow`,
 //!   `MemoryProvider`) — none of these has an owning subsystem in this
-//!   workspace with a real registration point to call yet (a memory-provider registry, a UI
-//!   component registry). `Agent` (2026-07-16), `HardwareSupport` (2026-07-16), and
-//!   `KnowledgeProvider` (2026-07-16) are no longer among them: [`registry::PluginRegistry::agent_contributions`]
+//!   workspace with a real registration point to call yet (a memory-provider registry, an
+//!   execution-engine registry). `Agent` (2026-07-16), `HardwareSupport` (2026-07-16),
+//!   `KnowledgeProvider` (2026-07-16), and `UiComponent` (2026-07-16) are no longer among them:
+//!   [`registry::PluginRegistry::agent_contributions`]
 //!   is the real, live registration point `hyperion-coordination::catalog::default_manifests`'s
 //!   own doc comment named as missing — a plugin's `Contribution::Agent` now really competes
 //!   for task allocation alongside the built-in roster, not just a hardcoded, static list.
@@ -50,7 +51,10 @@
 //!   [`registry::PluginRegistry::knowledge_provider_contributions`] is the real (topic ->
 //!   capability_id) lookup `hyperion-knowledge-graph` had no equivalent of — it too only ever
 //!   justifies `Read`, and never bypasses the Capability Registry's own dispatch/consent path
-//!   for whatever capability it points at.
+//!   for whatever capability it points at. [`registry::PluginRegistry::ui_component_contributions`]
+//!   is the real registry `hyperion-workspace` had no equivalent of for a `CapabilityUiContract` —
+//!   also `Read`-only, and it produces the same struct a hand-authored contract already would,
+//!   never a second UI-compilation path.
 //! - **`Model` is not actually a ninth gap**, on inspection: a "this implementation is backed by a
 //!   model" contribution is already exactly what `Contribution::Capability`'s
 //!   `CapabilityManifest.implementation_kind` (`LocalSmallModel`/
@@ -112,5 +116,5 @@ pub use types::{
     HardwareSupportContribution, ImplementationDescriptor, ImplementationKind, InstallState,
     KnowledgeProviderContribution, NativeBinaryDescriptor, Operation, PluginError, PluginHandle,
     PluginId, PluginManifest, QuarantineReason, RegistryEntry, SemanticContract, SideEffect,
-    TrustDepth,
+    TrustDepth, UiComponentContribution, UiRegionAffinity,
 };

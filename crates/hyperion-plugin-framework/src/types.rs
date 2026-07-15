@@ -180,22 +180,61 @@ pub struct KnowledgeProviderContribution {
     pub capability_id: CapabilityId,
 }
 
-/// docs/24 §4's `Contribution`, narrowed to the four variants this
+/// Mirrors `hyperion_workspace::contracts::RegionAffinity`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiRegionAffinity {
+    Left,
+    Center,
+    Right,
+    TopBar,
+    BottomBar,
+}
+
+/// A plugin-contributed UI template for one `capability_ref` — mirrors
+/// `hyperion_workspace::contracts::CapabilityUiContract`'s fields (minus per-`ComplexityTier`
+/// `variants`, a real but separate Adaptive-Complexity refinement no consumer of this
+/// contribution needs yet — see that crate's own doc comment) without this crate depending on
+/// `hyperion-workspace` (the dependency runs the other way: `hyperion-workspace` depends on this
+/// crate for its own real registration point, not the reverse).
+#[derive(Debug, Clone)]
+pub struct UiComponentContribution {
+    pub capability_ref: String,
+    pub panel_template: String,
+    pub region_affinity: UiRegionAffinity,
+    pub min_size: (u32, u32),
+    pub priority: f32,
+    pub binds_category: Option<String>,
+    pub accessible_role: Option<String>,
+    pub label_template: Option<String>,
+    pub keyboard_operations: Vec<String>,
+    pub alt_text_hook: Option<String>,
+    pub contrast_ratio: f32,
+    pub has_motion: bool,
+    pub reduced_motion_alternative: bool,
+    pub language_tag: String,
+    pub emits_audio: bool,
+    pub has_visual_alert_equivalent: bool,
+}
+
+/// docs/24 §4's `Contribution`, narrowed to the five variants this
 /// workspace has an owning subsystem for — see this crate's doc comment
-/// on the remaining four variants' deferral. `Agent` closes
+/// on the remaining three variants' deferral. `Agent` closes
 /// docs/998-roadmap.md's own "`hyperion-coordination::catalog::default_manifests` is a
 /// hardcoded, static built-in list, not a live registry a plugin's `AgentManifest` could
 /// register into" gap: `crate::registry::PluginRegistry::agent_contributions` is that live
 /// registry. `HardwareSupport` closes the analogous "device driver registry" gap via
 /// `crate::registry::PluginRegistry::hardware_support_contributions`. `KnowledgeProvider` closes
 /// `hyperion-knowledge-graph`'s own "no registry of which capability answers which topic" gap
-/// via `crate::registry::PluginRegistry::knowledge_provider_contributions`.
+/// via `crate::registry::PluginRegistry::knowledge_provider_contributions`. `UiComponent` closes
+/// `hyperion-workspace`'s own "every `CapabilityUiContract` is hand-authored by the caller, with
+/// no registry to consult" gap via `crate::registry::PluginRegistry::ui_component_contributions`.
 #[derive(Debug, Clone)]
 pub enum Contribution {
     Capability(CapabilityManifest),
     Agent(AgentContribution),
     HardwareSupport(HardwareSupportContribution),
     KnowledgeProvider(KnowledgeProviderContribution),
+    UiComponent(UiComponentContribution),
 }
 
 /// docs/24 §4's `PluginManifest`. `signature` (docs/998-roadmap.md M9) is a real Ed25519

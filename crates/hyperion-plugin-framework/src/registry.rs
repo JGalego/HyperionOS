@@ -10,7 +10,7 @@ use crate::types::{
     AgentContribution, CapabilityId, CapabilityManifest, Contribution, HardwareSupportContribution,
     ImplementationDescriptor, ImplementationKind, InstallState, KnowledgeProviderContribution,
     PluginError, PluginHandle, PluginId, PluginManifest, QuarantineReason, RegistryEntry,
-    TrustDepth,
+    TrustDepth, UiComponentContribution,
 };
 
 fn rights_for(op: crate::types::Operation) -> RightsMask {
@@ -76,10 +76,15 @@ pub struct PluginRegistry {
     /// capability_id) lookup `hyperion-knowledge-graph` had no equivalent of. Same shape and
     /// same reasoning as [`Self::agent_contributions`]/[`Self::hardware_support`].
     knowledge_providers: Mutex<HashMap<PluginId, Vec<KnowledgeProviderContribution>>>,
+    /// Real registration point for `Contribution::UiComponent` -- the "every
+    /// `CapabilityUiContract` is hand-authored, with no registry to consult" gap
+    /// `hyperion-workspace` had. Same shape and same reasoning as
+    /// [`Self::agent_contributions`]/[`Self::hardware_support`]/[`Self::knowledge_providers`].
+    ui_components: Mutex<HashMap<PluginId, Vec<UiComponentContribution>>>,
     /// Plugin-level quarantine, tracked separately from `registry`'s own per-`CapabilityId`
-    /// `InstallState` -- an `Agent`-only, `HardwareSupport`-only, or `KnowledgeProvider`-only
-    /// plugin owns no `RegistryEntry` for that mechanism to touch, so [`Self::quarantine`] needs
-    /// a real place to hide its contributions too.
+    /// `InstallState` -- an `Agent`-only, `HardwareSupport`-only, `KnowledgeProvider`-only, or
+    /// `UiComponent`-only plugin owns no `RegistryEntry` for that mechanism to touch, so
+    /// [`Self::quarantine`] needs a real place to hide its contributions too.
     quarantined_plugins: Mutex<HashSet<PluginId>>,
     next_plugin_id: AtomicU64,
     next_boundary_ordinal: AtomicU64,
@@ -102,6 +107,7 @@ impl PluginRegistry {
             agent_contributions: Mutex::new(HashMap::new()),
             hardware_support: Mutex::new(HashMap::new()),
             knowledge_providers: Mutex::new(HashMap::new()),
+            ui_components: Mutex::new(HashMap::new()),
             quarantined_plugins: Mutex::new(HashSet::new()),
             next_plugin_id: AtomicU64::new(1),
             next_boundary_ordinal: AtomicU64::new(1),
@@ -145,7 +151,8 @@ impl PluginRegistry {
             }
             Contribution::Agent(_)
             | Contribution::HardwareSupport(_)
-            | Contribution::KnowledgeProvider(_) => false,
+            | Contribution::KnowledgeProvider(_)
+            | Contribution::UiComponent(_) => false,
         });
         for contribution in &manifest.contributions {
             if let Contribution::Capability(cm) = contribution {
@@ -208,6 +215,14 @@ impl PluginRegistry {
                         .entry(plugin_id)
                         .or_default()
                         .push(kp.clone());
+                }
+                Contribution::UiComponent(ui) => {
+                    self.ui_components
+                        .lock()
+                        .unwrap()
+                        .entry(plugin_id)
+                        .or_default()
+                        .push(ui.clone());
                 }
             }
         }
@@ -302,6 +317,7 @@ impl PluginRegistry {
         self.agent_contributions.lock().unwrap().remove(&plugin_id);
         self.hardware_support.lock().unwrap().remove(&plugin_id);
         self.knowledge_providers.lock().unwrap().remove(&plugin_id);
+        self.ui_components.lock().unwrap().remove(&plugin_id);
         self.quarantined_plugins.lock().unwrap().remove(&plugin_id);
         Ok(())
     }
@@ -371,6 +387,22 @@ impl PluginRegistry {
     pub fn knowledge_provider_contributions(&self) -> Vec<KnowledgeProviderContribution> {
         let quarantined = self.quarantined_plugins.lock().unwrap();
         self.knowledge_providers
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(plugin_id, _)| !quarantined.contains(*plugin_id))
+            .flat_map(|(_, contributions)| contributions.iter().cloned())
+            .collect()
+    }
+
+    /// The real registration point docs/998-roadmap.md's Resourceful pillar named as missing:
+    /// every currently-installed, non-quarantined plugin's own `Contribution::UiComponent`
+    /// entries, flattened into one list. `hyperion-workspace`'s own real caller looks one up by
+    /// `capability_ref` instead of every integrator hand-authoring a `CapabilityUiContract` with
+    /// no registry to consult.
+    pub fn ui_component_contributions(&self) -> Vec<UiComponentContribution> {
+        let quarantined = self.quarantined_plugins.lock().unwrap();
+        self.ui_components
             .lock()
             .unwrap()
             .iter()

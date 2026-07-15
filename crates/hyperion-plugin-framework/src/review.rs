@@ -36,6 +36,10 @@ fn canonical_bytes(manifest_without_signature: &PluginManifest) -> Vec<u8> {
                 bytes.extend_from_slice(kp.topic.as_bytes());
                 bytes.extend_from_slice(kp.capability_id.as_bytes());
             }
+            Contribution::UiComponent(ui) => {
+                bytes.extend_from_slice(ui.capability_ref.as_bytes());
+                bytes.extend_from_slice(ui.panel_template.as_bytes());
+            }
         }
     }
     bytes
@@ -111,6 +115,10 @@ pub fn validate_manifest(
             // entry -- the capability it points at is a separate, separately-justified
             // `Capability` contribution. This variant alone can only ever justify `Read`.
             Contribution::KnowledgeProvider(_) => matches!(request.operation, Operation::Read),
+            // A `UiComponent` contribution is pure descriptive layout/accessibility metadata --
+            // it never executes, writes, or reaches the network on its own, so it can only ever
+            // justify `Read`.
+            Contribution::UiComponent(_) => matches!(request.operation, Operation::Read),
         });
         if !justified {
             return Err(PluginError::PermissionOverreach(request.operation));

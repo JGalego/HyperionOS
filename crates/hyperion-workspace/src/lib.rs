@@ -31,6 +31,11 @@
 //! real query genuinely decides which, and how many, real devices a
 //! compiled [`compiler::WorkspaceGraph`] mounts onto — docs/20 §5.5's
 //! Cross-Device Workspace Assembly's first, closable half.
+//! [`plugin_contracts::known_contract_for`] (2026-07-16, docs/998-roadmap.md's Resourceful
+//! pillar) is a real UI-component registry: a plugin's own
+//! `hyperion_plugin_framework::Contribution::UiComponent` entries are searched for a
+//! `capability_ref` this crate has no hand-authored contract for, and a real caller uses the
+//! match (if any) instead of every integrator writing its own `contract_for`-style fallback.
 //!
 //! Deliberately deferred, and why:
 //!
@@ -67,12 +72,14 @@ mod accessibility;
 mod compiler;
 mod contracts;
 mod modality;
+mod plugin_contracts;
 mod types;
 
 pub use accessibility::{lint_template, AccessibilityLintResult, Severity, Violation};
 pub use compiler::{WorkspaceCompiler, WorkspaceError};
 pub use contracts::{CapabilityUiContract, ComplexityTier, PanelVariant, RegionAffinity};
 pub use modality::{project, Modality, ModalityInterface};
+pub use plugin_contracts::known_contract_for;
 pub use types::{
     AccessibilityNode, AccessibilityTree, Binding, BindingMode, CompiledLayoutTemplate,
     LifecycleState, Panel, RenderState, WorkspaceGraph, WorkspaceIntentKey,

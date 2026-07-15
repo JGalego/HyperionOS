@@ -1870,7 +1870,18 @@ mean here):
   exact same invocation/consent machinery every other Capability already does). A bare
   `KnowledgeProvider` contribution can only ever justify `Read`. Proven end to end: exact-topic
   lookup, multiple providers for one topic, and uninstall/quarantine really removing it.
-- **The other four `Contribution` variants** (`UiComponent`, `ExecutionEngine`,
+- **`Contribution::UiComponent`, landed (2026-07-16).**
+  `PluginRegistry::ui_component_contributions()` is the real UI-component registry
+  `hyperion-workspace` had no equivalent of — before this, every caller hand-authored a
+  `CapabilityUiContract` (see `contract_for` in `hyperion-console`/`hyperion-shell`, or the
+  `*::workspace_bridge` modules). `hyperion-workspace::known_contract_for` searches every
+  currently-installed, non-quarantined plugin's own templates for an exact `capability_ref`
+  match and converts it into a real `CapabilityUiContract` (per-`ComplexityTier` `variants` are
+  not part of a plugin contribution yet — a real but separate Adaptive-Complexity refinement).
+  A bare `UiComponent` contribution can only ever justify `Read`. Proven end to end: a known
+  `capability_ref` is found and correctly converted; an unknown one isn't; uninstall/quarantine
+  really remove it from the lookup.
+- **The other three `Contribution` variants** (`ExecutionEngine`,
   `AutomationWorkflow`, `MemoryProvider`) — none has an owning
   subsystem with a real registration point yet; see `hyperion-plugin-framework`'s own doc comment.
 
