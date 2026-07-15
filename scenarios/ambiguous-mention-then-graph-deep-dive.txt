@@ -1,0 +1,37 @@
+# An ambiguous, under-specified request followed by real conversational continuity, then using
+# `/recall`'s own text filter (not the bare, unfiltered form) to keep every later `/why`/`/related`
+# deterministic. Runs against the plain default build and `MockBackend`, no feature flag or API
+# key needed.
+#
+#   cargo build -p hyperion-console --bin hyperion-console
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/ambiguous-mention-then-graph-deep-dive.txt
+#
+# Real, honest finding from live-testing this file repeatedly against a fresh directory:
+# `GraphExplorer::recall` (`crates/hyperion-console/src/graph_explorer.rs`) sorts by real
+# `updated_at`, newest first -- but several nodes created inside the same wall-clock second (an
+# entire `MockBackend` conversation runs far faster than a one-second clock tick) tie on that key,
+# and Rust's `HashMap` iteration order (randomized per process, not insertion order) breaks the
+# tie -- so a *bare* "/recall" with several same-second results can print a different item at
+# position [1] on every fresh run (verified live: it did). This file works around that by always
+# filtering "/recall <text>" down to a single, unambiguous match before ever using its number with
+# "/why"/"/related" -- the one case that stays genuinely deterministic regardless of the tie --
+# rather than assuming a specific bare "/recall" ordering the way an earlier draft of
+# scenarios/onboarding-new-user-launches-startup.txt incorrectly did.
+
+remind me about the api
+
+/recall
+
+/why 1
+
+my name is Jordan
+
+what is my name
+
+/recall Jordan
+
+/why 1
+
+/related 1

@@ -8,10 +8,12 @@ sessions, not only hand-authored cases — except this file is the human-readabl
 machine-checked form of each finding below lives as a real regression test in the relevant crate
 (linked per entry).
 
-**Status: a starting set, not the "dozens" docs/41 asks for.** ~13 scenarios have been run so far,
-plus all ten of the per-backend scenario files under [`scenarios/`](../scenarios/) (scenario 10
-below), against `hyperion-console` only (the one real, natively-buildable, non-GUI entry point
-this sandbox can drive with piped stdin or a scenario file — see "How scenarios are run" below).
+**Status: a starting set, not the "dozens" docs/41 asks for.** ~14 scenarios have been run so far,
+plus all ten of the per-backend scenario files (scenario 10) and eight further multi-turn,
+multi-command, multi-backend scenario files (scenario 14) under
+[`scenarios/`](../scenarios/), against `hyperion-console` only (the one real, natively-buildable,
+non-GUI entry point this sandbox can drive with piped stdin or a scenario file — see "How
+scenarios are run" below).
 Scenarios 11 and 13 ([998 — Roadmap](998-roadmap.md)'s Autonomy Roadmap section, Resourceful and
 Self-Sustaining pillars) are the first
 two verified via `cargo test` rather than a driven console session — named honestly as such, since
@@ -225,6 +227,25 @@ wasn't compiled with real inference support") and the session keeps working on w
 was already active. Run this scenario twice to see both real behaviors: once against the default
 build (confirms the honest refusal) and once against a binary built with `--features candle` from
 the start (confirms the switch succeeds and the final answer is real generated text, not an echo).
+
+### Further multi-turn, multi-command, multi-backend scenarios
+
+Eight further scenario files, each a real, checked-in, multi-line journey in the same shape as
+`multi-turn-demo.txt` above, but each named for the specific real journey it drives rather than
+generically — several of them exercising more than one real backend, or more than one real
+meta-command, in a single session. Each is scenario 14 below; see that entry for what was actually
+observed running every one of them for real.
+
+| Scenario file | Journey | Needs |
+| --- | --- | --- |
+| [`cloud-provider-comparison.txt`](../scenarios/cloud-provider-comparison.txt) | the same real question asked of three real cloud providers (OpenAI, Anthropic, Groq) in one session | `--features openai-compat,anthropic`, all three real keys in `.env` |
+| [`local-first-cloud-escalation.txt`](../scenarios/local-first-cloud-escalation.txt) | Mock → real local Ollama → real cloud OpenAI, escalating only once a question genuinely needs it (CLAUDE.md's Local First principle) | `--features openai-compat`, a real running Ollama, a real `OPENAI_API_KEY` |
+| [`local-engine-lineup-no-half-switch.txt`](../scenarios/local-engine-lineup-no-half-switch.txt) | one real Ollama server put through both its real switch outcomes (exact tag, wrong tag), then two engines with nothing listening at all | `--features openai-compat`, a real running Ollama |
+| [`onboarding-new-user-launches-startup.txt`](../scenarios/onboarding-new-user-launches-startup.txt) | a brand-new user's first session: bare `help`, continuity, the decomposed plan, `/result`/`/recall`/`/why`/`/related` | none — default build, `MockBackend` |
+| [`steer-a-decomposed-plan-with-redo.txt`](../scenarios/steer-a-decomposed-plan-with-redo.txt) | re-running one sub-task of a decomposed plan with extra steering instructions via `/redo`, leaving its siblings untouched | none — default build, `MockBackend` |
+| [`confused-user-command-typos-and-recovery.txt`](../scenarios/confused-user-command-typos-and-recovery.txt) | six different ways to misuse a meta-command in a row, then a normal, successful recovery | none — default build, `MockBackend` |
+| [`ambiguous-mention-then-graph-deep-dive.txt`](../scenarios/ambiguous-mention-then-graph-deep-dive.txt) | an under-specified request, real continuity, then a filtered `/recall` → `/why` → `/related` chain kept deterministic on purpose | none — default build, `MockBackend` |
+| [`knowledge-graph-growth-audit.txt`](../scenarios/knowledge-graph-growth-audit.txt) | `/graph` empty, a real action that grows it, `/graph` again, `/graph dot` — all in one session | none — default build, `MockBackend` |
 
 ## Scenario log
 
@@ -539,6 +560,39 @@ fresh instance still starts at zero.
 as scenario 11 — no interactive way exists yet to force a real capability failure from the
 console, so this pillar can only be demonstrated today by someone willing to read Rust test code.
 
+### 14. Eight further real journeys, each run for real against a fresh directory
+
+**Utterance:** each of the eight scenario files named in "Further multi-turn, multi-command,
+multi-backend scenarios" above, run the same way scenario 10 ran the original ten per-backend
+files — a fresh `HYPERION_CONSOLE_DATA_DIR` each time, against a real build with whichever
+feature(s) that file needs.
+
+**Observed:** all eight ran and did what their own header comments claim, including two genuine,
+previously-undocumented findings surfaced only by actually running them repeatedly rather than
+once:
+
+1. **`scenarios/backend-cloud-anthropic.txt`'s own model id was stale.** `claude-3-5-haiku-latest`
+   no longer appears in a real account's own `/v1/models` list — the switch itself still succeeded
+   (a wrong model name alone is the one failure `/backend` forgives), but the real request right
+   after it then 404'd. Corrected in place to `claude-haiku-4-5-20251001` (verified against the
+   real account's own model list) rather than left broken for the next person to hit.
+2. **`/recall`'s ordering is real but not stable across runs.** `GraphExplorer::recall` sorts by
+   real `updated_at`, newest first — but several nodes created inside the same wall-clock second
+   (an entire `MockBackend` conversation runs far faster than a one-second clock tick) tie on that
+   key, and the tie is broken by `HashMap` iteration order, which is randomized per process. Run
+   `scenarios/onboarding-new-user-launches-startup.txt` fresh three times in a row and a bare
+   `/recall`'s own item `[1]` is a different one of the eleven real recorded nodes each time.
+   `/graph`, by contrast, really is stable — it sorts by real node/edge id, not a tied timestamp
+   (confirmed byte-for-byte identical across two fresh runs in
+   `scenarios/knowledge-graph-growth-audit.txt`). `scenarios/ambiguous-mention-then-graph-deep-dive.txt`
+   works around this by always filtering `/recall <text>` down to a single unambiguous match before
+   using its number with `/why`/`/related`, rather than assuming a specific bare-`/recall` ordering.
+
+**Status:** Verified live, not a fix for finding 1 — the model id already IS the fix, applied
+directly to the affected scenario file. Finding 2 is a new, open finding — see "Open findings"
+below; no regression test exists for it yet, since it lives in `hyperion-console`'s own
+`graph_explorer.rs`, not any of the crates under test today.
+
 ## Open findings (named, not fixed)
 
 - **Out-of-the-box default experience is a raw model echo.** `MockBackend::generate` is
@@ -554,3 +608,12 @@ console, so this pillar can only be demonstrated today by someone willing to rea
   multi-user permissions, long-running/multitasking sessions, actual filesystem operations, update
   application, or any failure-injection/recovery scenario. Each is a real "docs/41 Phase 2" gap in
   this file, not something to assume is fine because it wasn't found broken.
+- **`/recall`'s result numbering isn't stable across runs.** See scenario 14, finding 2 above.
+  `GraphExplorer::recall` (`crates/hyperion-console/src/graph_explorer.rs`) sorts by real
+  `updated_at`, but same-second ties break on randomized `HashMap` iteration order, so a bare
+  `/recall`'s item `[1]` can genuinely be a different recorded node on every fresh run. `/graph`
+  doesn't have this problem (it sorts by real node/edge id instead). A real fix would give
+  `KnowledgeGraph::query`'s own results a stable secondary sort key (e.g. node id, the same tiebreaker
+  `/graph` already uses) rather than leaving `/recall`'s tie-break to incidental hashing. Not
+  attempted here — named as a real, reproducible finding for whoever picks it up, with a
+  live-verified repro (`scenarios/onboarding-new-user-launches-startup.txt`, run fresh three times).

@@ -1,0 +1,51 @@
+# One real running local engine (Ollama) put through all three of `/backend`'s real local-engine
+# failure/success paths in a row, plus two other engines that genuinely have nothing listening on
+# their ports -- a single-file, live demonstration of docs/999-usage-scenarios.md's own corrected
+# claim: "a local-engine backend switch is lenient about exactly one failure (the server responds,
+# but your model name isn't in its list) and hard about everything else." Needs a real
+# `ollama serve` already running with the model below pulled, and this binary built with
+# `--features openai-compat`. vLLM and LiteLLM need nothing running at all -- this file relies on
+# them genuinely being down to exercise the hard-failure path; if you actually have either running
+# on the default port, its own line below will succeed instead, which is fine, just a different
+# real result than the one recorded here.
+#
+#   cargo build -p hyperion-console --bin hyperion-console --features openai-compat
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/local-engine-lineup-no-half-switch.txt
+#
+# Edit "llama3.2:1b" / "llama3.2" below to a real pulled tag and its own untagged name on your
+# server -- the whole point of the second `/backend ollama` line is that it's the *same* model
+# family with the tag deliberately dropped, so the server's `/v1/models` list genuinely won't
+# contain it verbatim. Verified live: the exact-tag switch succeeds and answers for real; the
+# untagged switch still reports "Switched..." (the one failure `/backend` forgives) but the very
+# next real request then 404s for real, exactly as docs/999-usage-scenarios.md's corrected note
+# describes; switching back to the exact tag recovers immediately; both vLLM and LiteLLM (nothing
+# listening on either port in this sandbox) fail outright at the `/backend` line itself, and the
+# session's own next answer proves it never half-switched off Ollama either time. One further, honest
+# surprise from the real 1B model itself, not this codebase: asked "what is the capital of France" a
+# third time in the same session, its own answer wandered into a fabricated second "capital"
+# ("Pierrepoint, a borough in London") -- real conversation history (scenario 9's own mechanism)
+# reaching a genuinely small model can produce a genuinely wrong answer; nothing here masks or
+# corrects that, on purpose (CLAUDE.md's explainability principle -- a real model's real output,
+# however wrong, not a filtered one).
+
+/backend ollama llama3.2:1b
+
+what is the capital of France
+
+/backend ollama llama3.2
+
+what is the capital of France
+
+/backend ollama llama3.2:1b
+
+what is the capital of France
+
+/backend vllm some-model
+
+what is the capital of France
+
+/backend litellm some-model
+
+what is the capital of France

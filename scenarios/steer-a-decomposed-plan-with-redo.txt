@@ -1,0 +1,31 @@
+# The real "steer results" feature (docs/998-roadmap.md, commit 070c3db): a decomposed plan's own
+# sub-task can be re-run with extra steering instructions via `/redo <task> <extra instructions>`,
+# without re-running the whole plan. Runs against the plain default build and `MockBackend` --
+# `/redo` itself is backend-agnostic, so no feature flag or API key is needed to see the real
+# re-dispatch mechanism at work, even though `MockBackend`'s own answer is just an echo of the new
+# prompt (see scenarios/onboarding-new-user-launches-startup.txt's own note on that).
+#
+#   cargo build -p hyperion-console --bin hyperion-console
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/steer-a-decomposed-plan-with-redo.txt
+#
+# Verified live: `/redo market_research ...` dispatches a genuinely new capability call (the
+# `MockBackend`'s echo includes the real extra steering text appended to the original task
+# prompt) and overwrites that one task's own stored result in place -- a follow-up
+# "/result market_research" then returns the *redone* text, not the original one, while the other
+# three sibling tasks from the original plan (business_model/branding/legal_formation) are
+# untouched -- confirmed by the final "/result business_model" line below still returning its
+# original text. `/redo` itself also prints an honest, real dependency note right there
+# ("business_model, branding already used the old result and won't be redone automatically"),
+# rather than silently leaving stale downstream results unflagged.
+
+launch my startup
+
+/result market_research
+
+/redo market_research focus on the European market only, and ignore North America entirely
+
+/result market_research
+
+/result business_model

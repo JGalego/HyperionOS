@@ -1,0 +1,38 @@
+# CLAUDE.md's "Local First" principle, driven for real in one session: try a real local engine
+# first, only reach for a real paid cloud API once the question genuinely calls for it. Needs a
+# real `ollama serve` already running with the model below pulled, a genuinely valid
+# OPENAI_API_KEY in .env, and this binary built with `--features openai-compat`.
+#
+#   cargo build -p hyperion-console --bin hyperion-console --features openai-compat
+#   set -a && source .env && set +a
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/local-first-cloud-escalation.txt
+#
+# Edit "llama3.2:1b" / "gpt-4o-mini" below to whatever you've actually got. Starts on the default
+# `MockBackend` (no `/backend` line needed for that), so the first answer is a literal echo --
+# named honestly as the real out-of-the-box first impression (see docs/999-usage-scenarios.md's
+# own "Open findings" entry on this), not something this scenario tries to hide. Switches to the
+# real local Ollama model for a plain factual question (fast, free, no data leaves the machine),
+# then deliberately escalates a harder, open-ended question to a real cloud model once the local
+# model's own answer turns out too shallow to trust -- verified live: a 1B-parameter local model's
+# answer to the harder question below was thin and generic next to the cloud model's, a genuine
+# illustration of when escalating is actually worth a real paid API call rather than a routing
+# decision assumed in advance -- specifically, the 1B model's own answer meandered into an unrelated
+# tangent about "constant true" programs and bit patterns and never actually reached the real
+# diagonalization argument, while the cloud model's answer built the correct proof step by step.
+
+what is the capital of France
+
+/backend ollama llama3.2:1b
+
+what is the capital of France
+
+explain why the halting problem is undecidable, precisely enough for a computer science undergrad
+
+connect my openai account
+$OPENAI_API_KEY
+
+/backend openai gpt-4o-mini
+
+explain why the halting problem is undecidable, precisely enough for a computer science undergrad

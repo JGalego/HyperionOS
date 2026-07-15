@@ -9,14 +9,19 @@
 #   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
 #       ./target/debug/hyperion-console scenarios/backend-cloud-anthropic.txt
 #
-# Edit "claude-3-5-haiku-latest" below if your account should use a different model. `/backend
-# anthropic <model>` does a real, eager connectivity check right then -- an invalid key fails
-# outright and the session stays on whichever backend was active before, rather than
-# half-switching.
+# Edit "claude-haiku-4-5-20251001" below if your account should use a different model -- check
+# `curl https://api.anthropic.com/v1/models -H "x-api-key: $ANTHROPIC_API_KEY" -H
+# "anthropic-version: 2023-06-01"` for the exact ids your own account can actually see. Verified
+# live: an older draft of this file used "claude-3-5-haiku-latest", which a real account's own
+# model list no longer contains -- the switch itself still succeeded (a wrong model name alone is
+# the one failure `/backend` tolerates softly), but the real request after it then failed with a
+# real 404. `/backend anthropic <model>` does a real, eager connectivity check right then -- an
+# invalid key fails outright and the session stays on whichever backend was active before, rather
+# than half-switching.
 
 connect my anthropic account
 $ANTHROPIC_API_KEY
 
-/backend anthropic claude-3-5-haiku-latest
+/backend anthropic claude-haiku-4-5-20251001
 
 what is the capital of France

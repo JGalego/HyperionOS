@@ -1,0 +1,38 @@
+# A brand-new user's very first session, exercising nearly every real console meta-command in one
+# natural journey: the bare "help" a lost beginner actually types (no slash), introducing
+# themselves and checking real conversational continuity, the one real decomposed multi-task
+# template, a named sub-result lookup, and then using `/recall`/`/why`/`/related` to inspect what
+# the Knowledge Graph actually recorded about all of it. No backend switch, no API key, no
+# feature flag -- runs against the plain default build and `MockBackend`, exactly what anyone
+# cloning this repo gets with zero extra setup.
+#
+#   cargo build -p hyperion-console --bin hyperion-console
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/onboarding-new-user-launches-startup.txt
+#
+# `/why <n>` and `/related <n>` both need a result number from the *immediately preceding*
+# `/recall` or `/related` output, not a durable id -- and that numbering is real, but **not
+# stable across runs**: verified live, running this exact file against a fresh data directory
+# several times in a row put a different one of the eleven real recorded items at position [1]
+# each time (unlike `/graph`, which docs/999-usage-scenarios.md already documents as guaranteed
+# id-sorted and diff-stable, plain "/recall" has no such guarantee -- a real, honest gap, not
+# something to assume away). "/why 1" and "/related 1" below still always work -- they just
+# explain whichever item this run's own "/recall" happened to print as [1], not a specific
+# predicted one.
+
+help
+
+my name is Alex
+
+what is my name
+
+launch my startup
+
+/result market_research
+
+/recall
+
+/why 1
+
+/related 1

@@ -1,0 +1,38 @@
+# A realistically confused user mistyping and misusing nearly every real console meta-command in
+# a row, then recovering into a working session -- every line before "launch my startup" below is
+# deliberately wrong in a different way, to walk every honest-error path CLAUDE.md's "never expose
+# technical errors directly" principle asks for, in one file instead of scattered one-off checks.
+# Runs against the plain default build and `MockBackend`, no feature flag or API key needed.
+#
+#   cargo build -p hyperion-console --bin hyperion-console
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/confused-user-command-typos-and-recovery.txt
+#
+# Verified live, in order: an unrecognized slash command gets real, plain-language feedback
+# instead of being echoed as a goal (scenario 5 in docs/999-usage-scenarios.md); an unknown
+# backend name lists the real, current set of valid ones; "/backend openai" with no model asks
+# for one by name rather than a generic usage error; "/why"/"/related" with no numeric argument
+# and no prior "/recall" both give the same honest "needs a result number" message rather than
+# crashing or silently doing nothing; "/result" for a task name that was never planned says so
+# plainly instead of returning something fabricated. None of this leaves the session in a broken
+# state -- the final three lines are a real, ordinary, successful interaction, run in the same
+# process right after all six mistakes above.
+
+/nonexistent
+
+/backend fakebackend
+
+/backend openai
+
+/why
+
+/related
+
+/result some_task_that_was_never_planned
+
+launch my startup
+
+/result market_research
+
+/recall

@@ -1,0 +1,47 @@
+# Three real, paid, external cloud APIs in one session, asked the exact same question in a row --
+# needs genuinely valid OPENAI_API_KEY, ANTHROPIC_API_KEY, and GROQ_API_KEY in .env, and this
+# binary built with `--features openai-compat,anthropic` (Groq reuses `openai-compat`; see
+# scenarios/backend-cloud-groq.txt's own note on why).
+#
+#   cargo build -p hyperion-console --bin hyperion-console --features openai-compat,anthropic
+#   set -a && source .env && set +a
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/cloud-provider-comparison.txt
+#
+# Edit the three model names below if your accounts should use different ones -- check each
+# provider's own `/v1/models` (or, for Anthropic, `/v1/models` with an `x-api-key` header) for the
+# exact ids your account can actually see; a stale or renamed id is a real, live-verified failure
+# mode this file's sibling scenarios/backend-cloud-anthropic.txt ran into and documents. Each
+# "connect ... account" + "/backend ... <model>" pair is independent -- connecting a second
+# provider never disconnects or forgets the first (`pending_connect` is a single-slot field,
+# consumed the instant its own key is pasted, before the next "connect" line is even read), so all
+# three keys really do end up stored, encrypted at rest, in the same session's data directory by
+# the end of this file. Each `/backend` switch does its own real, eager connectivity check, so a
+# wrong or revoked key for provider 2 fails outright right there and leaves the session on
+# provider 1 rather than silently skipping ahead to provider 3. Verified live: all three real
+# providers answered the same real question with genuinely different phrasing/length/formatting
+# (OpenAI and Groq both plain prose, Anthropic its own Markdown with a heading and a bullet list) --
+# a real illustration of why Hyperion treats the model as swappable rather than betting the whole
+# system's voice on one vendor's style (CLAUDE.md's "models should be replaceable").
+
+connect my openai account
+$OPENAI_API_KEY
+
+/backend openai gpt-4o-mini
+
+what is the smallest country in the world by land area
+
+connect my anthropic account
+$ANTHROPIC_API_KEY
+
+/backend anthropic claude-haiku-4-5-20251001
+
+what is the smallest country in the world by land area
+
+connect my groq account
+$GROQ_API_KEY
+
+/backend groq llama-3.3-70b-versatile
+
+what is the smallest country in the world by land area

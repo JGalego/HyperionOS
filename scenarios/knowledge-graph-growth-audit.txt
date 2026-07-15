@@ -1,0 +1,32 @@
+# `/graph`'s own before/during/after shape, all inside one session: an empty dump against a
+# genuinely fresh Knowledge Graph, a real decomposed plan that actually grows it, then both real
+# output formats (plain text and Graphviz DOT) of the grown result. Runs against the plain default
+# build and `MockBackend`, no feature flag or API key needed.
+#
+#   cargo build -p hyperion-console --bin hyperion-console
+#   rm -rf /tmp/hyperion-scratch
+#   HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch \
+#       ./target/debug/hyperion-console scenarios/knowledge-graph-growth-audit.txt
+#
+# Unlike scenarios/ambiguous-mention-then-graph-deep-dive.txt's own finding about "/recall", both
+# real dumps here are genuinely stable: `/graph` sorts by real node/edge id
+# (`hyperion_knowledge_graph::KnowledgeGraph::dump`), not by tied wall-clock timestamps, so running
+# this same file twice against two fresh directories produces byte-for-byte identical output both
+# times -- verified live. For a real before/after *diff* across a separate real process restart
+# (not just within this one file), see docs/999-usage-scenarios.md's own "Checking how the
+# knowledge graph changed" section, which uses this exact "empty /graph, real action, /graph
+# again" shape across three separate invocations of the same data directory instead of one.
+#
+# `/graph dot` is deliberately not the default output (plain text stays screen-reader-friendly and
+# diffable with plain `diff`, per CLAUDE.md's accessibility-first stance) -- pipe its own output
+# through `dot -Tsvg` if you actually want a picture:
+#   ./target/debug/hyperion-console scenarios/knowledge-graph-growth-audit.txt \
+#       | sed -n '/digraph/,/^}/p' | dot -Tsvg -o graph.svg
+
+/graph
+
+launch my startup
+
+/graph
+
+/graph dot
