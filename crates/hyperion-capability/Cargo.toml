@@ -1,6 +1,6 @@
 [package]
 name = "hyperion-capability"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
 description = "Hyperion L0 capability security core: unforgeable tokens, attenuated delegation, cascading revocation (docs/03-kernel-architecture.md)."

@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-agent-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-ai-runtime",
  "hyperion-capability",
@@ -2780,7 +2780,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-ai-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -2800,7 +2800,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-api-gateway"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-agent-runtime",
  "hyperion-ai-runtime",
@@ -2823,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-capability"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitflags 2.13.0",
  "proptest",
@@ -2833,7 +2833,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-cgroups"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-scheduler",
@@ -2844,7 +2844,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-compat"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-context",
@@ -2859,7 +2859,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-console"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-agent-runtime",
  "hyperion-ai-runtime",
@@ -2878,7 +2878,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-context"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
@@ -2893,7 +2893,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-coordination"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-agent-runtime",
  "hyperion-ai-runtime",
@@ -2912,7 +2912,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-crypto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -2926,7 +2926,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-device"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-context",
@@ -2942,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-explainability"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-knowledge-graph",
@@ -2955,7 +2955,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-federation"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-agent-runtime",
  "hyperion-ai-runtime",
@@ -2971,7 +2971,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-init"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "drm",
  "hyperion-capability",
@@ -2989,7 +2989,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-intent"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-context",
@@ -3005,7 +3005,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-ipc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitflags 2.13.0",
  "hyperion-capability",
@@ -3018,7 +3018,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-knowledge-graph"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-storage",
@@ -3031,7 +3031,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-memory"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-knowledge-graph",
@@ -3046,7 +3046,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-model-router"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-ai-runtime",
  "hyperion-capability",
@@ -3055,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-netstack"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-context",
@@ -3072,7 +3072,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-observability"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
@@ -3085,7 +3085,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-plugin-framework"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
@@ -3097,7 +3097,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-privacy"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-knowledge-graph",
@@ -3110,7 +3110,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-recovery"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-agent-runtime",
  "hyperion-ai-runtime",
@@ -3124,7 +3124,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-release-gate"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
@@ -3136,7 +3136,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-scalability"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
@@ -3150,7 +3150,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-scheduler"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "proptest",
@@ -3159,7 +3159,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-sdk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
@@ -3171,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-security"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-ai-runtime",
  "hyperion-capability",
@@ -3185,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-semantic-fs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-context",
@@ -3199,7 +3199,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-shell"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "egui",
@@ -3218,7 +3218,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-sim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-ipc",
@@ -3227,7 +3227,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-storage"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "serde",
@@ -3238,7 +3238,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-supervisor"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-cgroups",
@@ -3252,7 +3252,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-threat-model"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-agent-runtime",
  "hyperion-ai-runtime",
@@ -3274,7 +3274,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-trust-boundary"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "landlock",
@@ -3286,7 +3286,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-update"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
@@ -3301,7 +3301,7 @@ dependencies = [
 
 [[package]]
 name = "hyperion-workspace"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-context",

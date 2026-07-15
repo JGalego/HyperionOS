@@ -12,6 +12,8 @@ Want the thinking behind it? Read [`CLAUDE.md`](CLAUDE.md).
 
 Want to know exactly what's built and what's next? See [the Roadmap](docs/998-roadmap.md).
 
+See [`CHANGELOG.md`](CHANGELOG.md) for what's new in each release.
+
 ## 📑 Contents
 
 - [🧭 Philosophy](#-philosophy)
