@@ -1813,15 +1813,24 @@ mean here):
   threaded through `prepare_submission` → `publish` → `PluginRegistry::install`: naming an
   existing, real, already-vetted program as a `Runtime::NativeBinary` submission now installs it
   as a genuinely *runnable* capability, invocable through Slice 1's real execution path the moment
-  `publish` returns — proven end to end. **Deliberately not built**: an agent synthesizing brand-new
-  code from scratch and directly executing it. Real code review/static analysis of freshly
-  generated code before ever running it is separate, substantial work this session didn't
-  attempt — naming it here rather than quietly skipping it or faking it with an unreviewed
-  auto-exec path, which would be a real security regression, not a feature.
+  `publish` returns — proven end to end.
 - **`hyperion-api-gateway`'s parallel gap, landed.** Its own `ApiGateway::dispatch_one` now checks
   `self.registry` for a runnable `NativeBinary` implementation before falling back to
   `hyperion_agent_runtime::dispatch_stub_capability`, the exact same real execution path Slice 1
   built — proven end to end the same way, through `invoke_capability`.
+- **Tool creation from scratch, landed (2026-07-16).** `hyperion-sdk::codegen::review_and_build`
+  closes what the previous paragraph named as not built: an agent's freshly generated Rust source
+  is rejected outright if it contains `unsafe`, then really compiled (`cargo build --release`) and
+  really linted (`cargo clippy -- -D warnings`) in a throwaway scratch package — three real gates,
+  no simulated pass/fail. Only source that survives all three becomes a real, runnable
+  `NativeBinaryDescriptor`, installable through the exact same `publish` → `PluginRegistry::install`
+  path (and therefore the exact same sandboxed execution path) as a hand-installed `NativeBinary`.
+  Proven end to end: a clean generated program really compiles, really lints, and its real compiled
+  binary really runs and produces real output; a source containing `unsafe`, a source that fails to
+  compile, and a source that compiles but fails clippy are each proven to really be rejected before
+  ever executing. Real code review of generated code beyond compiler + clippy (e.g. LLM-based
+  semantic review, sandboxed dry-run fuzzing) remains future work — this gate is real and honest
+  about what it does and doesn't catch, not a claim of perfect review.
 
 **Deliberately still deferred:**
 

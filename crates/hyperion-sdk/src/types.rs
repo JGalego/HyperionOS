@@ -71,10 +71,10 @@ pub struct Implementation {
     /// docs/998-roadmap.md's "tool creation" slice: this crate's own publish pipeline
     /// (`prepare_submission` → `publish`) now installs a `NativeBinary` submission as a genuinely
     /// *runnable* capability when this is `Some` -- naming an existing, real, already-vetted
-    /// program is "tool creation" in the safe, honest sense this workspace can support today; an
-    /// agent synthesizing and directly executing brand-new code from scratch is deliberately
-    /// deferred (real code review/static analysis of freshly generated code before ever executing
-    /// it is separate, substantial work, not a field addition).
+    /// program is one way to populate this field; [`crate::codegen::review_and_build`] is the
+    /// other, real path -- an agent's freshly generated Rust source really compiled and really
+    /// linted before this descriptor is ever produced, so a brand-new tool and a hand-installed
+    /// one both flow through this same field and the same downstream execution path.
     pub native_binary: Option<NativeBinaryDescriptor>,
 }
 

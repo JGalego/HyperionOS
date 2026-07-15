@@ -29,6 +29,16 @@
 //! compile a (Contract, Implementation) pair into a real
 //! `hyperion_plugin_framework::PluginManifest` and install it through
 //! the real registry — never a second, parallel installation path.
+//! [`codegen::review_and_build`] closes docs/998-roadmap.md's own "tool
+//! creation" gap for real: freshly generated Rust source is rejected
+//! outright if it contains `unsafe`, then really compiled (`cargo build
+//! --release`) and really linted (`cargo clippy -- -D warnings`) in a
+//! throwaway scratch package — only a source that survives all three
+//! becomes a real, runnable
+//! `hyperion_plugin_framework::NativeBinaryDescriptor`, installable
+//! through the exact same [`publish::publish`] path (and therefore the
+//! exact same sandboxed execution path) as a hand-written `NativeBinary`
+//! implementation.
 //!
 //! Deliberately deferred, and why:
 //!
@@ -60,10 +70,12 @@
 //!   documented downgrade `hyperion-netstack`'s entity resolution already
 //!   uses in this workspace.
 
+mod codegen;
 mod harness;
 mod publish;
 mod types;
 
+pub use codegen::{review_and_build, CodegenRejection, GeneratedSource};
 pub use harness::{run_harness, CapabilityImplementation};
 pub use publish::{prepare_submission, publish, to_plugin_manifest};
 pub use types::{
