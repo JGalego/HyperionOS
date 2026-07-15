@@ -1881,9 +1881,24 @@ mean here):
   A bare `UiComponent` contribution can only ever justify `Read`. Proven end to end: a known
   `capability_ref` is found and correctly converted; an unknown one isn't; uninstall/quarantine
   really remove it from the lookup.
-- **The other three `Contribution` variants** (`ExecutionEngine`,
-  `AutomationWorkflow`, `MemoryProvider`) — none has an owning
-  subsystem with a real registration point yet; see `hyperion-plugin-framework`'s own doc comment.
+- **`Contribution::AutomationWorkflow`, landed (2026-07-16).**
+  `PluginRegistry::automation_workflow_contributions()` is the real, live goal-template registry
+  `hyperion-intent`'s own hardcoded, crate-private built-in roster had no equivalent of.
+  `hyperion_intent::templates::match_template_with_plugins` checks the built-ins first (the same
+  "existing roster wins ties" convention `hyperion-coordination::catalog::
+  best_fit_manifest_with_plugins` already established for `Contribution::Agent`), then a
+  currently-installed, non-quarantined plugin's own workflow templates — reached through a new
+  `IntentEngine::new_with_plugins` constructor (`new` itself is unchanged, so every existing
+  caller is untouched). A bare `AutomationWorkflow` contribution can only ever justify `Read`.
+  Proven end to end: a plugin-contributed template really decomposes a matching utterance into
+  real, dependency-linked sub-intents; a built-in template still wins a colliding match; without
+  a registry the same utterance stays ungrounded; quarantine stops a plugin's template from
+  matching. Not yet wired into a live `hyperion-console`/`hyperion-shell` session (no
+  `PluginRegistry` is constructed there today) — a real, separate next step, same scope boundary
+  the `Agent` slice already drew.
+- **The other two `Contribution` variants** (`ExecutionEngine`, `MemoryProvider`) — neither has an
+  owning subsystem with a real registration point yet; see `hyperion-plugin-framework`'s own doc
+  comment.
 
 ### Social — connect with other Hyperion instances
 

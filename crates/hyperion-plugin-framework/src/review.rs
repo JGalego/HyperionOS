@@ -40,6 +40,12 @@ fn canonical_bytes(manifest_without_signature: &PluginManifest) -> Vec<u8> {
                 bytes.extend_from_slice(ui.capability_ref.as_bytes());
                 bytes.extend_from_slice(ui.panel_template.as_bytes());
             }
+            Contribution::AutomationWorkflow(wf) => {
+                bytes.extend_from_slice(wf.root_predicate.as_bytes());
+                for keyword in &wf.trigger_keywords {
+                    bytes.extend_from_slice(keyword.as_bytes());
+                }
+            }
         }
     }
     bytes
@@ -119,6 +125,10 @@ pub fn validate_manifest(
             // it never executes, writes, or reaches the network on its own, so it can only ever
             // justify `Read`.
             Contribution::UiComponent(_) => matches!(request.operation, Operation::Read),
+            // An `AutomationWorkflow` contribution is just a declarative task-graph shape --
+            // each leaf's predicate maps to its own separately-installed, separately-justified
+            // Capability. This variant alone can only ever justify `Read`.
+            Contribution::AutomationWorkflow(_) => matches!(request.operation, Operation::Read),
         });
         if !justified {
             return Err(PluginError::PermissionOverreach(request.operation));

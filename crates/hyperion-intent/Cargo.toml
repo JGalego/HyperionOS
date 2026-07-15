@@ -11,10 +11,13 @@ hyperion-context = { workspace = true }
 hyperion-explainability = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
 hyperion-memory = { workspace = true }
+# Real, live goal-template registry -- see `templates::match_template_with_plugins`.
+hyperion-plugin-framework = { workspace = true }
 hyperion-storage = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+hyperion-crypto = { workspace = true }
 tempfile = { workspace = true }

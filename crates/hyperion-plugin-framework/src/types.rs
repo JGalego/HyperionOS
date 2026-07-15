@@ -216,9 +216,30 @@ pub struct UiComponentContribution {
     pub has_visual_alert_equivalent: bool,
 }
 
-/// docs/24 §4's `Contribution`, narrowed to the five variants this
+/// One leaf in a plugin-contributed workflow template — mirrors `hyperion_intent`'s own
+/// crate-private `TemplateLeaf` shape (that crate's own doc comment: "trimmed... to a flat,
+/// non-nested HTN decomposition"). `depends_on` indexes other entries in the same
+/// contribution's own `leaves`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowLeaf {
+    pub predicate: String,
+    pub depends_on: Vec<usize>,
+}
+
+/// A plugin-contributed multi-step workflow template — the real registration point this
+/// crate's own doc comment named `hyperion-intent`'s own `TEMPLATES` (a hardcoded, crate-private
+/// static list, matched only by keyword) as missing: a plugin can now add a new named goal
+/// template a real utterance can match against, alongside the built-in roster.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AutomationWorkflowContribution {
+    pub trigger_keywords: Vec<String>,
+    pub root_predicate: String,
+    pub leaves: Vec<WorkflowLeaf>,
+}
+
+/// docs/24 §4's `Contribution`, narrowed to the six variants this
 /// workspace has an owning subsystem for — see this crate's doc comment
-/// on the remaining three variants' deferral. `Agent` closes
+/// on the remaining two variants' deferral. `Agent` closes
 /// docs/998-roadmap.md's own "`hyperion-coordination::catalog::default_manifests` is a
 /// hardcoded, static built-in list, not a live registry a plugin's `AgentManifest` could
 /// register into" gap: `crate::registry::PluginRegistry::agent_contributions` is that live
@@ -228,6 +249,8 @@ pub struct UiComponentContribution {
 /// via `crate::registry::PluginRegistry::knowledge_provider_contributions`. `UiComponent` closes
 /// `hyperion-workspace`'s own "every `CapabilityUiContract` is hand-authored by the caller, with
 /// no registry to consult" gap via `crate::registry::PluginRegistry::ui_component_contributions`.
+/// `AutomationWorkflow` closes `hyperion-intent`'s own hardcoded `TEMPLATES` gap via
+/// `crate::registry::PluginRegistry::automation_workflow_contributions`.
 #[derive(Debug, Clone)]
 pub enum Contribution {
     Capability(CapabilityManifest),
@@ -235,6 +258,7 @@ pub enum Contribution {
     HardwareSupport(HardwareSupportContribution),
     KnowledgeProvider(KnowledgeProviderContribution),
     UiComponent(UiComponentContribution),
+    AutomationWorkflow(AutomationWorkflowContribution),
 }
 
 /// docs/24 §4's `PluginManifest`. `signature` (docs/998-roadmap.md M9) is a real Ed25519

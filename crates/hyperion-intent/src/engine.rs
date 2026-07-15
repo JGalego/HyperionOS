@@ -12,6 +12,7 @@ use hyperion_knowledge_graph::{
     EdgeOrigin, ExplainRef, GraphError, KnowledgeGraph, NodeId, ProvenanceChain,
 };
 use hyperion_memory::WorkingMemory;
+use hyperion_plugin_framework::PluginRegistry;
 
 use crate::templates::{self, Template};
 use crate::types::{ExecutionTicket, HandleOutcome, Intent, IntentStatus, MutationOp};
@@ -68,10 +69,26 @@ pub struct IntentEngine {
     /// — see [`Self::explanation`]/[`Self::trace_intent`].
     explanations: ExplanationStore,
     next_action_id: AtomicU64,
+    /// docs/998-roadmap.md's Resourceful pillar: a real, optional `PluginRegistry` so
+    /// [`Self::handle_utterance`]'s template match considers a plugin-contributed
+    /// `Contribution::AutomationWorkflow` too, not just the built-in `templates::TEMPLATES`
+    /// roster — the same optional-real-backend shape `AgentRuntime`/`CoordinationSession`
+    /// already use for their own `Option<Arc<PluginRegistry>>`.
+    plugins: Option<Arc<PluginRegistry>>,
 }
 
 impl IntentEngine {
     pub fn new(graph: Arc<KnowledgeGraph>, context: Arc<ContextEngine>) -> Self {
+        Self::new_with_plugins(graph, context, None)
+    }
+
+    /// As [`Self::new`], additionally wiring a real [`PluginRegistry`] so a plugin-contributed
+    /// goal template can really compete for a real utterance match.
+    pub fn new_with_plugins(
+        graph: Arc<KnowledgeGraph>,
+        context: Arc<ContextEngine>,
+        plugins: Option<Arc<PluginRegistry>>,
+    ) -> Self {
         IntentEngine {
             graph,
             context,
@@ -79,6 +96,7 @@ impl IntentEngine {
             working_memories: Mutex::new(HashMap::new()),
             explanations: ExplanationStore::new(),
             next_action_id: AtomicU64::new(1),
+            plugins,
         }
     }
 
@@ -180,7 +198,7 @@ impl IntentEngine {
             }
         }
 
-        let template = templates::match_template(utterance);
+        let template = templates::match_template_with_plugins(utterance, self.plugins.as_deref());
         let now_ts = now();
         let urgent = URGENCY_KEYWORDS.iter().any(|kw| lower.contains(kw));
 
@@ -210,8 +228,8 @@ impl IntentEngine {
             }
         }
 
-        let (predicate, confidence, root_status) = match template {
-            Some(t) => (t.root_predicate.to_string(), 0.9, IntentStatus::Planned),
+        let (predicate, confidence, root_status) = match &template {
+            Some(t) => (t.root_predicate.clone(), 0.9, IntentStatus::Planned),
             None => ("generic_goal".to_string(), 0.3, IntentStatus::Proposed),
         };
 
@@ -232,7 +250,7 @@ impl IntentEngine {
         };
         let root = self.put_intent(monitor, token, None, &root_intent)?;
 
-        if let Some(t) = template {
+        if let Some(t) = &template {
             let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
             let explanation_id = self.explanations.begin(
                 monitor,
@@ -297,7 +315,7 @@ impl IntentEngine {
         now_ts: u64,
     ) -> Result<Vec<NodeId>, IntentError> {
         let mut leaf_ids = Vec::with_capacity(template.leaves.len());
-        for leaf in template.leaves {
+        for leaf in &template.leaves {
             let ready = leaf.depends_on.is_empty();
             let status = if ready {
                 IntentStatus::Executing
@@ -325,7 +343,7 @@ impl IntentEngine {
             leaf_ids.push(self.put_intent(monitor, token, None, &intent)?);
         }
         for (i, leaf) in template.leaves.iter().enumerate() {
-            for &dep_idx in leaf.depends_on {
+            for &dep_idx in &leaf.depends_on {
                 self.graph.link(
                     monitor,
                     token,

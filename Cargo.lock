@@ -2995,9 +2995,11 @@ version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-context",
+ "hyperion-crypto",
  "hyperion-explainability",
  "hyperion-knowledge-graph",
  "hyperion-memory",
+ "hyperion-plugin-framework",
  "hyperion-storage",
  "serde",
  "serde_json",

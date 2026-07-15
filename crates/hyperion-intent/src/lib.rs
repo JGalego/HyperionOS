@@ -35,7 +35,14 @@
 //!   startup" example, trimmed to four leaves) — proves the dependency-
 //!   graph/priority/critical-path machinery works; a real system would
 //!   maintain templates as versioned Semantic Objects (§2), which needs
-//!   the authoring/editing surface this phase doesn't build.
+//!   the authoring/editing surface this phase doesn't build. Partially closed
+//!   (2026-07-16, docs/998-roadmap.md's Resourceful pillar):
+//!   [`templates::match_template_with_plugins`] also matches a plugin's own real
+//!   `hyperion_plugin_framework::Contribution::AutomationWorkflow` entries (via
+//!   [`engine::IntentEngine::new_with_plugins`]), so a goal template no longer has to be one of
+//!   this crate's own hardcoded built-ins to really decompose an utterance — still not the
+//!   doc's own versioned-Semantic-Object authoring surface, just a second, real source of
+//!   templates alongside it.
 //! - **Conflict detection across active graphs** (docs/05 §6) — needs
 //!   multiple concurrently-*executing* Intents with real Agents mid-
 //!   execution ([12 — Multi-Agent Coordination](../12-multi-agent-coordination.md),
