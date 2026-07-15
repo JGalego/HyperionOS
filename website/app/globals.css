@@ -14,6 +14,12 @@
   --color-accent: #b8842a;
   --color-accent-strong: #8c6220;
   --color-accent-fg: #16150f;
+
+  /* Same three signals crates/hyperion-console/src/color.rs prints to a real terminal, darkened
+     here for contrast against a light background rather than the terminal's own lighter tones. */
+  --color-console-success: #3f7a34;
+  --color-console-warning: #8a5a12;
+  --color-console-failure: #a13f2e;
 }
 
 .dark {
@@ -32,6 +38,12 @@
      proved on a real screen, reused here rather than an invented purple. */
   --color-nebula-violet: #4a2c6b;
   --color-nebula-blue: #1a2a52;
+
+  /* The exact colors crates/hyperion-console/src/color.rs prints to a real terminal (and
+     assets/vhs/*.tape's own theme uses for the README recordings) -- not invented for the site. */
+  --color-console-success: #8fae6a;
+  --color-console-warning: #e6bb6e;
+  --color-console-failure: #b0705f;
 }
 
 @theme inline {
@@ -44,6 +56,9 @@
   --color-accent: var(--color-accent);
   --color-accent-strong: var(--color-accent-strong);
   --color-accent-fg: var(--color-accent-fg);
+  --color-console-success: var(--color-console-success);
+  --color-console-warning: var(--color-console-warning);
+  --color-console-failure: var(--color-console-failure);
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);

@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { ArrowUpRight } from "lucide-react";
 import type { consoleDemos } from "@/content/console-demos";
 import { site } from "@/content/site";
+import { classifyConsoleLine } from "@/lib/consoleStatus";
 import { useReducedMotionSafe } from "@/components/motion/useReducedMotionSafe";
 
 type Demo = (typeof consoleDemos)[number];
@@ -28,6 +29,15 @@ function lineDelays(lines: Demo["lines"]): number[] {
     return delay;
   });
 }
+
+/** Same green/amber/red-and-glyph treatment `crates/hyperion-console/src/color.rs` gives a real
+ * terminal, ported via `classifyConsoleLine` -- see that module's own doc comment for why each
+ * rule is anchored, not a bare substring match. */
+const STATUS_STYLE = {
+  success: { className: "text-console-success", glyph: "✓" },
+  warning: { className: "text-console-warning", glyph: "⚠" },
+  failure: { className: "text-console-failure", glyph: "✗" },
+} as const;
 
 /**
  * Renders a real hyperion-console transcript as real, selectable text -- not a screen recording.
@@ -78,7 +88,18 @@ export function ConsoleDemo({ demo }: { demo: Demo }) {
                 <span className="text-fg">{line.text}</span>
               </>
             ) : (
-              <span className="text-fg-muted">{line.text}</span>
+              (() => {
+                const status = classifyConsoleLine(line.text);
+                if (!status) {
+                  return <span className="text-fg-muted">{line.text}</span>;
+                }
+                const { className, glyph } = STATUS_STYLE[status];
+                return (
+                  <span className={className}>
+                    {glyph} {line.text}
+                  </span>
+                );
+              })()
             )}
           </motion.span>
         ))}

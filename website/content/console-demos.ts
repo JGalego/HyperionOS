@@ -1,14 +1,11 @@
-// Real hyperion-console transcript excerpts -- not illustrative copy like content/traces.ts above.
-// Every line here is verbatim output from an actual run of the named scenario file (see
-// scenarios/ and docs/999-usage-scenarios.md), trimmed to a representative excerpt the same way
-// hyperion-console's own graph_explorer.rs truncates a long result with "..." rather than
-// inventing a shorter fake one. Regenerate by re-running the scenario file and re-pasting its
-// real output, not by hand-editing these lines.
+// Transcript lines below are copied verbatim from an actual run of the named scenario file (see
+// scenarios/), not written for the page. Regenerate by re-running that file and pasting its
+// output back in, rather than editing the lines by hand.
 
 export const consoleDemosIntro = {
-  kicker: "Real sessions, not mockups",
-  heading: "This actually ran.",
-  body: "Every transcript below is real hyperion-console output from a real, checked-in scenario file -- the same ones this repo's own CI and docs/999-usage-scenarios.md verify against. Nothing here is staged copy.",
+  kicker: "Live console",
+  heading: "You can watch it run.",
+  body: "Every session below is copied from an actual hyperion-console run. Nothing here was written for the page.",
 };
 
 export type ConsoleLine = { type: "input" | "output"; text: string };
@@ -17,7 +14,8 @@ export const consoleDemos = [
   {
     id: "onboarding",
     title: "A new user's first session",
-    description: 'Conversational continuity, the decomposed "launch my startup" plan, then a named result lookup.',
+    description:
+      "Hyperion remembers what you told it a moment ago, breaks one goal into several tasks, and can hand back any single result by name.",
     scenarioFile: "scenarios/onboarding-new-user-launches-startup.txt",
     lines: [
       { type: "input", text: "my name is Alex" },
@@ -42,7 +40,8 @@ export const consoleDemos = [
   {
     id: "knowledge-graph",
     title: "Watching the knowledge graph grow",
-    description: "An empty graph, a real action that grows it, then the real nodes and edges it recorded.",
+    description:
+      "One command shows what Hyperion has learned, before and after it acts, as a graph you can inspect yourself.",
     scenarioFile: "scenarios/knowledge-graph-growth-audit.txt",
     lines: [
       { type: "input", text: "/graph" },
@@ -61,8 +60,9 @@ export const consoleDemos = [
   },
   {
     id: "cloud-providers",
-    title: "Three real cloud providers, one question",
-    description: "OpenAI, Anthropic, and Groq, connected and switched live in the same session, each asked the same real question.",
+    title: "One question, three models",
+    description:
+      "OpenAI, Anthropic, and Groq each answer the same question in the same session, switched live with no restart.",
     scenarioFile: "scenarios/cloud-provider-comparison.txt",
     lines: [
       { type: "input", text: "/backend openai gpt-4o-mini" },
