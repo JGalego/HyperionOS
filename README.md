@@ -2,7 +2,7 @@
 
 <img src="assets/banner.svg" alt="Hyperion -- the first intent-native operating system." width="100%" />
 
-[![CI](https://github.com/JGalego/HyperionOS/actions/workflows/ci.yml/badge.svg)](https://github.com/JGalego/HyperionOS/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/JGalego/HyperionOS?style=flat-square&color=d9a54a&label=release)](https://github.com/JGalego/HyperionOS/releases) [![License](https://img.shields.io/github/license/JGalego/HyperionOS?style=flat-square&color=8c6220)](LICENSE) [![Platforms](https://img.shields.io/badge/platforms-x86__64%20%7C%20aarch64-e6bb6e?style=flat-square)](docs/998-roadmap.md)
+[![CI](https://github.com/JGalego/HyperionOS/actions/workflows/ci.yml/badge.svg)](https://github.com/JGalego/HyperionOS/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/JGalego/HyperionOS?style=flat-square&color=d9a54a&label=release)](https://github.com/JGalego/HyperionOS/releases) [![License](https://img.shields.io/github/license/JGalego/HyperionOS?style=flat-square&color=8c6220)](LICENSE) [![Platforms](https://img.shields.io/badge/platforms-x86__64%20%7C%20aarch64-e6bb6e?style=flat-square)](docs/998-roadmap.md) [![Status](https://img.shields.io/badge/status-experimental-yellow?style=flat-square)](docs/998-roadmap.md)
 
 </div>
 
@@ -16,12 +16,28 @@ See [`CHANGELOG.md`](CHANGELOG.md) for what's new in each release.
 
 ## 📑 Contents
 
+- [✨ Features](#-features)
 - [🧭 Philosophy](#-philosophy)
 - [🧱 Architecture](#-architecture)
 - [🚀 Getting started](#-getting-started)
 - [🔨 Build it yourself](#-build-it-yourself)
 - [💬 Try it locally](#-try-it-locally)
 - [📄 License](#-license)
+
+## ✨ Features
+
+- **Speak your goal**: natural language replaces apps, files, and windows
+- **Automatic task breakdown**: goals decompose into sub-tasks, assigned to specialized agents
+- **Persistent memory**: a knowledge graph you can query with `/recall`, `/why`, `/related`
+- **Local-first inference**: real on-device models via Candle, Ollama, vLLM, LiteLLM
+- **Cloud when it helps**: optional OpenAI, Anthropic, Gemini, or Groq backends
+- **Swap models live**: switch backends mid-session, no restart
+- **Sandboxed capabilities**: plugins run isolated, behind explicit, revocable grants
+- **Talks to other agents**: real MCP and A2A interoperability
+- **Self-healing**: adaptive backoff, auto-resume, and cross-session learning from failures
+- **Verifiable releases**: every image signed with Ed25519 and independently checkable
+- **Accessible by default**: generated UI with accessibility built in, not bolted on
+- **Fully explainable**: every action traceable, reversible, and undoable
 
 ## 🧭 Philosophy
 
@@ -151,6 +167,10 @@ cargo build -p hyperion-console --bin hyperion-console
 HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch ./target/debug/hyperion-console scenarios/backend-mock.txt
 ```
 
+A real, live recording of [`scenarios/onboarding-new-user-launches-startup.txt`](scenarios/onboarding-new-user-launches-startup.txt) - bare `help`, conversational continuity, the decomposed "launch my startup" plan, then `/result`, `/recall`, `/why`, and `/related`:
+
+<img src="assets/demo-onboarding.gif" alt="A recorded hyperion-console session: help, conversational continuity, launch my startup, and exploring the result with /result, /recall, /why, and /related." width="100%" />
+
 ```
 > my name is Alex
 status: done -- [mock model 1] echo: my name is Alex
@@ -190,6 +210,10 @@ printf '%s\n' "launch my startup" "/graph dot" > /tmp/graph-demo.txt
 ./target/debug/hyperion-console /tmp/graph-demo.txt | sed -n '/digraph/,/^}/p' | dot -Tsvg -o graph.svg
 ```
 
+A real, live recording of [`scenarios/knowledge-graph-growth-audit.txt`](scenarios/knowledge-graph-growth-audit.txt) - `/graph` empty, a real action that grows it, `/graph` again, then `/graph dot`:
+
+<img src="assets/demo-knowledge-graph.gif" alt="A recorded hyperion-console session: an empty /graph, launch my startup growing it, /graph again showing the real nodes and edges, then /graph dot." width="100%" />
+
 ### Talking to another Hyperion instance
 
 `/mcp-server` and `/a2a-server` turn a running console into a real MCP or A2A server over HTTP; `/standby` keeps the process alive afterward so you can test it from another terminal:
@@ -214,6 +238,10 @@ set -a && source .env && set +a
 cargo build -p hyperion-console --bin hyperion-console --features openai-compat
 HYPERION_CONSOLE_DATA_DIR=/tmp/hyperion-scratch ./target/debug/hyperion-console scenarios/backend-cloud-groq.txt
 ```
+
+A real, live recording of [`scenarios/cloud-provider-comparison.txt`](scenarios/cloud-provider-comparison.txt) - the same question asked of three real cloud providers (OpenAI, Anthropic, Groq) in one session:
+
+<img src="assets/demo-cloud-providers.gif" alt="A recorded hyperion-console session: the same question asked of OpenAI, Anthropic, and Groq in a row, each connected and switched to live, with genuinely different real answers." width="100%" />
 
 `.env` is already gitignored, so a real key never gets committed. A scenario file only ever references a key by name (`$GROQ_API_KEY`), never as a literal - see [Usage Scenarios](docs/999-usage-scenarios.md)' "Running a scenario from a file" for how that expansion works.
 
