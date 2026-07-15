@@ -3023,6 +3023,8 @@ name = "hyperion-knowledge-graph"
 version = "0.2.0"
 dependencies = [
  "hyperion-capability",
+ "hyperion-crypto",
+ "hyperion-plugin-framework",
  "hyperion-storage",
  "proptest",
  "serde",

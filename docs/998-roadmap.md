@@ -1860,8 +1860,18 @@ mean here):
   `Read`, never `Write`/`NetworkEgress`/`Execute`. Proven end to end: a known
   `(device_type, manufacturer, model)` is found and correctly converted; an unknown or
   mismatched one isn't; uninstall/quarantine really remove it from the lookup.
-- **The other five `Contribution` variants** (`KnowledgeProvider`,
-  `UiComponent`, `ExecutionEngine`, `AutomationWorkflow`, `MemoryProvider`) — none has an owning
+- **`Contribution::KnowledgeProvider`, landed (2026-07-16).**
+  `PluginRegistry::knowledge_provider_contributions()` is the real (topic -> capability_id)
+  lookup `hyperion-knowledge-graph` had no equivalent of.
+  `hyperion-knowledge-graph::capability_for_topic`/`capabilities_for_topic` search every
+  currently-installed, non-quarantined plugin's own declared topics for a match — a real caller
+  with no local knowledge of a topic uses the result to decide which installed Capability to
+  invoke, never a second, parallel dispatch path (the matched capability still goes through the
+  exact same invocation/consent machinery every other Capability already does). A bare
+  `KnowledgeProvider` contribution can only ever justify `Read`. Proven end to end: exact-topic
+  lookup, multiple providers for one topic, and uninstall/quarantine really removing it.
+- **The other four `Contribution` variants** (`UiComponent`, `ExecutionEngine`,
+  `AutomationWorkflow`, `MemoryProvider`) — none has an owning
   subsystem with a real registration point yet; see `hyperion-plugin-framework`'s own doc comment.
 
 ### Social — connect with other Hyperion instances

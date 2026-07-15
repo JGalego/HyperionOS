@@ -32,6 +32,10 @@ fn canonical_bytes(manifest_without_signature: &PluginManifest) -> Vec<u8> {
                 bytes.extend_from_slice(hs.manufacturer.as_bytes());
                 bytes.extend_from_slice(hs.model.as_bytes());
             }
+            Contribution::KnowledgeProvider(kp) => {
+                bytes.extend_from_slice(kp.topic.as_bytes());
+                bytes.extend_from_slice(kp.capability_id.as_bytes());
+            }
         }
     }
     bytes
@@ -103,6 +107,10 @@ pub fn validate_manifest(
             // profile) -- it never executes, writes, or reaches the network on its own, so it
             // can only ever justify `Read`.
             Contribution::HardwareSupport(_) => matches!(request.operation, Operation::Read),
+            // A `KnowledgeProvider` contribution is just a (topic -> capability_id) lookup
+            // entry -- the capability it points at is a separate, separately-justified
+            // `Capability` contribution. This variant alone can only ever justify `Read`.
+            Contribution::KnowledgeProvider(_) => matches!(request.operation, Operation::Read),
         });
         if !justified {
             return Err(PluginError::PermissionOverreach(request.operation));

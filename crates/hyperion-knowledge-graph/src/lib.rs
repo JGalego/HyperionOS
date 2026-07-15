@@ -22,6 +22,14 @@
 //! simplified to one shared counter, since nothing here depends on the two
 //! sequences being independent.
 //!
+//! [`providers::capability_for_topic`] (2026-07-16, docs/998-roadmap.md's Resourceful pillar)
+//! is a real (topic -> capability_id) lookup: a plugin's own
+//! `hyperion_plugin_framework::Contribution::KnowledgeProvider` entries are searched for a
+//! topic this crate has no local knowledge of, and a real caller uses the match (if any) to
+//! decide which installed Capability to invoke — never a second, parallel dispatch path; the
+//! matched capability still goes through the exact same invocation/consent machinery every
+//! other Capability already does.
+//!
 //! Explicitly deferred, and why, matching the scoping this workspace already
 //! uses (see `hyperion-storage`'s crate doc for the same pattern):
 //!
@@ -70,9 +78,11 @@
 
 mod graph;
 mod index;
+mod providers;
 mod types;
 
 pub use graph::KnowledgeGraph;
+pub use providers::{capabilities_for_topic, capability_for_topic};
 // Re-exported the same way `NodeId`/`EdgeId` already alias `hyperion_storage::ObjectId` in
 // types.rs — a caller of `KnowledgeGraph::current_version`/`get_at_version` needs to name this
 // type without taking its own direct dependency on `hyperion-storage`.

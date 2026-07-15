@@ -168,19 +168,34 @@ pub struct HardwareSupportContribution {
     pub capability_manifest: Vec<HardwareCapabilityEntry>,
 }
 
-/// docs/24 §4's `Contribution`, narrowed to the three variants this
+/// A plugin-contributed knowledge source: which `topic` it can supply facts about, and which
+/// already-installed `Capability` (`capability_id`) actually answers a query for it. This never
+/// bypasses the Capability Registry's own dispatch/consent path — it only supplies a lookup a
+/// caller uses to decide *which* capability to invoke for a topic it has no local knowledge of,
+/// exactly like [`HardwareSupportContribution`] only supplies what a pairing flow *proposes*,
+/// never what it trusts outright.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KnowledgeProviderContribution {
+    pub topic: String,
+    pub capability_id: CapabilityId,
+}
+
+/// docs/24 §4's `Contribution`, narrowed to the four variants this
 /// workspace has an owning subsystem for — see this crate's doc comment
-/// on the remaining five variants' deferral. `Agent` closes
+/// on the remaining four variants' deferral. `Agent` closes
 /// docs/998-roadmap.md's own "`hyperion-coordination::catalog::default_manifests` is a
 /// hardcoded, static built-in list, not a live registry a plugin's `AgentManifest` could
 /// register into" gap: `crate::registry::PluginRegistry::agent_contributions` is that live
 /// registry. `HardwareSupport` closes the analogous "device driver registry" gap via
-/// `crate::registry::PluginRegistry::hardware_support_contributions`.
+/// `crate::registry::PluginRegistry::hardware_support_contributions`. `KnowledgeProvider` closes
+/// `hyperion-knowledge-graph`'s own "no registry of which capability answers which topic" gap
+/// via `crate::registry::PluginRegistry::knowledge_provider_contributions`.
 #[derive(Debug, Clone)]
 pub enum Contribution {
     Capability(CapabilityManifest),
     Agent(AgentContribution),
     HardwareSupport(HardwareSupportContribution),
+    KnowledgeProvider(KnowledgeProviderContribution),
 }
 
 /// docs/24 §4's `PluginManifest`. `signature` (docs/998-roadmap.md M9) is a real Ed25519
