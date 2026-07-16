@@ -72,7 +72,11 @@ impl KnowledgeGraph {
     /// `observed_version` is the version of this triple the caller last
     /// observed, if any — `None` means "no prior knowledge of this triple,"
     /// which is the case a blind concurrent insert must not be allowed to
-    /// resurrect a tombstone against.
+    /// resurrect a tombstone against. Owner-checked (2026-07-16) on both the plain-update and
+    /// tombstone-resurrection paths, the same real gap [`Self::put_node`]'s own doc comment
+    /// names: an existing edge can only ever be updated, or a tombstoned one resurrected, by the
+    /// same Trust Boundary that owns it — `GraphError::NotFound` otherwise, never revealing the
+    /// edge's existence to a foreign caller.
     #[allow(clippy::too_many_arguments)]
     pub fn link(
         &self,
@@ -97,8 +101,16 @@ impl KnowledgeGraph {
             .copied()
             .and_then(|id| index.edges.get(&id).cloned().map(|e| (id, e)));
 
+        let caller_boundary = token.origin().0;
         let (id_arg, expected_version, created_at, owner, is_update) = match &existing {
             Some((id, existing)) if existing.tombstone => {
+                // Owner-checked (2026-07-16), before the tombstone short-circuit below, the same
+                // ordering `unlink`/`delete_node` already use: a foreign-boundary caller gets
+                // `NotFound`, never `SuppressedByTombstone`, which would leak that a tombstoned
+                // edge with this exact identity exists under some other owner.
+                if existing.owner != caller_boundary {
+                    return Err(GraphError::NotFound);
+                }
                 let seen = observed_version.is_some_and(|v| v >= existing.version);
                 if !seen {
                     return Ok(LinkOutcome::SuppressedByTombstone(*id));
@@ -107,18 +119,30 @@ impl KnowledgeGraph {
                     Some(*id),
                     self.storage.current_version(*id),
                     existing.created_at,
-                    token.origin().0,
+                    caller_boundary,
                     false,
                 )
             }
-            Some((id, existing)) => (
-                Some(*id),
-                self.storage.current_version(*id),
-                existing.created_at,
-                existing.owner,
-                true,
-            ),
-            None => (None, None, now(), token.origin().0, false),
+            Some((id, existing)) => {
+                // Owner-checked (2026-07-16): this crate's own `put_node` doc comment claimed
+                // `link`'s update path was already safe because it "preserves `existing.owner`
+                // unconditionally" -- preserving the *value* isn't the same as *checking* it.
+                // Before this, any caller with a plain WRITE-rights token from a different Trust
+                // Boundary could silently mutate another boundary's edge (`weight`/`confidence`/
+                // `provenance`/`origin`), exactly the "misattribute ownership" concern docs/09 §8
+                // names.
+                if existing.owner != caller_boundary {
+                    return Err(GraphError::NotFound);
+                }
+                (
+                    Some(*id),
+                    self.storage.current_version(*id),
+                    existing.created_at,
+                    existing.owner,
+                    true,
+                )
+            }
+            None => (None, None, now(), caller_boundary, false),
         };
 
         let record = EdgeRecord {

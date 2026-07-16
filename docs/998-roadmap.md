@@ -3356,3 +3356,31 @@ next step on any of these is a design pass, not code.
   erroring out over another boundary's decayed edge. All pre-existing
   `hyperion-knowledge-graph` tests pass unchanged, and the one genuine regression
   (`hyperion-coordination`) was fixed rather than worked around.
+
+- **`hyperion-knowledge-graph`'s `link()` owner check, landed (2026-07-16)** — the second half of
+  gap 43's fix, found while verifying it: `put_node`'s own doc comment claimed `link`'s
+  edge-update path was "already safe" because it "preserves `existing.owner` unconditionally" —
+  but preserving the *value* isn't the same as *checking* it. Before this, any caller holding a
+  plain `RightsMask::WRITE` token from a different Trust Boundary than an edge's owner could
+  freely call `link()` again on that exact `(subject, predicate, target)` triple and silently
+  mutate another boundary's edge (`weight`/`confidence`/`provenance`/`origin`) — never rejected,
+  unlike the equivalent access on `get`/`delete_node`/`unlink`/`explain`/`put_node`. Directly
+  contradicts docs/09 §8's own "a malicious Capability... writing a false edge to misattribute
+  ownership is constrained" framing — nothing constrained an *update* to an edge the caller
+  didn't own. `link`'s non-tombstone update branch now real-checks `existing.owner ==
+  token.origin().0`, `NotFound` otherwise. The tombstone-resurrection branch got the same check:
+  previously, any caller who could produce the correct `observed_version` (a small, guessable
+  per-triple counter, not a secret) could resurrect — and thereby become the new owner of —
+  another boundary's tombstoned edge; now only the original owner ever can. Both checks happen
+  before their respective short-circuits (the tombstone-suppression check and the version-match
+  check), so a foreign caller never learns whether the edge exists, is tombstoned, or what
+  version it's at. Verified safe against every real production caller of `link`
+  (`hyperion-intent`/`hyperion-coordination`/`hyperion-netstack`/`hyperion-memory`/
+  `hyperion-semantic-fs`), all of which always pass the same token they used to create the
+  subject/target nodes in the same call path. Proven with 2 new tests in
+  `tests/single_object_owner_acl.rs`: a different boundary can never update an existing edge (the
+  original owner's `weight`/`confidence`/`provenance` are verified untouched via a real
+  subsequent `traverse`); a different boundary can never resurrect a tombstoned edge even with
+  the correct `observed_version` (verified still-tombstoned via `explain`). All pre-existing
+  `hyperion-knowledge-graph` tests, including `crdt.rs`'s own tombstone-resurrection property
+  test (which uses a single boundary throughout, unaffected), pass unchanged.

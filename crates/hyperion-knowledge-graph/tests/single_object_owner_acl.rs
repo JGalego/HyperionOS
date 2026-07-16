@@ -113,6 +113,123 @@ fn unlink_never_deletes_a_different_trust_boundarys_edge() {
 }
 
 #[test]
+fn link_never_updates_a_different_trust_boundarys_edge() {
+    let (dir, monitor, boundary_1, boundary_2) = setup();
+    let graph = KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap();
+    let a = graph
+        .put_node(&monitor, &boundary_1, None, "a", None, json!({}))
+        .unwrap();
+    let b = graph
+        .put_node(&monitor, &boundary_1, None, "b", None, json!({}))
+        .unwrap();
+    graph
+        .link(
+            &monitor,
+            &boundary_1,
+            a,
+            "rel",
+            b,
+            1.0,
+            EdgeOrigin::Explicit,
+            Some(0.9),
+            "original",
+            None,
+        )
+        .unwrap();
+
+    let result = graph.link(
+        &monitor,
+        &boundary_2,
+        a,
+        "rel",
+        b,
+        0.1,
+        EdgeOrigin::Explicit,
+        Some(0.1),
+        "poisoned",
+        None,
+    );
+    assert!(
+        matches!(result, Err(GraphError::NotFound)),
+        "a caller must never be able to silently mutate a different boundary's edge; got \
+         {result:?}"
+    );
+
+    // The original owner's own edge is genuinely untouched.
+    let subgraph = graph.traverse(&monitor, &boundary_1, a, None, 1).unwrap();
+    let (_, edge) = subgraph
+        .edges
+        .iter()
+        .find(|(_, e)| e.subject == a && e.target == b)
+        .unwrap();
+    assert_eq!(edge.weight, 1.0);
+    assert_eq!(edge.confidence, Some(0.9));
+    assert_eq!(edge.provenance, "original");
+}
+
+#[test]
+fn link_never_resurrects_a_different_trust_boundarys_tombstoned_edge() {
+    let (dir, monitor, boundary_1, boundary_2) = setup();
+    let graph = KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap();
+    let a = graph
+        .put_node(&monitor, &boundary_1, None, "a", None, json!({}))
+        .unwrap();
+    let b = graph
+        .put_node(&monitor, &boundary_1, None, "b", None, json!({}))
+        .unwrap();
+    let edge_id = match graph
+        .link(
+            &monitor,
+            &boundary_1,
+            a,
+            "rel",
+            b,
+            1.0,
+            EdgeOrigin::Explicit,
+            None,
+            "test",
+            None,
+        )
+        .unwrap()
+    {
+        hyperion_knowledge_graph::LinkOutcome::Created(id) => id,
+        other => panic!("expected Created, got {other:?}"),
+    };
+    graph.unlink(&monitor, &boundary_1, edge_id).unwrap();
+
+    // Even with the correct observed_version (a small, guessable per-triple counter, not a
+    // secret), a different boundary must never be able to resurrect -- and thereby become the
+    // new owner of -- another boundary's tombstoned edge.
+    let result = graph.link(
+        &monitor,
+        &boundary_2,
+        a,
+        "rel",
+        b,
+        1.0,
+        EdgeOrigin::Explicit,
+        None,
+        "test",
+        Some(1),
+    );
+    assert!(matches!(result, Err(GraphError::NotFound)));
+
+    // The owner's own view: still genuinely tombstoned, never resurrected by the foreign attempt.
+    let explain = graph
+        .explain(&monitor, &boundary_1, ExplainRef::Edge(edge_id))
+        .unwrap();
+    match explain {
+        hyperion_knowledge_graph::ProvenanceChain::Edge { tombstone, .. } => {
+            assert!(
+                tombstone,
+                "a foreign resurrection attempt must never un-tombstone the edge"
+            )
+        }
+        _ => panic!("expected an edge provenance chain"),
+    }
+}
+
+#[test]
 fn explain_never_leaks_a_different_trust_boundarys_node_or_edge_provenance() {
     let (dir, monitor, boundary_1, boundary_2) = setup();
     let graph = KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap();
