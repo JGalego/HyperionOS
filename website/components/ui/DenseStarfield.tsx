@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { hashSeed, mulberry32 } from "@/content/starfield";
-import { useLoader } from "@/components/layout/LoaderProvider";
+import { useThrottledProgress } from "@/components/layout/LoaderProvider";
 
 // Loosely spectral-type-inspired: mostly blue-white and white (the hottest, most common naked-eye
 // stars), a warm pale yellow band, and a rare cooler orange -- weights skew heavily toward the
@@ -105,7 +105,10 @@ export function DenseStarfield({ seed = "dense-field" }: { seed?: string } = {})
   const starsRef = useRef<Star[]>([]);
   const drawnCountRef = useRef(0);
   const progressRef = useRef(0);
-  const { progress } = useLoader();
+  // The throttled context, not useLoader()'s raw 60fps value -- redrawing (even incrementally)
+  // on every animation frame added up across every star field on the page; checking this often
+  // is still plenty smooth for stars "popping in" and cuts that load roughly 5x.
+  const progress = useThrottledProgress();
 
   // (Re)builds the star field and draws whatever's already revealed at the current progress.
   // Runs on mount and again on resize/theme-toggle -- both rare compared to the once-per-frame

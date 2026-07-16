@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { stars as heroStars, twinkleStars, generateStars, generateShootingStars, hashSeed, mulberry32 } from "@/content/starfield";
-import { useLoader } from "@/components/layout/LoaderProvider";
+import { useThrottledProgress } from "@/components/layout/LoaderProvider";
 
 const shootingStars = generateShootingStars("hero-shooting");
 
@@ -21,7 +21,10 @@ function revealThresholds(length: number, seedKey: string) {
 // distinct fixed field of `count` stars instead (e.g. the page-wide backdrop behind every card).
 export function Starfield({ seed, count }: { seed?: string; count?: number } = {}) {
   const dots = seed ? generateStars(seed, count) : heroStars;
-  const { progress } = useLoader();
+  // Deliberately the throttled context, not useLoader()'s raw 60fps value -- this component
+  // re-renders 200+ DOM nodes per update, which subscribing to the raw value would do on every
+  // animation frame regardless of any internal throttling (see LoaderProvider.tsx's comment).
+  const progress = useThrottledProgress();
 
   const dotReveals = useMemo(() => revealThresholds(dots.length, `${seed ?? "hero"}-reveal`), [dots.length, seed]);
   const twinkleReveals = useMemo(
