@@ -127,7 +127,15 @@ pub struct SharedPlan {
     /// genuine context to work with (what the user actually asked for), not just the bare task
     /// predicate name it had before.
     pub root_utterance: String,
-    pub version: u64,
+    /// docs/12 §12's "object-affinity" plan partitioning: a real, distinct version counter per
+    /// connected group of tasks (see [`crate::engine::task_partition_key`]), rather than one
+    /// global counter every task-status change on the whole plan bumped regardless of which task
+    /// changed — the exact write-contention hotspot §12 names ("the single Shared Plan can become
+    /// a write-contention hotspot... partitioned by object-affinity so unrelated branches...
+    /// rarely contend on the same version counter"). Keyed by [`crate::engine::task_partition_key`]'s
+    /// own output; a partition with no entry yet has implicitly never changed (version 0) — see
+    /// [`crate::CoordinationSession::partition_version`].
+    pub partition_versions: HashMap<String, u64>,
     pub nodes: Vec<TaskNode>,
     pub participants: Vec<u64>,
     pub conflicts: Vec<ConflictRecord>,

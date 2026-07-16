@@ -1831,6 +1831,19 @@ mean here):
   ever executing. Real code review of generated code beyond compiler + clippy (e.g. LLM-based
   semantic review, sandboxed dry-run fuzzing) remains future work — this gate is real and honest
   about what it does and doesn't catch, not a claim of perfect review.
+- **`hyperion-coordination`'s object-affinity plan partitioning, landed (2026-07-16)** (docs/12
+  §12's own named scale optimization for tens of concurrent Agents: "the plan is therefore
+  partitioned by object-affinity so unrelated branches... rarely contend on the same version
+  counter"). `SharedPlan.partition_versions` replaces the single, plan-wide `version` counter every
+  task-status change bumped regardless of which task changed — confirmed dead first (nothing
+  anywhere in this workspace ever read it) rather than merely shadowed — with a real, distinct
+  counter per connected group of tasks (`task_partition_key`, a pure BFS over real
+  `TaskNode::dependencies` edges), bumped only by that specific group's own real status changes and
+  readable via `CoordinationSession::partition_version`. Proven end to end: two genuinely unrelated
+  synthetic branches (this workspace's one built-in HTN template is a single connected chain, so a
+  live test alone can't exercise two) get different real partitions; a live `allocate` pass really
+  bumps only the completed task's own partition, provably shared correctly by every task in the
+  same real dependency chain.
 
 **Deliberately still deferred:**
 

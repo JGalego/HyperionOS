@@ -73,10 +73,23 @@
 //!   ([31 — Event System](../31-event-system.md), not built) —
 //!   [`CoordinationSession::progress`] and `.escalations()` are pull-based
 //!   accessors a caller polls, not a push subscription.
-//! - **Object-affinity plan partitioning** (docs/12 §12, a scale
-//!   optimization for tens of concurrent Agents) — this crate's
-//!   `SharedPlan` is one unpartitioned structure, adequate at this phase's
-//!   test scale.
+//! - ~~Object-affinity plan partitioning~~ (docs/12 §12, a scale
+//!   optimization for tens of concurrent Agents) — now real:
+//!   [`engine::task_partition_key`] groups tasks into the same real
+//!   partition exactly when real `TaskNode::dependencies` edges connect
+//!   them, transitively (docs/12 §12's own worked example: Documentation
+//!   vs. Deployment never share one). [`types::SharedPlan::partition_versions`]
+//!   replaces the single, plan-wide `version` counter every task-status
+//!   change previously bumped regardless of which task changed —
+//!   confirmed dead (nothing in this crate, or anywhere in this workspace,
+//!   ever read it) before being replaced, not merely shadowed —
+//!   with one real counter per partition, bumped only by
+//!   [`engine::CoordinationSession::allocate`]/[`engine::CoordinationSession::amend_task`]'s
+//!   own real task-status changes and readable via the new
+//!   [`engine::CoordinationSession::partition_version`]. `propose_write`'s
+//!   plan facts needed no equivalent change — they already carried a real,
+//!   independent per-key version, proven by this crate's own existing
+//!   `writes_to_different_keys_never_conflict` test.
 //! - **A workspace-wide, shared Explanation Record store.** This
 //!   session's `ExplanationStore` is private to one `CoordinationSession`,
 //!   not shared with `hyperion-api-gateway`'s own separate store or

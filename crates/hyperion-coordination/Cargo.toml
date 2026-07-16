@@ -25,4 +25,8 @@ hyperion-context = { workspace = true }
 # document.draft/web.search dispatch through a real LocalAiRuntime::infer call.
 hyperion-crypto = { workspace = true }
 hyperion-ipc = { workspace = true }
+# For src/engine.rs's own `task_partition_key_tests` -- `NodeId` is a type alias for
+# `hyperion_storage::ObjectId` (a type alias doesn't carry the tuple-struct constructor under the
+# alias name), so a test constructing raw ids directly needs the real underlying type.
+hyperion-storage = { workspace = true }
 tempfile = { workspace = true }

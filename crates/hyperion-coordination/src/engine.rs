@@ -95,6 +95,104 @@ mod ranking_key_tests {
     }
 }
 
+/// docs/12 §12's "object-affinity" plan partitioning, real: two tasks belong to the same real
+/// partition exactly when they're connected — in either direction, transitively — by real
+/// `TaskNode::dependencies` edges, the same "unrelated branches" grouping §12's own worked
+/// example (Documentation vs. Deployment) describes. The partition label itself is the lowest
+/// real `NodeId` in the connected component, so it's stable and deterministic without needing an
+/// invented branch-naming scheme this crate has no real source for. A pure, directly unit-tested
+/// function (see `tests` below) rather than only exercised indirectly through a live multi-branch
+/// plan — this workspace's one built-in HTN template is a single connected chain, so a live test
+/// alone could never actually exercise two genuinely unrelated partitions.
+pub(crate) fn task_partition_key(nodes: &[TaskNode], task_id: NodeId) -> String {
+    let mut visited = HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(task_id);
+    visited.insert(task_id);
+    while let Some(current) = queue.pop_front() {
+        for node in nodes {
+            let touches_current = node.task_id == current || node.dependencies.contains(&current);
+            if !touches_current {
+                continue;
+            }
+            for neighbor in std::iter::once(node.task_id).chain(node.dependencies.iter().copied()) {
+                if visited.insert(neighbor) {
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+    }
+    let min_id = visited.iter().map(|id| id.0).min().unwrap_or(task_id.0);
+    format!("partition-{min_id}")
+}
+
+#[cfg(test)]
+mod task_partition_key_tests {
+    use super::*;
+
+    fn node(id: u64, dependencies: Vec<u64>) -> TaskNode {
+        TaskNode {
+            task_id: hyperion_storage::ObjectId(id),
+            description: format!("task-{id}"),
+            required_capabilities: Vec::new(),
+            required_trust_tier: TrustTier::Community,
+            assigned_agent: None,
+            status: TaskStatus::Unassigned,
+            dependencies: dependencies
+                .into_iter()
+                .map(hyperion_storage::ObjectId)
+                .collect(),
+            base_version: 0,
+            attempts: 0,
+            result: None,
+            extra_context: None,
+            judgment_class: JudgmentClass::Mechanical,
+        }
+    }
+
+    #[test]
+    fn a_dependency_chain_is_one_real_partition() {
+        // 1 -> 2 -> 3 (each depends on the one before it).
+        let nodes = vec![node(1, vec![]), node(2, vec![1]), node(3, vec![2])];
+        let p1 = task_partition_key(&nodes, hyperion_storage::ObjectId(1));
+        let p2 = task_partition_key(&nodes, hyperion_storage::ObjectId(2));
+        let p3 = task_partition_key(&nodes, hyperion_storage::ObjectId(3));
+        assert_eq!(p1, p2);
+        assert_eq!(p2, p3);
+    }
+
+    #[test]
+    fn two_genuinely_unrelated_branches_get_different_real_partitions() {
+        // Documentation (1 -> 2) and Deployment (10 -> 11) never share a dependency edge.
+        let nodes = vec![
+            node(1, vec![]),
+            node(2, vec![1]),
+            node(10, vec![]),
+            node(11, vec![10]),
+        ];
+        let documentation = task_partition_key(&nodes, hyperion_storage::ObjectId(2));
+        let deployment = task_partition_key(&nodes, hyperion_storage::ObjectId(11));
+        assert_ne!(
+            documentation, deployment,
+            "unrelated branches must never share a partition"
+        );
+    }
+
+    #[test]
+    fn the_partition_label_is_the_same_regardless_of_which_member_task_is_asked() {
+        let nodes = vec![node(5, vec![]), node(2, vec![5]), node(9, vec![2])];
+        let via_5 = task_partition_key(&nodes, hyperion_storage::ObjectId(5));
+        let via_2 = task_partition_key(&nodes, hyperion_storage::ObjectId(2));
+        let via_9 = task_partition_key(&nodes, hyperion_storage::ObjectId(9));
+        assert_eq!(via_5, via_2);
+        assert_eq!(via_2, via_9);
+        assert_eq!(
+            via_5, "partition-2",
+            "the lowest real id in the component wins"
+        );
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CoordError {
     #[error("capability does not authorize this operation")]
@@ -245,7 +343,7 @@ impl CoordinationSession {
             session_id,
             root_intent: root,
             root_utterance,
-            version: 0,
+            partition_versions: HashMap::new(),
             nodes,
             participants: Vec::new(),
             conflicts: Vec::new(),
@@ -641,12 +739,12 @@ impl CoordinationSession {
                             None,
                         );
                     }
-                    plan.version += 1;
+                    Self::bump_partition_version(plan, d.task_id);
                     (ControlState::Completed, TaskStatus::Done)
                 }
                 InvokeOutcome::Failed(_) => {
                     self.handle_task_failure(plan, d.idx, session_id);
-                    plan.version += 1;
+                    Self::bump_partition_version(plan, d.task_id);
                     (ControlState::RolledBack, plan.nodes[d.idx].status)
                 }
                 InvokeOutcome::Denied => {
@@ -734,7 +832,7 @@ impl CoordinationSession {
         plan.nodes[idx].result = None;
         plan.nodes[idx].attempts = 0;
         plan.nodes[idx].extra_context = Some(extra_context);
-        plan.version += 1;
+        Self::bump_partition_version(plan, task_id);
 
         // Redoing a `Failed` task can resolve the real reason a dependent got stuck `Blocked` in
         // the first place -- but `propagate_blocking` (docs/12 §5.4) only ever adds that mark,
@@ -782,8 +880,13 @@ impl CoordinationSession {
 
         if base_version == current_version {
             let new_version = current_version + 1;
+            // No `partition_versions` bump here: a fact's own `(version, value)` pair, above, is
+            // already a real, per-key counter -- `writes_to_different_keys_never_conflict`
+            // already proves two unrelated facts never contend. Object-affinity partitioning
+            // (`Self::bump_partition_version`) exists for *task* status changes, which previously
+            // shared one plan-wide counter regardless of which task changed; facts never had that
+            // problem to begin with.
             plan.facts.insert(key.to_string(), (new_version, value));
-            plan.version += 1;
             return Ok(WriteOutcome::Accepted { new_version });
         }
 
@@ -920,5 +1023,33 @@ impl CoordinationSession {
             .get(&session_id)
             .cloned()
             .ok_or(CoordError::NotFound)
+    }
+
+    /// docs/12 §12's "object-affinity" plan partitioning: bumps only `task_id`'s own real
+    /// partition (see [`task_partition_key`]), never a plan-wide counter every unrelated task
+    /// status change also had to share. Called from every real task-status-changing site in this
+    /// module (task completion, task failure, [`Self::amend_task`]'s redo) instead of the single
+    /// `SharedPlan.version` field this replaces.
+    fn bump_partition_version(plan: &mut SharedPlan, task_id: NodeId) {
+        let key = task_partition_key(&plan.nodes, task_id);
+        *plan.partition_versions.entry(key).or_insert(0) += 1;
+    }
+
+    /// The real, queryable half of object-affinity partitioning: how many times `task_id`'s own
+    /// real partition has changed (any task status change anywhere in that same connected group),
+    /// `0` if never — real, unlike the plan-wide `SharedPlan.version` field this replaces, which
+    /// nothing in this crate ever actually read.
+    pub fn partition_version(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        session_id: u64,
+        task_id: NodeId,
+    ) -> Result<u64, CoordError> {
+        self.require(monitor, token, RightsMask::READ)?;
+        let plans = self.plans.lock().unwrap();
+        let plan = plans.get(&session_id).ok_or(CoordError::NotFound)?;
+        let key = task_partition_key(&plan.nodes, task_id);
+        Ok(plan.partition_versions.get(&key).copied().unwrap_or(0))
     }
 }
