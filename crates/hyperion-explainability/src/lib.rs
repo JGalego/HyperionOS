@@ -65,14 +65,20 @@
 //!   plumbing.** [`types::ControlState`] has `Interrupted`/`Modified`
 //!   variants a caller can transition a record into, but no scheduler or
 //!   Agent Runtime hook actually delivers those signals from this crate.
-//! - **Rolling Brier-score calibration tracking (§10).** Per-Agent/
-//!   Capability calibration drift over time is not tracked; each
-//!   `ConfidenceScore` is a point-in-time value with no aggregation.
+//! - ~~**Rolling Brier-score calibration tracking (§10).**~~ — now real:
+//!   [`ExplanationStore::calibration_score`] computes a real rolling Brier score per
+//!   `(agent_id, capability_ref)` pair over every terminal (`Completed`/`RolledBack`) record this
+//!   crate already holds a real `confidence` for, and flags a real `alert` once that score
+//!   crosses a real threshold with enough samples to trust the signal — see
+//!   [`calibration`]'s own doc comment for the exact numbers. `Proposed`/`Executing`/
+//!   `Interrupted`/`Modified` records have no real outcome yet to score against, matching
+//!   [`ExplanationStore::incomplete`]'s own convention for what counts as resolved.
 //! - **Encryption-at-privacy-tier of the store itself** (a `hyperion-
 //!   privacy` dependency, not built here) — `privacy_class` is recorded
 //!   on a record for a future consumer to act on, not enforced by this
 //!   crate.
 
+mod calibration;
 mod render;
 mod store;
 mod types;
@@ -80,6 +86,7 @@ mod types;
 pub use render::resolve_why;
 pub use store::ExplanationStore;
 pub use types::{
-    ActionId, Alternative, ConfidenceMethod, ConfidenceScore, ControlState, Depth, EvidenceRef,
-    ExplainabilityError, ExplanationId, ExplanationRecord, ExplanationView, ReasoningStep,
+    ActionId, Alternative, CalibrationScore, ConfidenceMethod, ConfidenceScore, ControlState,
+    Depth, EvidenceRef, ExplainabilityError, ExplanationId, ExplanationRecord, ExplanationView,
+    ReasoningStep,
 };

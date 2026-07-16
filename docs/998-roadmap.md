@@ -2485,3 +2485,26 @@ next step on any of these is a design pass, not code.
   never double-expires the same action; a `CryptoShred` erasure (which journals nothing) gives the
   sweep nothing to touch; and an unrelated subsystem's own real `ActionRecord` (not tagged with
   this crate's own soft-delete note) is never swept even once old enough, and stays undoable.
+
+- **`hyperion-explainability`'s rolling Brier-score calibration tracking, landed (2026-07-16)**
+  (docs/18 §10/§13's own named gap: "per-Agent/Capability calibration drift over time is not
+  tracked; each `ConfidenceScore` is a point-in-time value with no aggregation"). A new
+  `ExplanationStore::calibration_score(agent_id, capability_ref) -> Option<CalibrationScore>`
+  computes a real, standard Brier score (mean squared error between each record's own
+  `confidence.value` and its real observed outcome — `1.0` for `ControlState::Completed`, `0.0`
+  for `ControlState::RolledBack`) over every real record this store already holds for that pair —
+  no new store, no background job, just real arithmetic over data already flowing through the
+  explain-then-commit pipeline this crate's own M8-era work already made real. `Proposed`/
+  `Executing`/`Interrupted`/`Modified` records have no real terminal outcome yet, so they're
+  excluded, matching `ExplanationStore::incomplete`'s own existing convention for what counts as
+  resolved. `CalibrationScore.alert` is docs/18 §13's own "feeding an alert if an Agent's stated
+  confidence systematically diverges from observed outcomes," `true` once the score crosses a
+  real, documented threshold (`0.25` — a coin-flip-confidence forecaster's own score, a real
+  reference point, not an arbitrary tuning knob) with enough real samples (`5`) to trust the
+  signal rather than a tiny sample's noise. Proven end to end: 7 fast, dependency-free unit tests
+  in the new `calibration.rs` module cover no-matching-records, non-terminal exclusion,
+  no-confidence exclusion, a perfectly-calibrated real score of `0.0`, a confidently-wrong real
+  Agent alerting once past the sample threshold and *not* alerting below it, and independent
+  scoring per distinct `(agent_id, capability_ref)` pair; a new `tests/calibration.rs` (5 tests)
+  proves the same behaviors through the real `ExplanationStore` API end to end, not just the pure
+  scoring function in isolation.

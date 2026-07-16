@@ -104,6 +104,29 @@ pub struct ExplanationView {
     pub parents: Vec<ExplanationView>,
 }
 
+/// docs/18 §10/§13's "rolling Brier score per Agent/Capability... feeding an alert if an Agent's
+/// stated confidence systematically diverges from observed outcomes" — a real, computed
+/// calibration summary for one `(agent_id, capability_ref)` pair, over every terminal
+/// (`ControlState::Completed`/`ControlState::RolledBack` — matching [`crate::ExplanationStore::
+/// incomplete`]'s own convention for what counts as resolved) record this crate holds a real
+/// `confidence` for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CalibrationScore {
+    /// The rolling Brier score itself: the mean squared error between each record's own
+    /// `confidence.value` (the stated probability of success) and its real observed outcome
+    /// (`1.0` for `Completed`, `0.0` for `RolledBack`) — `0.0` is perfect calibration, `1.0` is
+    /// the worst possible score.
+    pub brier_score: f32,
+    /// How many real, terminal, confidence-scored records this score is computed over — a score
+    /// over few samples isn't yet a reliable signal, named explicitly rather than silently
+    /// treated the same as a well-sampled one.
+    pub sample_count: usize,
+    /// docs/18 §13's own alert condition: `true` once `brier_score` crosses a real threshold with
+    /// enough samples to trust the signal — see [`crate::calibration`]'s own doc comment for the
+    /// exact numbers and their reasoning.
+    pub alert: bool,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ExplainabilityError {
     #[error("capability does not authorize this operation")]

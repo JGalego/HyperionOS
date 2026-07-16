@@ -6,8 +6,8 @@ use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_recovery::RecoveryPointId;
 
 use crate::types::{
-    ActionId, Alternative, ConfidenceScore, ControlState, EvidenceRef, ExplainabilityError,
-    ExplanationId, ExplanationRecord, ReasoningStep,
+    ActionId, Alternative, CalibrationScore, ConfidenceScore, ControlState, EvidenceRef,
+    ExplainabilityError, ExplanationId, ExplanationRecord, ReasoningStep,
 };
 
 /// docs/18 §5's explain-then-commit: a record is assembled *during*
@@ -242,6 +242,20 @@ impl ExplanationStore {
             })
             .cloned()
             .collect()
+    }
+
+    /// docs/18 §10/§13's "rolling Brier score per Agent/Capability" — see [`crate::calibration`]'s
+    /// own doc comment for the real scoring algorithm and alert threshold. Computed over every
+    /// real record this store currently holds for `(agent_id, capability_ref)`; `None` if there
+    /// are none yet with both a real `confidence` and a real terminal outcome to score.
+    pub fn calibration_score(
+        &self,
+        agent_id: u64,
+        capability_ref: &str,
+    ) -> Option<CalibrationScore> {
+        let records: Vec<ExplanationRecord> =
+            self.records.lock().unwrap().values().cloned().collect();
+        crate::calibration::calibration_score(&records, agent_id, capability_ref)
     }
 }
 
