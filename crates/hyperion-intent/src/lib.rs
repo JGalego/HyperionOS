@@ -12,11 +12,15 @@
 //! [`hyperion_knowledge_graph::KnowledgeGraph`] — `depends_on`/`informs`/
 //! `supersedes` are real typed edges, not a parallel graph structure.
 //!
-//! This is fully deterministic (keyword/template matching, not a learned
-//! classifier), so exact-match testing is appropriate for what's actually
-//! implemented here — see docs/35-testing-strategy.md's own note that the
-//! golden-path/statistical-tolerance model applies once a real model
-//! backs parsing/decomposition, not before.
+//! Template matching itself (predicate/root-goal selection) is fully deterministic
+//! (keyword/template matching, not a learned classifier), so exact-match testing is appropriate
+//! for that path — see docs/35-testing-strategy.md's own note that the golden-path/
+//! statistical-tolerance model applies once a real model backs parsing/decomposition, which is
+//! now true of the one path named below that a real model backs: an unmatched utterance's
+//! generated fallback plan. Exact-match testing there only asserts real, deterministic
+//! properties of `MockBackend`'s own echo response (structure, non-emptiness, confidence
+//! tier) — never a specific "reasonable-sounding" plan a real model would need statistical
+//! tolerance to judge.
 //!
 //! Deliberately deferred, and why:
 //!
@@ -25,12 +29,16 @@
 //!   per Intent (the mechanism the doc's own worked "the API" style
 //!   examples need), not the full multi-slot model. Templates here declare
 //!   no slots of their own.
-//! - **Generative decomposition** (docs/05 §2's fallback for goal shapes
-//!   with no matching HTN template) — needs a real planning model
-//!   ([22 — Local AI Runtime](../22-local-ai-runtime.md)'s real backend).
-//!   An utterance matching no template becomes a single, undecomposed root
-//!   Intent (`status: proposed`) rather than a fabricated plan — degrade,
-//!   never fail closed, but also never pretend.
+//! - ~~**Generative decomposition**~~ (docs/05 §2's fallback for goal shapes with no matching HTN
+//!   template) — now real: [`IntentEngine::new_with_plugins_and_ai_runtime`] wires a real
+//!   `hyperion_ai_runtime::LocalAiRuntime`, and an utterance matching no curated or
+//!   plugin-contributed template gets one real, model-generated ordered step list (each non-empty
+//!   response line becomes a `TemplateLeaf` depending on the line before it) instead of always
+//!   becoming a single, undecomposed root Intent. Confidence lands between a curated match's
+//!   `0.9` and the old no-plan `0.3` — a real plan, but a model's own guess, not a hand-authored
+//!   one. Still degrades honestly, never fabricates: no `ai_runtime` wired, an unauthorized
+//!   token, no model resident for `ModelClass::Slm`, or a response with no usable lines all fall
+//!   straight back to the original single-undecomposed-root behavior.
 //! - **Only one built-in HTN template** (`docs/05`'s own worked "launch my
 //!   startup" example, trimmed to four leaves) — proves the dependency-
 //!   graph/priority/critical-path machinery works; a real system would

@@ -2926,3 +2926,25 @@ next step on any of these is a design pass, not code.
   registered, cheaper Model Router implementation instead of being refused outright. All
   pre-existing tests across `hyperion-scheduler`, `hyperion-model-router`, `hyperion-api-gateway`,
   `hyperion-agent-runtime`, `hyperion-sim`, `hyperion-memory`, and `hyperion-update` pass unchanged.
+
+- **`hyperion-intent`'s generative decomposition, landed (2026-07-16)** (this crate's own named
+  gap: "needs a real planning model ([22 — Local AI Runtime]'s real backend)... An utterance
+  matching no template becomes a single, undecomposed root Intent... rather than a fabricated
+  plan"). `IntentEngine` gains a real, optional `hyperion_ai_runtime::LocalAiRuntime` field via a
+  new `new_with_plugins_and_ai_runtime` constructor, mirroring `hyperion-context::ContextEngine::
+  new_with_ai_runtime`'s own precedent exactly. A new private `generate_template` runs only when
+  no curated or plugin-contributed template matched: it prompts the model for a short ordered
+  step list and turns each non-empty response line into one real `TemplateLeaf` depending on the
+  line before it — a genuine, if modest, linear plan built from the model's own real response,
+  never a fabricated dependency structure. `handle_utterance` gives a generated plan `0.9` (curated
+  template) > `0.6` (generated plan) > `0.3` (no plan at all) confidence, and `IntentStatus::Planned`
+  instead of `Proposed`, reusing the exact same `decompose_and_record`/think-mode pause path a
+  curated template already goes through — no new dispatch branch needed. Degrades honestly at
+  every real failure point `hyperion-context`'s own precedent established: no `ai_runtime` wired,
+  an unauthorized token, no model resident for `ModelClass::Slm`, or a response with no usable
+  lines all fall straight back to the pre-existing single-undecomposed-root behavior — proven by a
+  new test using a `LocalAiRuntime` with no model registered. A second new test wires a real,
+  registered `MockBackend`-backed model and confirms the root Intent lands `Planned` at confidence
+  `0.6`, real leaves are recorded, and at least one leaf's predicate is genuinely derived from the
+  model's own (mocked) response text — not an invented label. All 22 pre-existing
+  `hyperion-intent` tests pass unchanged.

@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
 use hyperion_context::{ContextEngine, ContextError, EntityResolution};
 use hyperion_explainability::{
@@ -14,8 +15,23 @@ use hyperion_knowledge_graph::{
 use hyperion_memory::WorkingMemory;
 use hyperion_plugin_framework::PluginRegistry;
 
-use crate::templates::{self, Template};
+use crate::templates::{self, Template, TemplateLeaf};
 use crate::types::{ExecutionTicket, HandleOutcome, Intent, IntentStatus, MutationOp};
+
+/// Turns one line of a model-generated plan into a terse `snake_case`-shaped predicate --
+/// collapsing runs of whitespace/punctuation into single underscores -- so a real model response
+/// (which won't reliably already be in that shape) still produces a usable
+/// [`TemplateLeaf::predicate`] exactly like this crate's own curated templates already are.
+fn to_predicate(line: &str) -> String {
+    line.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect::<String>()
+        .split('_')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
+}
 
 fn now() -> u64 {
     SystemTime::now()
@@ -48,6 +64,12 @@ pub enum IntentError {
 /// turns is a hosted-simulator-appropriate default, not a value docs/05
 /// or docs/08 pin down.
 const WORKING_MEMORY_TURN_CAPACITY: usize = 10;
+
+/// `hyperion-context::ContextEngine`'s own `SUMMARIZE_LATENCY_BUDGET_MS` precedent for one real,
+/// resident `Slm`-class inference call -- generous enough that a real, modest-throughput resident
+/// variant still passes tier selection, without letting a single unmatched utterance stall
+/// [`IntentEngine::handle_utterance`] indefinitely.
+const GENERATE_TEMPLATE_LATENCY_BUDGET_MS: u64 = 15_000;
 
 /// docs/05 — Intent Engine. See this crate's doc comment for what's
 /// deferred.
@@ -83,6 +105,12 @@ pub struct IntentEngine {
     /// because its session is in think mode, keyed by the pending root — see
     /// [`Self::proceed_with_decomposition`].
     pending_decompositions: Mutex<HashMap<NodeId, PendingDecomposition>>,
+    /// This crate's own named "generative decomposition" gap: `None` by default, in which case
+    /// `generate_template` never runs and an utterance matching no curated or
+    /// plugin-contributed template keeps falling back to a single undecomposed root Intent --
+    /// see [`Self::new_with_plugins_and_ai_runtime`]'s own doc comment for the real path this
+    /// unlocks.
+    ai_runtime: Option<Arc<LocalAiRuntime>>,
 }
 
 /// What [`IntentEngine::proceed_with_decomposition`] needs to finish what
@@ -106,6 +134,21 @@ impl IntentEngine {
         context: Arc<ContextEngine>,
         plugins: Option<Arc<PluginRegistry>>,
     ) -> Self {
+        Self::new_with_plugins_and_ai_runtime(graph, context, plugins, None)
+    }
+
+    /// As [`Self::new_with_plugins`], additionally wiring a real [`LocalAiRuntime`] so
+    /// [`Self::handle_utterance`]'s fallback path -- an utterance matching no curated or
+    /// plugin-contributed template -- produces a real, model-generated ordered step list (this
+    /// crate's own previously-named "generative decomposition" gap) instead of always degrading
+    /// to a single undecomposed root Intent. See `generate_template` for the real
+    /// generation and honest-fallback logic.
+    pub fn new_with_plugins_and_ai_runtime(
+        graph: Arc<KnowledgeGraph>,
+        context: Arc<ContextEngine>,
+        plugins: Option<Arc<PluginRegistry>>,
+        ai_runtime: Option<Arc<LocalAiRuntime>>,
+    ) -> Self {
         IntentEngine {
             graph,
             context,
@@ -114,6 +157,7 @@ impl IntentEngine {
             explanations: ExplanationStore::new(),
             next_action_id: AtomicU64::new(1),
             plugins,
+            ai_runtime,
             think_mode_sessions: Mutex::new(HashSet::new()),
             pending_decompositions: Mutex::new(HashMap::new()),
         }
@@ -237,6 +281,60 @@ impl IntentEngine {
         None
     }
 
+    /// docs/05 §2's fallback for a goal shape matching no curated or plugin-contributed HTN
+    /// template: a real, model-generated ordered step list when [`Self::new_with_plugins_and_ai_runtime`]
+    /// wired a real `ai_runtime`, in place of [`Self::handle_utterance`]'s previous
+    /// single-undecomposed-root stand-in. Each non-empty line of the model's response becomes one
+    /// [`TemplateLeaf`], depending on the line before it -- a real, if modest, ordered plan, not a
+    /// fabricated dependency structure the model was never asked for. `None` -- degrading to the
+    /// pre-existing fallback -- when no `ai_runtime` is wired, this `token` isn't authorized for
+    /// real inference, nothing is resident locally for `ModelClass::Slm`, or the response yields no
+    /// usable steps at all.
+    fn generate_template(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        utterance: &str,
+    ) -> Option<Template> {
+        let ai_runtime = self.ai_runtime.as_ref()?;
+        let request = InferenceRequest {
+            prompt: format!(
+                "Break the following goal down into a short ordered list of concrete steps, \
+                 one per line, using terse snake_case labels and no numbering or punctuation:\
+                 \n{utterance}"
+            ),
+        };
+        let contract = CapabilityContract {
+            latency_budget_ms: GENERATE_TEMPLATE_LATENCY_BUDGET_MS,
+            always_on: false,
+        };
+        let result = ai_runtime
+            .infer(monitor, token, ModelClass::Slm, &contract, &request)
+            .ok()?;
+
+        let leaves: Vec<TemplateLeaf> = result
+            .text
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(to_predicate)
+            .filter(|predicate| !predicate.is_empty())
+            .enumerate()
+            .map(|(i, predicate)| TemplateLeaf {
+                predicate,
+                depends_on: if i == 0 { Vec::new() } else { vec![i - 1] },
+            })
+            .collect();
+
+        if leaves.is_empty() {
+            return None;
+        }
+        Some(Template {
+            root_predicate: "generic_goal".to_string(),
+            leaves,
+        })
+    }
+
     /// docs/05 §Pseudocode `handle_utterance` — reconciliation first
     /// (§Algorithms 5), then parse/ground/decompose/prioritize for a fresh
     /// Intent Graph.
@@ -299,9 +397,21 @@ impl IntentEngine {
             }
         }
 
-        let (predicate, confidence, root_status) = match &template {
-            Some(t) => (t.root_predicate.clone(), 0.9, IntentStatus::Planned),
-            None => ("generic_goal".to_string(), 0.3, IntentStatus::Proposed),
+        // This crate's own named "generative decomposition" gap: an utterance matching no
+        // curated or plugin-contributed template gets one real, model-generated attempt before
+        // falling all the way back to a single undecomposed root -- lower confidence than a
+        // curated match (a model's own ordered guess, not a hand-authored plan), but a real plan
+        // all the same.
+        let generated_template = if template.is_none() {
+            self.generate_template(monitor, token, utterance)
+        } else {
+            None
+        };
+
+        let (predicate, confidence, root_status) = match (&template, &generated_template) {
+            (Some(t), _) => (t.root_predicate.clone(), 0.9, IntentStatus::Planned),
+            (None, Some(t)) => (t.root_predicate.clone(), 0.6, IntentStatus::Planned),
+            (None, None) => ("generic_goal".to_string(), 0.3, IntentStatus::Proposed),
         };
 
         let mut root_intent = Intent {
@@ -321,7 +431,7 @@ impl IntentEngine {
         };
         let root = self.put_intent(monitor, token, None, &root_intent)?;
 
-        if let Some(t) = &template {
+        if let Some(t) = template.as_ref().or(generated_template.as_ref()) {
             if self.is_think_mode(session_id) {
                 self.pending_decompositions.lock().unwrap().insert(
                     root,
