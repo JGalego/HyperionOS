@@ -16,6 +16,7 @@ use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_context::ContextEngine;
 use hyperion_coordination::{ConflictResolution, CoordError, CoordinationSession, TaskStatus};
 use hyperion_crypto::Keystore;
+use hyperion_explainability::ControlState;
 use hyperion_intent::{HandleOutcome, IntentEngine};
 use hyperion_knowledge_graph::KnowledgeGraph;
 
@@ -641,6 +642,65 @@ fn amend_task_resets_a_done_task_and_carries_extra_context_into_its_next_real_di
     );
 }
 
+/// `hyperion-explainability`'s own named "`control.modify` signal plumbing" gap: a real
+/// `amend_task` call now genuinely transitions the amended task's most recent real Explanation
+/// Record to `ControlState::Modified`, instead of that variant sitting unreachable.
+#[test]
+fn amend_task_marks_the_tasks_most_recent_explanation_record_as_modified() {
+    let (_dir, monitor, token, intent_engine, coordination) = setup();
+    let root = match intent_engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+    let session = coordination
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
+        .unwrap();
+
+    let records = coordination.allocate(&monitor, &token, session).unwrap(); // tick 1: market_research Done
+    let plan = coordination.get_plan(&monitor, &token, session).unwrap();
+    let market_research_id = task_named(&plan, "market_research").task_id;
+    let record = records
+        .iter()
+        .find(|r| r.task_id == market_research_id)
+        .expect("market_research was really dispatched this tick");
+    let explanation_id = record.explanation_id;
+    assert_eq!(
+        coordination
+            .explanation(explanation_id)
+            .unwrap()
+            .control_state,
+        ControlState::Completed,
+        "before any amendment, the real dispatch's own record is still Completed"
+    );
+
+    coordination
+        .amend_task(
+            &monitor,
+            &token,
+            session,
+            "market_research",
+            "focus on the European market only".to_string(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        coordination
+            .explanation(explanation_id)
+            .unwrap()
+            .control_state,
+        ControlState::Modified,
+        "amending a task must really transition its most recent Explanation Record to Modified"
+    );
+}
+
 /// Redoing never cascades automatically -- but a caller needs to know which already-`Done` tasks
 /// used the now-superseded result, so it can warn (or the user can `/redo` them too).
 #[test]
@@ -701,4 +761,37 @@ fn amend_task_rejects_an_unknown_task_name() {
         matches!(result, Err(CoordError::TaskNotFound)),
         "got: {result:?}"
     );
+}
+
+/// A task that was never dispatched has no real Explanation Record to transition yet -- amending
+/// it must succeed honestly (nothing to mark `Modified`), never error just because there's
+/// nothing there.
+#[test]
+fn amending_a_never_dispatched_task_succeeds_with_no_explanation_to_transition() {
+    let (_dir, monitor, token, intent_engine, coordination) = setup();
+    let root = match intent_engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+    let session = coordination
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
+        .unwrap();
+
+    // No allocate() tick has run yet -- business_model has never been dispatched.
+    let result = coordination.amend_task(
+        &monitor,
+        &token,
+        session,
+        "business_model",
+        "steer it".to_string(),
+    );
+    assert!(result.is_ok(), "got: {result:?}");
 }

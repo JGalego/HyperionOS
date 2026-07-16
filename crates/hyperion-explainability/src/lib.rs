@@ -61,10 +61,16 @@
 //!   System crate exists yet anywhere in this workspace to replay from;
 //!   docs/18 §9's degrade path ("store unavailable → reconstruct, flagged
 //!   non-authoritative") has nothing to reconstruct from yet.
-//! - **`control.interrupt`/`control.modify`/`control.resume` signal
-//!   plumbing.** [`types::ControlState`] has `Interrupted`/`Modified`
-//!   variants a caller can transition a record into, but no scheduler or
-//!   Agent Runtime hook actually delivers those signals from this crate.
+//! - **`control.resume` signal plumbing** remains open: nothing transitions a record back to
+//!   `Executing` once it's `Interrupted`. ~~`control.interrupt`/`control.modify` signal
+//!   plumbing~~ — both now real, delivered by `hyperion-coordination`: `CoordinationSession::
+//!   apply_dispatch_results` already transitions a task's record to `Interrupted` when its real
+//!   dispatch comes back `PendingConsent`/`QuotaExceeded` (a genuine "paused, waiting on
+//!   something external," not a task failure); `CoordinationSession::amend_task` — this crate's
+//!   own previously-named "no scheduler or Agent Runtime hook actually delivers `Modified`" gap —
+//!   now transitions the amended task's most recent real record to `Modified` the moment a real
+//!   user amendment (`hyperion-console`'s own `/redo`) lands, via a new
+//!   `last_explanation_by_task` map that survives past each dispatch's own terminal transition.
 //! - ~~**Rolling Brier-score calibration tracking (§10).**~~ — now real:
 //!   [`ExplanationStore::calibration_score`] computes a real rolling Brier score per
 //!   `(agent_id, capability_ref)` pair over every terminal (`Completed`/`RolledBack`) record this

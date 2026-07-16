@@ -262,6 +262,13 @@ pub struct CoordinationSession {
     /// optional real backend) — see [`Self::with_recovery`]'s own doc comment for what wiring one
     /// in actually does.
     recovery: Option<Arc<hyperion_recovery::RecoveryService>>,
+    /// `hyperion-explainability`'s own named "`control.modify` signal plumbing" gap: the most
+    /// recent real `ExplanationId` [`Self::allocate`] produced for a given task, so
+    /// [`Self::amend_task`] has something real to transition to [`ControlState::Modified`]
+    /// instead of the enum variant just sitting unreachable. Each dispatch mints a fresh
+    /// `ExplanationId` per tick (see [`Self::prepare_dispatches`]), so this is deliberately "most
+    /// recent," not a single id that lives for a task's whole history.
+    last_explanation_by_task: Mutex<HashMap<NodeId, ExplanationId>>,
 }
 
 impl CoordinationSession {
@@ -292,6 +299,7 @@ impl CoordinationSession {
             next_conflict_id: AtomicU64::new(1),
             explanations,
             recovery: None,
+            last_explanation_by_task: Mutex::new(HashMap::new()),
         }
     }
 
@@ -839,6 +847,10 @@ impl CoordinationSession {
             };
             self.explanations
                 .transition(monitor, token, d.explanation_id, control_state)?;
+            self.last_explanation_by_task
+                .lock()
+                .unwrap()
+                .insert(d.task_id, d.explanation_id);
             records.push(AllocationRecord {
                 task_id: d.task_id,
                 agent_instance: d.agent_id,
@@ -907,6 +919,16 @@ impl CoordinationSession {
         plan.nodes[idx].attempts = 0;
         plan.nodes[idx].extra_context = Some(extra_context);
         Self::bump_partition_version(plan, task_id);
+
+        // `hyperion-explainability`'s own named "control.modify signal plumbing" gap, closed for
+        // this crate's own real caller: a real user amendment genuinely marks the task's most
+        // recent real Explanation Record `Modified`, instead of that `ControlState` variant
+        // sitting unreachable. Honestly skipped (not an error) when this task was never
+        // dispatched yet -- nothing real to mark modified.
+        if let Some(&explanation_id) = self.last_explanation_by_task.lock().unwrap().get(&task_id) {
+            self.explanations
+                .transition(monitor, token, explanation_id, ControlState::Modified)?;
+        }
 
         // Redoing a `Failed` task can resolve the real reason a dependent got stuck `Blocked` in
         // the first place -- but `propagate_blocking` (docs/12 §5.4) only ever adds that mark,

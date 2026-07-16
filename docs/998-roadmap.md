@@ -2968,3 +2968,26 @@ next step on any of these is a design pass, not code.
   the test — catches the corruption at its exact `seq`. All pre-existing tests across
   `hyperion-observability` and `hyperion-supervisor` (whose own real, sandboxed-process
   integration test spawns this exact service binary) pass unchanged.
+
+- **`hyperion-explainability`'s `control.modify` signal plumbing, landed (2026-07-16)** (this
+  crate's own named gap: "`types::ControlState` has `Interrupted`/`Modified` variants a caller can
+  transition a record into, but no scheduler or Agent Runtime hook actually delivers those
+  signals from this crate" — while auditing this, found `Interrupted` was already real,
+  pre-existing, undocumented: `CoordinationSession::apply_dispatch_results` already transitions a
+  task's record to `Interrupted` on a real `PendingConsent`/`QuotaExceeded` dispatch outcome; only
+  `Modified` and `control.resume` were still open). `CoordinationSession` gains a real
+  `last_explanation_by_task: Mutex<HashMap<NodeId, ExplanationId>>`, populated every dispatch tick
+  in `apply_dispatch_results` alongside the existing terminal-state transition — since each real
+  dispatch mints a fresh `ExplanationId` per tick, this is deliberately "most recent," not one id
+  a task keeps for its whole history. `amend_task` — `hyperion-console`'s own real `/redo`
+  meta-command's entry point — now looks the amended task's most recent real record up and
+  transitions it to `ControlState::Modified`, honestly skipped (never an error) when the task was
+  never dispatched yet. `ExplanationStore::transition` places no restriction on which state a
+  record can move to, so transitioning an already-terminal (`Completed`/`RolledBack`) record to
+  `Modified` is a real, well-defined operation, not a fabricated escape hatch. Proven end to end
+  with 2 new `hyperion-coordination` integration tests: one drives a real dispatch to `Done`, calls
+  `amend_task`, and confirms the record genuinely reads `Modified` afterward (not just that the
+  enum variant compiles); the other confirms amending a never-dispatched task succeeds honestly
+  with nothing to transition. `control.resume` (transitioning a record back to `Executing` once
+  `Interrupted`) remains the one real signal still undelivered by any caller. All 14 pre-existing
+  `hyperion-coordination` `worked_trace` tests pass unchanged.
