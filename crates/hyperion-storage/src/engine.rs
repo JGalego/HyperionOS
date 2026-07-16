@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -200,5 +200,64 @@ impl StorageEngine {
             .version_pointer
             .get(&object_id)
             .copied()
+    }
+
+    /// This crate's own named "garbage collection / compaction" gap (see the crate doc comment:
+    /// "nothing here is ever deleted or compacted yet"), closed for the one slice entirely
+    /// internal to this engine's own two materialized views: version retention. docs/28's fuller
+    /// design tiers retention across N versions/T days into periodic snapshots; this crate has no
+    /// timestamp on a [`VersionRecord`]/[`WalRecord`] to key a time-based tier by, so — matching
+    /// this session's own established simplification ("one real, general mechanism, not retention
+    /// *classes*") — every object's history collapses unconditionally to its current head, which
+    /// becomes its own new genesis (`parent_version: None`). The content-addressed blob store,
+    /// graph/vector index rebuild, and cross-device sync compaction docs/28 also names remain
+    /// genuinely out of scope — none of those subsystems exist in this crate.
+    ///
+    /// Rewrites the on-disk WAL too (via [`Wal::compact`]), not just the in-memory
+    /// `version_chain` — a real restart must not resurrect history this call already dropped.
+    /// The WAL rewrite happens *before* the in-memory prune, mirroring [`Self::put_object`]'s own
+    /// "durable append is the commit point, nothing after it can fail the transaction" ordering:
+    /// if the rewrite fails, the in-memory state is left exactly as it was, still consistent with
+    /// the (untouched) on-disk WAL.
+    ///
+    /// Returns the number of historical [`VersionRecord`]s evicted, so a caller can log or audit
+    /// exactly what a sweep did.
+    pub fn compact(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+    ) -> Result<usize, StorageError> {
+        monitor
+            .check_rights_ok_result(token, RightsMask::WRITE)
+            .map_err(|_| StorageError::Unauthorized)?;
+
+        let mut inner = self.inner.lock().unwrap();
+
+        let new_records: Vec<WalRecord> = inner
+            .version_pointer
+            .iter()
+            .map(|(&object_id, &head_version)| WalRecord {
+                object_id,
+                prev_version: None,
+                new_version: head_version,
+                metadata: inner
+                    .metadata
+                    .get(&object_id)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                actor_origin: token.origin().0,
+            })
+            .collect();
+
+        inner.wal = Wal::compact(&self.path, &new_records)?;
+
+        let before = inner.version_chain.len();
+        let heads: HashSet<VersionId> = inner.version_pointer.values().copied().collect();
+        inner.version_chain.retain(|id, _| heads.contains(id));
+        for record in inner.version_chain.values_mut() {
+            record.parent_version = None;
+        }
+
+        Ok(before - inner.version_chain.len())
     }
 }

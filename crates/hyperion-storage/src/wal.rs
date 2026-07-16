@@ -1,6 +1,6 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::types::{StorageError, WalRecord};
 
@@ -58,5 +58,31 @@ impl Wal {
             }
         }
         Ok(records)
+    }
+
+    /// This crate's own named "garbage collection / compaction" gap (see the crate doc comment),
+    /// closed for the version-retention slice: rewrites the WAL at `path` to contain only
+    /// `records`, rather than the full history every object has ever gone through. Atomic via a
+    /// same-filesystem `rename` over `path` — a crash mid-rewrite leaves either the untouched
+    /// original WAL or the fully-written replacement, never a torn hybrid, the same "commit point"
+    /// property [`Self::append_and_fsync`] already gives a single record. Returns a `Wal` already
+    /// open for further appends against the rewritten file.
+    pub fn compact(path: &Path, records: &[WalRecord]) -> Result<Self, StorageError> {
+        let mut tmp_path = path.as_os_str().to_os_string();
+        tmp_path.push(".compact.tmp");
+        let tmp_path = PathBuf::from(tmp_path);
+
+        {
+            let mut tmp = File::create(&tmp_path)?;
+            for record in records {
+                let mut line = serde_json::to_vec(record)?;
+                line.push(b'\n');
+                tmp.write_all(&line)?;
+            }
+            tmp.sync_all()?;
+        }
+        std::fs::rename(&tmp_path, path)?;
+
+        Ok(Self::open_for_append(path)?)
     }
 }

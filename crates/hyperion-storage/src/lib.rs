@@ -24,13 +24,22 @@
 //!   is single-device only; multi-device sync is
 //!   [21 — Distributed Execution](../21-distributed-execution.md)'s
 //!   concern (Phase 7).
-//! - **Garbage collection / compaction** — nothing here is ever deleted or
-//!   compacted yet.
+//! - ~~**Garbage collection / compaction**~~ (2026-07-16) — the version-retention slice is now
+//!   real: [`engine::StorageEngine::compact`] collapses every object's version chain
+//!   unconditionally to its current head (a real, WAL-rewriting sweep, not just an in-memory
+//!   prune — a real restart must not resurrect history it already dropped). Named
+//!   simplification: docs/28's own fuller design tiers retention across N versions/T days into
+//!   periodic snapshots; this crate has no timestamp on a version record to key a time-based tier
+//!   by, so every object collapses to one head uniformly, the same "one real, general mechanism,
+//!   not retention *classes*" shape this session's own `hyperion-recovery`/`hyperion-privacy`
+//!   compaction/expiry sweeps already established. The blob-refcount GC, inferred-edge pruning,
+//!   and ANN index rebuild docs/28 also names remain genuinely out of scope — none of those
+//!   subsystems (blob store, Knowledge Graph inferred edges, vector index) exist in this crate.
 //!
 //! What *is* implemented and tested: the WAL as commit boundary, optimistic
-//! concurrency via compare-and-swap on the version pointer, and full
-//! crash-consistent recovery by replay — the three properties docs/28
-//! §Testing Strategy calls out first.
+//! concurrency via compare-and-swap on the version pointer, full
+//! crash-consistent recovery by replay, and real version-chain compaction — the properties
+//! docs/28 §Testing Strategy calls out first.
 
 mod engine;
 mod types;

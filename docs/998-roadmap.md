@@ -3189,3 +3189,31 @@ next step on any of these is a design pass, not code.
   `retention_secs`, the same "one policy applies uniformly" shape `hyperion-privacy`'s own
   grace-period sweep already established. All pre-existing `hyperion-recovery` tests, including
   the existing `pin_and_unpin_round_trip` test, pass unchanged.
+
+- **`hyperion-storage`'s version-retention compaction, landed (2026-07-16)** (this crate's own
+  named gap: "**Garbage collection / compaction** — nothing here is ever deleted or compacted
+  yet"). New `StorageEngine::compact(monitor, token) -> Result<usize, StorageError>` collapses
+  every object's version chain unconditionally to its current head, which becomes its own new
+  genesis (`parent_version: None`) — a real, WAL-rewriting sweep via a new
+  `Wal::compact(path, records) -> Result<Self, StorageError>` (atomic same-filesystem `rename`
+  over the old WAL — a crash mid-rewrite leaves either the untouched original or the fully-written
+  replacement, never a torn hybrid), not merely an in-memory prune: a real restart must not
+  resurrect history compaction already dropped. The WAL rewrite happens *before* the in-memory
+  prune, mirroring `put_object`'s own "durable append is the commit point" ordering — if the
+  rewrite fails, in-memory state is left exactly as it was, still consistent with the (untouched)
+  on-disk WAL. Named simplification: docs/28's own fuller design tiers retention across N
+  versions/T days into periodic snapshots; neither `VersionRecord` nor `WalRecord` carries a
+  timestamp to key a time-based tier by, so every object collapses to one head uniformly, the
+  same "one real, general mechanism, not retention *classes*" shape this session's own
+  `hyperion-recovery`/`hyperion-privacy` compaction/expiry sweeps already established. The
+  blob-refcount GC, inferred-edge pruning, and ANN index rebuild docs/28 also names remain
+  genuinely out of scope — none of those subsystems (blob store, Knowledge Graph inferred edges,
+  vector index) exist in this crate. Proven with 5 new tests in
+  `tests/retention_compaction.rs`: capability gating; collapsing 3 versions down to 1 head while
+  the head stays readable and pruned versions return `NotFound`; **durability across a real
+  `StorageEngine::open` reopen** (not just an in-memory check — the crux fact that makes this
+  real, extending `wal_recovery.rs`'s own "survives a clean reopen" pattern); idempotence (a
+  second compaction evicts 0); and the compare-and-swap invariant still holding correctly after
+  compaction (a stale, now-pruned `expected_version` is still rejected as a conflict; the real
+  current head still works). All pre-existing `hyperion-storage` tests
+  (`capability_gating`/`concurrency`/`wal_recovery`) pass unchanged.
