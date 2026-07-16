@@ -79,11 +79,17 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **One workspace-wide, shared Explanation Record store.** This hub's
-//!   store is private to it, not shared with `hyperion-coordination`'s or
-//!   `hyperion-api-gateway`'s own separate stores — the same deliberate
-//!   per-owner boundary `hyperion-coordination`'s doc comment already
-//!   notes.
+//! - ~~One workspace-wide, shared Explanation Record store~~ — now real for a caller that wants
+//!   it: [`FederationHub::new_with_shared_explanations`] takes a real, caller-supplied
+//!   `Arc<ExplanationStore>` instead of building its own private one, the same store a
+//!   `hyperion_coordination::CoordinationSession` (or a `hyperion-api-gateway::ApiGateway`, which
+//!   already took one) can share too. Every real `action_id` this hub mints now comes from the
+//!   store's own `ExplanationStore::next_action_id`, not this hub's former private counter —
+//!   `hyperion-coordination` made the identical change the same pass, closing the exact collision
+//!   risk sharing a store without also sharing that counter would otherwise create. `new`/
+//!   `new_with_keystore` are unchanged (still build a private store; every existing call site
+//!   keeps compiling). Proven end to end, cross-crate: see `hyperion-coordination`'s own
+//!   `tests/shared_explanation_store.rs`.
 //! - **Real network transport, and ambient anti-entropy.** Ledger
 //!   publication is still a direct method call, not something a real
 //!   wire transport carries between processes yet; storage convergence

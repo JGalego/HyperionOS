@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime};
@@ -47,7 +46,6 @@ pub struct ApiGateway {
     /// now writes — see this crate's doc comment.
     audit: Arc<AuditLedger>,
     scope_grants: Mutex<HashMap<TokenId, HashSet<ApiScope>>>,
-    next_action_id: AtomicU64,
 }
 
 impl ApiGateway {
@@ -84,7 +82,6 @@ impl ApiGateway {
             ai_runtime,
             audit,
             scope_grants: Mutex::new(HashMap::new()),
-            next_action_id: AtomicU64::new(1),
         }
     }
 
@@ -276,7 +273,7 @@ impl ApiGateway {
             return Ok(None);
         }
 
-        let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
+        let action_id = self.explainability.next_action_id();
         let explanation_id = self.explainability.begin(
             monitor,
             token,
@@ -353,7 +350,7 @@ impl ApiGateway {
             return Err(ApiError::NoEligibleImplementation);
         }
 
-        let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
+        let action_id = self.explainability.next_action_id();
 
         // docs/15's real Risk-Assessment Engine, run synchronously before
         // dispatch — see this crate's doc comment for exactly what it

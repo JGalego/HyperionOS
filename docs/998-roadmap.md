@@ -1863,6 +1863,24 @@ mean here):
   real state store — this crate still has no keystore/state-store concept for any of its data
   (every field is in-process `Mutex` state, gone on restart), a separate, larger gap this pass
   doesn't attempt to close.
+- **A workspace-wide, shared Explanation Record store, landed for a caller that wants it
+  (2026-07-16)** (independently named in `hyperion-coordination`'s, `hyperion-federation`'s, and
+  `hyperion-api-gateway`'s own doc comments as "deliberately not shared... a follow-up for
+  whichever future slice needs one workspace-wide trace rather than several independent ones").
+  `CoordinationSession::new_with_shared_explanations`/`FederationHub::new_with_shared_explanations`
+  now take a real, caller-supplied `Arc<hyperion_explainability::ExplanationStore>` instead of
+  building a private one — the same store `hyperion-api-gateway::ApiGateway` already took (it
+  needed no change). The one real correctness fix this required:
+  `ExplanationStore::next_action_id` now mints every real `action_id` from the store's own single
+  counter — each of the three owners previously minted `action_id`s from its own private counter
+  (all starting at 1), so sharing one store without also sharing this would let two independent
+  owners' `action_id`s collide, and `get_by_action`/`resolve_why`'s first-match lookup would
+  silently resolve to the wrong owner's record. Every existing constructor (`CoordinationSession::new`,
+  `FederationHub::new`/`new_with_keystore`) is unchanged — still builds its own private store, every
+  existing call site across the workspace keeps compiling unmodified. Proven end to end,
+  cross-crate: a real `CoordinationSession` and a real, genuinely independent `FederationHub`,
+  sharing one store, each contribute a real record under the same real Intent id with no
+  `action_id` collision, both findable through the one shared store's own `trace_intent`.
 
 **Deliberately still deferred:**
 

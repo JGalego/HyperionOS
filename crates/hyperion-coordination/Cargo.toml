@@ -24,6 +24,11 @@ hyperion-context = { workspace = true }
 # For tests/worked_trace.rs's own real, signed ModelDescriptor -- needed now that
 # document.draft/web.search dispatch through a real LocalAiRuntime::infer call.
 hyperion-crypto = { workspace = true }
+# For tests/shared_explanation_store.rs's own real, cross-crate proof that a shared
+# hyperion_explainability::ExplanationStore never collides two independent real owners'
+# action_ids -- the same "proven end to end, not just in one crate" precedent hyperion-ipc's own
+# dev-dependency below already established for ipc_transport.rs.
+hyperion-federation = { workspace = true }
 hyperion-ipc = { workspace = true }
 # For src/engine.rs's own `task_partition_key_tests` -- `NodeId` is a type alias for
 # `hyperion_storage::ObjectId` (a type alias doesn't carry the tuple-struct constructor under the

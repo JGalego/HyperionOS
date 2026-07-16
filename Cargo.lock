@@ -2915,6 +2915,7 @@ dependencies = [
  "hyperion-context",
  "hyperion-crypto",
  "hyperion-explainability",
+ "hyperion-federation",
  "hyperion-intent",
  "hyperion-ipc",
  "hyperion-knowledge-graph",

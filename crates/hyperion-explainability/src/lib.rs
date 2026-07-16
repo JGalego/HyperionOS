@@ -35,9 +35,11 @@
 //!   shipped crate's decision points to call
 //!   `begin`/`append_step`/`transition`. `hyperion-coordination`'s
 //!   `allocate`, `hyperion-federation`'s `dispatch_offload`/`invoke_agent`,
-//!   and `hyperion-intent`'s HTN decomposition are now wired (each holds
-//!   its own private `ExplanationStore` — see those crates' own doc
-//!   comments); `hyperion-agent-runtime`'s `invoke` is not and cannot be
+//!   and `hyperion-intent`'s HTN decomposition are now wired (each defaults
+//!   to its own private `ExplanationStore`, or can share one real store
+//!   with the others — see [`store::ExplanationStore::next_action_id`]'s
+//!   own doc comment, and those crates' own `new_with_shared_explanations`
+//!   constructors); `hyperion-agent-runtime`'s `invoke` is not and cannot be
 //!   the same way — a real Cargo dependency cycle
 //!   (`hyperion-explainability` → `hyperion-recovery` →
 //!   `hyperion-agent-runtime`) rules out a direct dependency, so that call

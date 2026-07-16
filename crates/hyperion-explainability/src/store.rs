@@ -19,6 +19,15 @@ use crate::types::{
 pub struct ExplanationStore {
     records: Mutex<HashMap<ExplanationId, ExplanationRecord>>,
     next_id: AtomicU64,
+    /// docs/998-roadmap.md's own named "workspace-wide, shared Explanation Record store" gap:
+    /// `hyperion-coordination`/`hyperion-federation`/`hyperion-api-gateway` each used to mint
+    /// their own private `action_id`s from an owner-local counter. Sharing one `ExplanationStore`
+    /// across owners without also sharing *this* would let two different owners' `action_id`s
+    /// collide (both starting at 1) — [`Self::get_by_action`]/`resolve_why`'s own
+    /// first-match-by-`action_id` lookup would then silently resolve to the wrong owner's record.
+    /// Minting every real `action_id` from this one counter, regardless of which owner asked,
+    /// makes that collision structurally impossible rather than merely unlikely.
+    next_action_id: AtomicU64,
 }
 
 impl Default for ExplanationStore {
@@ -32,7 +41,15 @@ impl ExplanationStore {
         ExplanationStore {
             records: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
+            next_action_id: AtomicU64::new(1),
         }
+    }
+
+    /// A real, globally-unique-per-store `ActionId` — see this struct's own field doc comment on
+    /// why every real owner of a shared store must mint through here rather than an owner-local
+    /// counter of its own.
+    pub fn next_action_id(&self) -> ActionId {
+        self.next_action_id.fetch_add(1, Ordering::Relaxed)
     }
 
     fn require(

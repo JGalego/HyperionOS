@@ -251,13 +251,32 @@ pub struct CoordinationSession {
     /// [`Self::explanation`]. Owned here, not by `hyperion-agent-runtime`
     /// itself, because that crate can't depend on `hyperion-explainability`
     /// without a real dependency cycle through `hyperion-recovery` — see
-    /// this crate's doc comment.
-    explanations: ExplanationStore,
-    next_action_id: AtomicU64,
+    /// this crate's doc comment. `Arc`-shared (not a private, owned value)
+    /// so [`Self::new_with_shared_explanations`] can hand this session the
+    /// same real store `hyperion-federation`/`hyperion-api-gateway` use —
+    /// docs/998-roadmap.md's own named "workspace-wide, shared Explanation
+    /// Record store" gap, closed for a caller that wants it.
+    explanations: Arc<ExplanationStore>,
 }
 
 impl CoordinationSession {
     pub fn new(agent_runtime: Arc<AgentRuntime>, graph: Arc<KnowledgeGraph>) -> Self {
+        Self::new_with_shared_explanations(agent_runtime, graph, Arc::new(ExplanationStore::new()))
+    }
+
+    /// As [`Self::new`], but with a real, caller-supplied [`ExplanationStore`] this session
+    /// shares with other real owners (e.g. a `hyperion_federation::FederationHub` or
+    /// `hyperion_api_gateway::ApiGateway` in the same process) instead of its own private one —
+    /// a single, real, workspace-wide trace instead of several independent ones. Every real
+    /// `action_id` this session mints for it comes from the store's own
+    /// [`hyperion_explainability::ExplanationStore::next_action_id`], not an owner-local counter
+    /// of its own — sharing a store without also sharing that counter would let two different
+    /// owners' `action_id`s collide.
+    pub fn new_with_shared_explanations(
+        agent_runtime: Arc<AgentRuntime>,
+        graph: Arc<KnowledgeGraph>,
+        explanations: Arc<ExplanationStore>,
+    ) -> Self {
         CoordinationSession {
             agent_runtime,
             graph,
@@ -266,8 +285,7 @@ impl CoordinationSession {
             pending_failures: Mutex::new(HashSet::new()),
             next_session_id: AtomicU64::new(1),
             next_conflict_id: AtomicU64::new(1),
-            explanations: ExplanationStore::new(),
-            next_action_id: AtomicU64::new(1),
+            explanations,
         }
     }
 
@@ -620,7 +638,7 @@ impl CoordinationSession {
             // dispatch runs — `hyperion-explainability`'s own doc comment
             // names this crate's `allocate` as one of the Phase 3-7 call
             // sites nothing had wired yet.
-            let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
+            let action_id = self.explanations.next_action_id();
             let explanation_id = self.explanations.begin(
                 monitor,
                 token,

@@ -91,9 +91,12 @@ pub struct FederationHub {
     next_migration_id: AtomicU64,
     /// docs/18's Explanation Record store for this hub's own
     /// `dispatch_offload`/`invoke_agent` dispatches — see those methods
-    /// and [`Self::explanation`]/[`Self::trace_intent`].
-    explanations: ExplanationStore,
-    next_action_id: AtomicU64,
+    /// and [`Self::explanation`]/[`Self::trace_intent`]. `Arc`-shared so
+    /// [`Self::new_with_shared_explanations`] can hand this hub the same
+    /// real store `hyperion-coordination`/`hyperion-api-gateway` use —
+    /// docs/998-roadmap.md's own named "workspace-wide, shared Explanation
+    /// Record store" gap, closed for a caller that wants it.
+    explanations: Arc<ExplanationStore>,
     /// One real `hyperion-observability` `TelemetryCollector` per device,
     /// mirroring `devices` — [`Self::migrate`] is the real production call
     /// site for `TelemetryCollector::merge_remote_trace` docs/21's own
@@ -125,6 +128,21 @@ impl FederationHub {
     /// As [`Self::new`], with a real, caller-supplied identity (e.g. one persisted via
     /// [`Keystore::open_or_create`]) instead of a fresh, process-lifetime-only one.
     pub fn new_with_keystore(keystore: Keystore) -> Self {
+        Self::new_with_shared_explanations(keystore, Arc::new(ExplanationStore::new()))
+    }
+
+    /// As [`Self::new_with_keystore`], but with a real, caller-supplied [`ExplanationStore`] this
+    /// hub shares with other real owners (e.g. a `hyperion_coordination::CoordinationSession` or
+    /// `hyperion_api_gateway::ApiGateway` in the same process) instead of its own private one —
+    /// a single, real, workspace-wide trace instead of several independent ones. Every real
+    /// `action_id` this hub mints for it comes from the store's own
+    /// [`hyperion_explainability::ExplanationStore::next_action_id`], not an owner-local counter
+    /// of its own — sharing a store without also sharing that counter would let two different
+    /// owners' `action_id`s collide.
+    pub fn new_with_shared_explanations(
+        keystore: Keystore,
+        explanations: Arc<ExplanationStore>,
+    ) -> Self {
         FederationHub {
             devices: Mutex::new(HashMap::new()),
             trust_tiers: Mutex::new(HashMap::new()),
@@ -133,8 +151,7 @@ impl FederationHub {
             agents: Mutex::new(HashMap::new()),
             next_agent_id: AtomicU64::new(1),
             next_migration_id: AtomicU64::new(1),
-            explanations: ExplanationStore::new(),
-            next_action_id: AtomicU64::new(1),
+            explanations,
             telemetry: Mutex::new(HashMap::new()),
             keystore,
         }
@@ -453,7 +470,7 @@ impl FederationHub {
             };
             let instance = runtime.spawn(monitor, token, manifest, None)?;
 
-            let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
+            let action_id = self.explanations.next_action_id();
             let explanation_id = self.explanations.begin(
                 monitor,
                 token,
@@ -720,7 +737,7 @@ impl FederationHub {
             .ok_or(FederationError::NoSuchAgent)?;
         let runtime = self.device(agent_ref.device_id)?;
 
-        let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
+        let action_id = self.explanations.next_action_id();
         let explanation_id = self.explanations.begin(
             monitor,
             token,

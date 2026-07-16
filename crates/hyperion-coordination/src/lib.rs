@@ -90,14 +90,20 @@
 //!   plan facts needed no equivalent change — they already carried a real,
 //!   independent per-key version, proven by this crate's own existing
 //!   `writes_to_different_keys_never_conflict` test.
-//! - **A workspace-wide, shared Explanation Record store.** This
-//!   session's `ExplanationStore` is private to one `CoordinationSession`,
-//!   not shared with `hyperion-api-gateway`'s own separate store or
-//!   `hyperion-federation`'s own separate one (that crate's
-//!   `dispatch_offload`/`invoke_agent` now open real records too, just
-//!   into their own store) — a follow-up for whichever future slice
-//!   needs one workspace-wide trace
-//!   rather than several independent ones.
+//! - ~~A workspace-wide, shared Explanation Record store~~ — now real for a caller that wants
+//!   it: [`engine::CoordinationSession::new_with_shared_explanations`] takes a real, caller-supplied
+//!   `Arc<ExplanationStore>` instead of building its own private one, the same real store a
+//!   `hyperion_federation::FederationHub` built via its own
+//!   `new_with_shared_explanations` (or a `hyperion-api-gateway::ApiGateway`, which already took
+//!   one) can share too. Every real `action_id` this session mints now comes from the store's own
+//!   `ExplanationStore::next_action_id` rather than a private, owner-local counter — sharing a
+//!   store without also sharing that counter would let two independent owners' `action_id`s
+//!   collide; `hyperion-federation`/`hyperion-api-gateway` made the identical change the same
+//!   pass. `CoordinationSession::new` is unchanged (still builds its own private store; every
+//!   existing call site keeps compiling). Proven end to end, cross-crate: see
+//!   `tests/shared_explanation_store.rs` — a real `CoordinationSession` and a real, genuinely
+//!   independent `FederationHub`, sharing one store, each contribute a real record under the same
+//!   real Intent id with no `action_id` collision.
 //!
 //! Real (2026-07-16, docs/998-roadmap.md's Backlog "Protect the Human" item): "no declared
 //! judgment/taste/empathy/context boundary, distinct from 'risky'" — [`catalog::judgment_class_for`]
