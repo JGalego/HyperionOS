@@ -68,6 +68,15 @@
 //! `open_from_peer` are the genuinely-independent-devices case, verifying against the *peer's*
 //! real public signing key rather than the opener's own.
 //!
+//! [`FederationHub::start_lease_heartbeat`] (same day) closes the "heartbeat timing" half of this
+//! crate's own next-named gap: a real background thread renews an `AnchorLease` on a fixed real
+//! wall-clock interval (`SystemTime::now`, unlike every other method here, which takes a
+//! caller-supplied logical `now`) — ambient, automatic upkeep instead of a caller explicitly
+//! calling `renew_lease` itself. The returned `LeaseHeartbeat` handle joins the real thread on
+//! drop/`stop()`, so a caller can be sure renewal has genuinely halted before acting on that
+//! (e.g. releasing the lease). Ambient anti-entropy (storage convergence) remains deferred, below
+//! — a heartbeat keeps a *lease* alive, not Knowledge Graph state in sync.
+//!
 //! Deliberately deferred, and why:
 //!
 //! - **One workspace-wide, shared Explanation Record store.** This hub's
@@ -75,16 +84,17 @@
 //!   `hyperion-api-gateway`'s own separate stores — the same deliberate
 //!   per-owner boundary `hyperion-coordination`'s doc comment already
 //!   notes.
-//! - **Real network transport, heartbeat timing, ambient anti-entropy.**
-//!   Ledger publication and lease renewal are direct method calls driven
-//!   by a caller-supplied clock, not a real heartbeat loop; storage
-//!   convergence is [28 — Storage Engine](../28-storage-engine.md)'s job
-//!   and isn't wired in here (no multi-device KG replica exists yet to
-//!   converge). What now *is* real — the payload confidentiality/
-//!   authenticity, and now the real key agreement, a wire transport would
-//!   need — is `seal`/`open` and `seal_for_peer`/`open_from_peer`, above;
-//!   the transport itself (actual sockets carrying these envelopes
-//!   between processes) is still deferred.
+//! - **Real network transport, and ambient anti-entropy.** Ledger
+//!   publication is still a direct method call, not something a real
+//!   wire transport carries between processes yet; storage convergence
+//!   is [28 — Storage Engine](../28-storage-engine.md)'s job and isn't
+//!   wired in here (no multi-device KG replica exists yet to converge).
+//!   What now *is* real — the payload confidentiality/authenticity and
+//!   key agreement a wire transport would need, and the ambient
+//!   heartbeat that would drive it — are `seal`/`open`,
+//!   `seal_for_peer`/`open_from_peer`, and `start_lease_heartbeat`,
+//!   above; the transport itself (actual sockets carrying these
+//!   envelopes between processes) is still deferred.
 //! - **Cold-cache pre-staging** (docs/21 §Recovery's priority-sync batch
 //!   for a migration target with no local replica) — there is no Context
 //!   Bundle replica model across devices yet.
@@ -98,7 +108,7 @@
 mod hub;
 mod types;
 
-pub use hub::{FederationError, FederationHub};
+pub use hub::{FederationError, FederationHub, LeaseHeartbeat};
 pub use types::{
     AnchorLease, FederationTrustTier, MigrationOutcome, MigrationReceipt, OffloadDescriptor,
     PrivacyTier, VirtualResourceLedger,

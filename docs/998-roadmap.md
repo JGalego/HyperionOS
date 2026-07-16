@@ -2048,10 +2048,22 @@ mean here):
   store alone doesn't need them yet).
 - **A2A, gossip, or any custom/invented protocol.** Worth exactly when a real, concrete need
   outgrows what MCP already covers — not before.
-- **Real network transport for federation** (`hyperion-federation`'s own deferred list: heartbeat
-  timing and ambient anti-entropy — the per-device key-exchange this bullet used to also name is
-  now landed, above) — orthogonal to, and a prerequisite for, real multi-*device* (not just
-  multi-*instance*) social behavior.
+- **Real lease-renewal heartbeat timing, landed (2026-07-16).** `FederationHub::start_lease_heartbeat`
+  spawns a real background thread that renews an `AnchorLease` on a fixed real wall-clock interval
+  (`SystemTime::now`, unlike every other method on this hub, which takes a caller-supplied logical
+  `now`) — ambient, automatic upkeep rather than a caller explicitly calling `renew_lease` itself.
+  Returns a `LeaseHeartbeat` handle: dropping it (or calling `.stop()`) signals the real thread to
+  stop and joins it, so a caller can be sure renewal has genuinely halted before, e.g., releasing
+  the lease. Proven end to end: a real, running heartbeat keeps a one-second-ttl lease looking
+  fresh across 1.2+ real seconds; the identical lease with no heartbeat genuinely goes stale in the
+  same window; a stopped heartbeat provably stops renewing (the lease goes stale again afterward).
+- **Real network transport for federation, and ambient anti-entropy** (`hyperion-federation`'s own
+  remaining deferred items — heartbeat *timing* and the per-device key-exchange this bullet used to
+  name are now both landed, above) — orthogonal to, and a prerequisite for, real multi-*device*
+  (not just multi-*instance*) social behavior. Ambient anti-entropy specifically still needs a real
+  multi-device Knowledge Graph replica model ([28 — Storage Engine](../28-storage-engine.md)) to
+  converge, which doesn't exist yet — the heartbeat above keeps a *lease* alive, not KG state in
+  sync.
 
 ### Self-Sustaining — degrade safely, recover, come out stronger
 

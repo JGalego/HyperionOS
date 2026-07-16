@@ -1,6 +1,8 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hyperion_agent_runtime::{AgentManifest, AgentRuntime, InvokeOutcome};
 use hyperion_ai_runtime::{
@@ -45,6 +47,36 @@ pub enum FederationError {
 struct AgentRef {
     device_id: u64,
     local_instance: u64,
+}
+
+/// A real, running background thread that automatically renews an [`AnchorLease`] on a fixed
+/// real wall-clock interval — see [`FederationHub::start_lease_heartbeat`]. Stopped by dropping
+/// this handle (or calling [`Self::stop`] explicitly) — the real background thread is joined, not
+/// merely detached, so a caller can be sure it has genuinely stopped renewing before proceeding
+/// (e.g. before releasing the lease it was renewing, to avoid a benign but confusing race).
+pub struct LeaseHeartbeat {
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl LeaseHeartbeat {
+    /// Signals the real background thread to stop and blocks until it has genuinely exited.
+    pub fn stop(mut self) {
+        self.stop_and_join();
+    }
+
+    fn stop_and_join(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for LeaseHeartbeat {
+    fn drop(&mut self) {
+        self.stop_and_join();
+    }
 }
 
 /// docs/21 — Distributed Execution. See this crate's doc comment for what's
@@ -581,6 +613,48 @@ impl FederationHub {
 
     pub fn lease_of(&self, agent_instance: u64) -> Option<AnchorLease> {
         self.leases.lock().unwrap().get(&agent_instance).copied()
+    }
+
+    /// Starts a real background thread that renews `agent_instance`'s lease for `device_id` every
+    /// real `interval` — the "heartbeat timing" half of this crate's own previously-named "real
+    /// network transport, heartbeat timing, ambient anti-entropy" gap. Uses the real system clock
+    /// (`SystemTime::now`), unlike every other method on this hub, which takes a caller-supplied
+    /// logical `now`: a heartbeat is inherently an autonomous, real-time background behavior, not
+    /// a deterministic step a test drives directly. A renewal that fails (e.g. the lease expired
+    /// and was reclaimed by another device before this tick ran) is silently skipped rather than
+    /// panicking a background thread — the next tick tries again regardless; a caller that cares
+    /// about the outcome can still call [`Self::lease_of`]/[`Self::renew_lease`] directly.
+    /// Requires `self` already be held in an `Arc` (the thread holds its own clone) — this hub
+    /// itself is otherwise unaware whether any heartbeat is running for a given lease, matching
+    /// [`Self::establish_shared_secret`]'s own "recomputed, never cached" simplicity.
+    pub fn start_lease_heartbeat(
+        self: &Arc<Self>,
+        monitor: Arc<CapabilityMonitor>,
+        token: CapabilityToken,
+        agent_instance: u64,
+        device_id: u64,
+        interval: Duration,
+    ) -> LeaseHeartbeat {
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let hub = Arc::clone(self);
+        let handle = std::thread::spawn(move || {
+            while !thread_stop.load(Ordering::Relaxed) {
+                std::thread::sleep(interval);
+                if thread_stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock before Unix epoch")
+                    .as_secs();
+                let _ = hub.renew_lease(&monitor, &token, agent_instance, device_id, now);
+            }
+        });
+        LeaseHeartbeat {
+            stop,
+            handle: Some(handle),
+        }
     }
 
     /// Spawns a real Agent on `device_id`'s own `AgentRuntime`, mints a
