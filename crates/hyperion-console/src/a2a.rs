@@ -179,7 +179,11 @@ fn handle_request(
 
             let (reply, signature_hex) = {
                 let mut session = session.lock().unwrap();
-                let reply = session.handle_utterance(text).join("\n");
+                // Stateless, not `handle_utterance`: a real caller here is never authenticated,
+                // so it has no ongoing conversation with this session to be a "next turn" of --
+                // see `ConsoleSession::handle_utterance_stateless`'s own doc comment for the real
+                // cross-peer history bleed this avoids.
+                let reply = session.handle_utterance_stateless(text).join("\n");
                 let signature = encode_hex(&session.sign(reply.as_bytes()).to_bytes());
                 (reply, signature)
             };

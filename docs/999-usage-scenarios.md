@@ -488,8 +488,7 @@ conversation history (`[1] you asked: \"what is my name\" (30% confident)`, `[2]
 name is Alex\" (30% confident)`).
 
 A2A, the outbound half this time — a real *second* `hyperion-console` process runs `/a2a-call`
-against a real running `/a2a-server`, injecting a turn from an entirely separate process into the
-server's session:
+against a real running `/a2a-server`:
 
 ```sh
 printf '/a2a-server 8766\n/standby\n' > /tmp/a2a-demo.txt
@@ -504,22 +503,44 @@ status: done -- [mock model 1] echo: my name is Jordan
 ```
 
 A raw `SendMessage` call against the real spec-defined endpoint, from a third vantage point
-(plain `curl`), shows the turn the second process injected is really there in the server's own
-memory — not two divergent conversations:
+(plain `curl`), proves it's really the same live session (the real signature verifies against the
+real Agent Card's own key) — but, **landed 2026-07-16, real cross-peer bleed found and fixed
+while sanity-checking the many-instance mesh demo (scenario 15)**, no longer sees the first
+caller's own turn:
 
 ```sh
 curl -s http://127.0.0.1:8766/.well-known/agent-card.json
 curl -s http://127.0.0.1:8766/ -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"what is my name"}]},"configuration":{"returnImmediately":false}}}'
 ```
 ```json
-{"capabilities":{"extendedAgentCard":false,"pushNotifications":false,"streaming":false},"id":"hyperion-console","interfaces":[{"type":"json-rpc","url":"/"}],"name":"Hyperion","provider":{"name":"Hyperion","url":"https://github.com/JGalego/HyperionOS"},"skills":[{"description":"A real utterance through Hyperion's real Intent Engine and Agent dispatch.","id":"hyperion.ask","name":"Ask Hyperion"}]}
-{"id":1,"jsonrpc":"2.0","result":{"contextId":"task-2","id":"task-2","status":{"message":{"messageId":"task-2-reply","parts":[{"text":"status: done -- [mock model 1] echo: Recent conversation, most recent last:\nmy name is Jordan\n\nNow respond to: what is my name"}],"role":"ROLE_AGENT"},"state":"TASK_STATE_COMPLETED","timestamp":"2026-07-14T18:39:18Z"}}}
+{"capabilities":{"extendedAgentCard":false,"pushNotifications":false,"streaming":false},"id":"hyperion-console","interfaces":[{"type":"json-rpc","url":"/"}],"name":"Hyperion","provider":{"name":"Hyperion","url":"https://github.com/JGalego/HyperionOS"},"publicKey":"4ab772056848ece0d4763e0dcde48ba8b2b035e5d676549da23b8de0205f709e","skills":[{"description":"A real utterance through Hyperion's real Intent Engine and Agent dispatch.","id":"hyperion.ask","name":"Ask Hyperion"}]}
+{"id":1,"jsonrpc":"2.0","result":{"contextId":"task-2","id":"task-2","signature":"acb9ee2f...","status":{"message":{"messageId":"task-2-reply","parts":[{"text":"status: done -- [mock model 1] echo: what is my name"}],"role":"ROLE_AGENT"},"state":"TASK_STATE_COMPLETED","timestamp":"2026-07-16T22:26:19Z"}}}
 ```
 
-**Status:** Verified live, exactly as shown above, not a fix. `/standby` is what makes any of this
-possible by hand at all — without it, a scenario file ending would tear the whole process (server
-included) down before a second terminal could ever reach it. Automated regression coverage for the
-same three flows lives in `crates/hyperion-console/tests/mcp_a2a_server.rs`.
+**What changed, and why:** this scenario originally showed the second call's reply echoing
+`"Recent conversation, most recent last: my name is Jordan\n\nNow respond to: what is my name"` —
+celebrated as "real conversational continuity... reachable over the wire." Running the real
+many-instance mesh demo (scenario 15) with several genuinely different real peers surfaced why
+that's actually wrong for A2A specifically: a *third*, unrelated real peer's own later question
+got answered by a reply that opened by reciting a *second* peer's completely disconnected earlier
+request — real cross-peer bleed, not a documented feature, once more than one real stranger
+uses the same endpoint. `SendMessage` never authenticates its caller (see `a2a`'s own doc
+comment), so there was never a real "conversation" to continue in the first place — every prior
+call, including a purely local one, was silently readable by whichever unauthenticated peer asked
+next. `ConsoleSession::handle_utterance_stateless` now runs every `SendMessage` dispatch under a
+fresh, never-reused working-memory id instead of this session's own shared `"console"` one: an
+A2A caller no longer sees this session's own local history, and — the part that actually mattered
+in the mesh demo — two different real peers no longer see each other's. (MCP's own
+`tools/call hyperion.ask` continuity, demonstrated earlier in this same scenario, is unaffected:
+an MCP client is presumed to be this session's own owner reaching it through a different
+transport, not an unauthenticated stranger.)
+
+**Status:** Verified live, both the original two-process flow and the fix above. `/standby` is
+what makes any of this possible by hand at all — without it, a scenario file ending would tear the
+whole process (server included) down before a second terminal could ever reach it. Automated
+regression coverage lives in `crates/hyperion-console/tests/mcp_a2a_server.rs`,
+`tests/a2a_identity.rs`, and `tests/a2a_task_store.rs` (all three updated the same day to assert
+the corrected, isolated behavior instead of the cross-call bleed they used to rely on).
 
 ### 13. Self-sustaining — a suspended agent auto-resumes, and remembers across a restart
 
@@ -605,25 +626,33 @@ flow. `scripts/run-mesh-demo.sh` runs it end to end:
 
 ```
 $ ./scripts/run-mesh-demo.sh
-Starting kenji on port 9101 (capabilities: translate-ja)…
-Starting priya on port 9102 (capabilities: image-edit)…
-Starting sam on port 9103 (capabilities: summarize)…
-Starting dana on port 9104 (capabilities: image-edit,summarize)…
-Starting milo on port 9105 (capabilities: hyperion.ask)…
-Starting aria on port 9106 (capabilities: hyperion.ask)…
+Starting kenji on port 9101 (capabilities: translate-ja; backend: anthropic claude-haiku-4-5-20251001)…
+Starting priya on port 9102 (capabilities: image-edit; backend: openai gpt-4o-mini)…
+Starting sam on port 9103 (capabilities: summarize; backend: groq llama-3.1-8b-instant)…
+Starting dana on port 9104 (capabilities: image-edit,summarize; backend: anthropic claude-haiku-4-5-20251001)…
+Starting milo on port 9105 (capabilities: hyperion.ask; backend: openai gpt-4o-mini)…
+Starting aria on port 9106 (capabilities: hyperion.ask; backend: groq llama-3.1-8b-instant)…
 
 Mesh dashboard:  http://127.0.0.1:8767
 ```
 
-`sam`'s own real transcript, unprompted, choosing and explaining itself:
+Each node really connects its own real cloud account first (a real, redacted secret-paste through
+the same `connect my <provider> account` flow scenario 7 established, then a real
+`/backend <provider> <model>` switch) — three different real providers across six nodes, on
+purpose, so the dashboard's own backend-color legend means something. `aria`'s own real transcript,
+unprompted, choosing and explaining itself, delegating to a peer running a *different* real
+provider than its own:
 
 ```
-> /mesh-request 9103 translate-ja please translate this greeting to Japanese
+> /backend groq llama-3.1-8b-instant
+Switched to the groq (model "llama-3.1-8b-instant") backend.
+> /mesh-request 9106 translate-ja say hello in Japanese
 I don't have "translate-ja" myself, so I asked kenji._hyperion-a2a._tcp.local. (127.0.0.1:9101),
-which does. It replied: status: done -- [mock model 1] echo: please translate this greeting to
-Japanese
+which does. It replied: status: done -- こんにちは (Konnichiwa)
 
-(Trusting 127.0.0.1:9101's identity for the first time: 1944943a...)
+This is the most common way to say "hello" in Japanese!
+
+(Trusting 127.0.0.1:9101's identity for the first time: 399102e1a7a5a119e67e8aeeb14875b7c0871a86253b7b8a3af80dd4812b164d.)
 ```
 
 `kenji`'s own `GET /mesh/status` (queried directly, from a third vantage point) shows the same
@@ -631,17 +660,21 @@ event from the other side, honestly unable to name its caller (`SendMessage` nev
 one):
 
 ```json
-{"capabilities":["translate-ja"],"trusted_peers":[],
- "recent_events":[{"kind":"DelegationReceived","peer":"unknown",
- "detail":"please translate this greeting to Japanese","ts":"2026-07-16T14:54:06Z"}]}
+{"capabilities":["translate-ja"],"backend":"anthropic (model \"claude-haiku-4-5-20251001\")",
+ "trusted_peers":[],"recent_events":[{"kind":"DelegationReceived","peer":"unknown",
+ "detail":"say hello in Japanese","ts":"2026-07-16T21:19:07Z"}]}
 ```
 
 `/mesh-dashboard`'s own served page (`http://127.0.0.1:8767`, opened in a real browser) polls
 every discovered node's Agent Card + `/mesh/status` once a second and renders all six as a live
-graph — dashed lines for real, persisted trust; a brief bright pulse on an edge for a delegation
-that just happened; a raw scrolling log underneath as the plain-text version of the same story.
+graph: each node colored by which real backend it's dispatching through (golden-angle hue
+spacing, so a handful of real providers stay visually distinct rather than colliding by chance),
+with a live legend; dashed lines for real, persisted trust; a small dot that really travels an
+edge while a discovery/delegation is in flight (amber outbound, green the real answer returning,
+red if it failed); an expanding ring on a node that was just asked something. A raw scrolling log
+underneath is the plain-text version of the same story.
 
-**Real bugs this scenario's own manual verification actually caught (both fixed, not just noted):**
+**Real bugs this scenario's own manual verification actually caught (all fixed, not just noted):**
 
 1. **`/mesh-dashboard` blocked its own startup on a full LAN scan.** The command handler built the
    first graph snapshot synchronously before spawning the HTTP server, so the dashboard's own port
@@ -654,16 +687,29 @@ that just happened; a raw scrolling log underneath as the plain-text version of 
    adapter, …) — `build_mesh_graph` was treating every resolution as its own node, and the ones
    this process couldn't actually reach rendered as capability-less, event-less clutter. Fixed:
    deduped by instance name, keeping only the resolution whose Agent Card actually answered.
+3. **A node's own position reshuffled every ~2s refresh.** `build_mesh_graph` built a fresh
+   `HashMap` from a fresh mDNS scan every cycle — neither the map's own iteration order nor the
+   scan's own peer-return order is stable across calls, so the dashboard's circle layout (which
+   assigns position by array index) visibly jittered. Fixed: the node list is now sorted by id
+   before being returned.
+4. **Delegating to a real cloud peer surfaced real cross-peer conversation bleed.** Running this
+   scenario with genuinely different real peers (not scenario 12's two-process mock case) showed
+   a peer answering a brand-new real question by first reciting a *different*, unrelated peer's
+   earlier real request — `SendMessage` shared one undifferentiated conversation history across
+   every caller, forever, local or remote. See scenario 12's own updated A2A section for the real
+   root cause and fix (`ConsoleSession::handle_utterance_stateless`); every reply in this
+   scenario's own transcripts above was captured after that fix landed.
 
-**Status:** Verified live, both fixes applied directly (not left as open findings) — six real
-nodes discovering, choosing, and delegating with no human naming a peer, and a dashboard that
-really shows it happening. **Open finding, named honestly:** real mDNS convergence across several
-concurrently-advertising processes is genuinely slower and less reliable over some virtualized/
-sandboxed network adapters (observed firsthand: a several-second delay, occasionally more, before
-a later-starting node's own scan sees an earlier one) than the same two-process case scenario 12
-already covers — `mesh::find_capability_peer`'s own real, bounded retry (5 scans × 2s) is a
-mitigation, not a fix for the underlying network's own convergence speed; a real LAN or real
-hardware should converge faster than this sandbox did.
+**Status:** Verified live, all four fixes applied directly (not left as open findings) — six real
+nodes, three real cloud providers, discovering, choosing, and delegating with no human naming a
+peer, and a dashboard that really shows it happening, each real reply now genuinely self-contained
+rather than reciting an unrelated stranger's earlier ask. **Open finding, named honestly:** real
+mDNS convergence across several concurrently-advertising processes is genuinely slower and less
+reliable over some virtualized/sandboxed network adapters (observed firsthand: a several-second
+delay, occasionally more, before a later-starting node's own scan sees an earlier one) than the
+same two-process case scenario 12 already covers — `mesh::find_capability_peer`'s own real,
+bounded retry (5 scans × 2s) is a mitigation, not a fix for the underlying network's own
+convergence speed; a real LAN or real hardware should converge faster than this sandbox did.
 
 ## Open findings (named, not fixed)
 

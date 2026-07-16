@@ -19,6 +19,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use hyperion_agent_runtime::{AgentRuntime, InvokeOutcome};
@@ -1201,6 +1202,34 @@ impl ConsoleSession {
     /// they happen.
     pub fn handle_utterance(&mut self, utterance: &str) -> Vec<String> {
         self.handle_utterance_with_progress(utterance, &mut |_| {})
+    }
+
+    /// As [`Self::handle_utterance`], but for a real caller this session has no ongoing
+    /// relationship with -- `a2a`'s own `SendMessage` handler (docs/998-roadmap.md's Social
+    /// pillar), since that protocol never authenticates who's asking (see `a2a`'s own doc
+    /// comment). Sharing this session's own stable `"console"` working-memory id with an
+    /// anonymous caller would be wrong two ways at once: it would leak this session's own local
+    /// conversation into a stranger's reply, and -- confirmed live, running the real many-
+    /// instance mesh demo -- leak *that* stranger's request into a **later, unrelated** real
+    /// stranger's reply (a peer answering a genuine new question by first reciting a previous,
+    /// disconnected one). Runs `utterance` under a fresh working-memory id instead, used exactly
+    /// once, so [`Self::prompt_with_recent_history`] finds no prior turns -- a real, honest
+    /// stateless reply, matching what an unauthenticated one-off ask actually is.
+    ///
+    /// Each fresh id's own small turn buffer is simply never read again after this call returns
+    /// (not evicted) -- an intentional, bounded tradeoff: real memory growth proportional to real
+    /// A2A traffic over this process's lifetime, not worth real eviction logic for what is, today,
+    /// a demo-scale mesh of a handful of nodes.
+    pub fn handle_utterance_stateless(&mut self, utterance: &str) -> Vec<String> {
+        static NEXT_STATELESS_SESSION: AtomicU64 = AtomicU64::new(1);
+        let stateless_id = format!(
+            "a2a-stateless-{}",
+            NEXT_STATELESS_SESSION.fetch_add(1, Ordering::Relaxed)
+        );
+        let real_session_id = std::mem::replace(&mut self.session_id, stateless_id);
+        let result = self.handle_utterance(utterance);
+        self.session_id = real_session_id;
+        result
     }
 
     /// As [`Self::handle_utterance`], but calls `on_progress` with a real [`TaskProgress`] event

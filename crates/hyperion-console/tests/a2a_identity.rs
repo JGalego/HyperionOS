@@ -81,15 +81,15 @@ fn a_first_call_trusts_the_peers_identity_and_a_second_call_confirms_it_silently
 
     let server = spawn_scenario(
         &server_dir.path().join("data"),
-        &format!("my name is Alex\n/a2a-server {PORT}\n/standby\n"),
+        &format!("/a2a-server {PORT}\n/standby\n"),
     );
     wait_for_port(PORT);
 
     let first = client_call(
         &client_dir.path().join("data"),
-        &format!("/a2a-call 127.0.0.1 {PORT} what is my name"),
+        &format!("/a2a-call 127.0.0.1 {PORT} hello there"),
     );
-    assert!(first.contains("Alex"), "got: {first:?}");
+    assert!(first.contains("hello there"), "got: {first:?}");
     assert!(
         first.contains("Trusting 127.0.0.1:18790's identity for the first time"),
         "got: {first:?}"
@@ -97,9 +97,9 @@ fn a_first_call_trusts_the_peers_identity_and_a_second_call_confirms_it_silently
 
     let second = client_call(
         &client_dir.path().join("data"),
-        &format!("/a2a-call 127.0.0.1 {PORT} what is my name"),
+        &format!("/a2a-call 127.0.0.1 {PORT} hello there"),
     );
-    assert!(second.contains("Alex"), "got: {second:?}");
+    assert!(second.contains("hello there"), "got: {second:?}");
     assert!(
         !second.contains("Trusting"),
         "a repeat contact with the same identity must be silently confirmed, got: {second:?}"
@@ -112,18 +112,28 @@ fn a_first_call_trusts_the_peers_identity_and_a_second_call_confirms_it_silently
 fn a_different_server_answering_the_same_address_is_refused_not_silently_trusted() {
     const PORT: u16 = 18791;
     let client_dir = tempfile::tempdir().unwrap();
+    // Each `SendMessage` is a real, stateless, one-off dispatch (see
+    // `ConsoleSession::handle_utterance_stateless`'s own doc comment) -- there's no shared
+    // conversation memory left to distinguish "which real server answered" through, so the
+    // distinguishing marker rides in the outgoing message itself instead, echoed straight back by
+    // whichever real `MockBackend` actually received and answered it.
+    const MARKER: &str = "marker-for-the-real-server-that-should-answer";
 
     let server_a_dir = tempfile::tempdir().unwrap();
     let server_a = spawn_scenario(
         &server_a_dir.path().join("data"),
-        &format!("my name is Alex\n/a2a-server {PORT}\n/standby\n"),
+        &format!("/a2a-server {PORT}\n/standby\n"),
     );
     wait_for_port(PORT);
     let first = client_call(
         &client_dir.path().join("data"),
-        &format!("/a2a-call 127.0.0.1 {PORT} what is my name"),
+        &format!("/a2a-call 127.0.0.1 {PORT} {MARKER}"),
     );
-    assert!(first.contains("Alex"), "got: {first:?}");
+    // "echo: {MARKER}" (the real `MockBackend` reply's own shape), not bare `MARKER` -- the
+    // outgoing command line itself is also echoed to this same transcript, so a bare substring
+    // check can't tell "the real reply repeated it" from "the command we typed contained it".
+    let echoed_reply = format!("echo: {MARKER}");
+    assert!(first.contains(&echoed_reply), "got: {first:?}");
     resume_and_wait(server_a);
 
     // A real, differently-keyed second server (its own fresh data dir -> its own fresh device
@@ -132,19 +142,19 @@ fn a_different_server_answering_the_same_address_is_refused_not_silently_trusted
     let server_b_dir = tempfile::tempdir().unwrap();
     let server_b = spawn_scenario(
         &server_b_dir.path().join("data"),
-        &format!("my name is Mallory\n/a2a-server {PORT}\n/standby\n"),
+        &format!("/a2a-server {PORT}\n/standby\n"),
     );
     wait_for_port(PORT);
     let second = client_call(
         &client_dir.path().join("data"),
-        &format!("/a2a-call 127.0.0.1 {PORT} what is my name"),
+        &format!("/a2a-call 127.0.0.1 {PORT} {MARKER}"),
     );
     assert!(
         second.contains("WARNING") && second.contains("DIFFERENT identity"),
         "got: {second:?}"
     );
     assert!(
-        !second.contains("Mallory"),
+        !second.contains(&echoed_reply),
         "the impersonating server's real reply must never be shown, got: {second:?}"
     );
 
@@ -157,10 +167,10 @@ fn a_different_server_answering_the_same_address_is_refused_not_silently_trusted
 
     let third = client_call(
         &client_dir.path().join("data"),
-        &format!("/a2a-call 127.0.0.1 {PORT} what is my name"),
+        &format!("/a2a-call 127.0.0.1 {PORT} {MARKER}"),
     );
     assert!(
-        third.contains("Mallory"),
+        third.contains(&echoed_reply),
         "after an explicit /trust forget, the real reply must go through again, got: {third:?}"
     );
     assert!(

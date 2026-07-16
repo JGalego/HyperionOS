@@ -150,10 +150,7 @@ fn mcp_server_serves_real_tools_over_a_real_http_connection() {
 fn a2a_server_serves_a_real_agent_card_and_sendmessage() {
     const PORT: u16 = 18766;
     let dir = tempfile::tempdir().unwrap();
-    let child = spawn_scenario(
-        dir.path(),
-        &format!("my name is Alex\n/a2a-server {PORT}\n/standby\n"),
-    );
+    let child = spawn_scenario(dir.path(), &format!("/a2a-server {PORT}\n/standby\n"));
     wait_for_port(PORT);
 
     let card = http_get(PORT, "/.well-known/agent-card.json");
@@ -166,9 +163,9 @@ fn a2a_server_serves_a_real_agent_card_and_sendmessage() {
     let response = http_post(
         PORT,
         "/",
-        r#"{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"what is my name"}]},"configuration":{"returnImmediately":false}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello there"}]},"configuration":{"returnImmediately":false}}}"#,
     );
-    assert!(response.contains("Alex"), "got: {response:?}");
+    assert!(response.contains("hello there"), "got: {response:?}");
     assert!(
         response.contains("TASK_STATE_COMPLETED"),
         "got: {response:?}"
@@ -213,17 +210,14 @@ fn mcp_call_reaches_a_real_running_mcp_server_from_a_second_process() {
 fn a2a_call_reaches_a_real_running_a2a_server_from_a_second_process() {
     const PORT: u16 = 18768;
     let dir = tempfile::tempdir().unwrap();
-    let server = spawn_scenario(
-        dir.path(),
-        &format!("my name is Alex\n/a2a-server {PORT}\n/standby\n"),
-    );
+    let server = spawn_scenario(dir.path(), &format!("/a2a-server {PORT}\n/standby\n"));
     wait_for_port(PORT);
 
     let client_dir = tempfile::tempdir().unwrap();
     let client_scenario = client_dir.path().join("scenario.txt");
     std::fs::write(
         &client_scenario,
-        format!("/a2a-call 127.0.0.1 {PORT} what is my name\n"),
+        format!("/a2a-call 127.0.0.1 {PORT} hello there\n"),
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_hyperion-console"))
@@ -234,8 +228,9 @@ fn a2a_call_reaches_a_real_running_a2a_server_from_a_second_process() {
     assert!(output.status.success());
     let transcript = String::from_utf8_lossy(&output.stdout);
     assert!(
-        transcript.contains("Alex"),
-        "expected the real remote session's real reply (naming Alex), got: {transcript:?}"
+        transcript.contains("hello there"),
+        "expected the real remote session's own real reply (echoing what was sent), got: \
+         {transcript:?}"
     );
 
     resume_and_wait(server);

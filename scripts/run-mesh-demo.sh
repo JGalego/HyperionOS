@@ -70,13 +70,18 @@ wait_for_port() {
 # they start); milo/aria are pure requesters, started last so every capability they ask for
 # already has a real, discoverable provider. Two nodes per real provider -- enough for the
 # dashboard's own backend-color legend to mean something without a color per node.
+# Request text carries its own real content -- no attached greeting/paragraph/photo exists over
+# this text-only protocol, and a real model correctly (if unhelpfully, for a demo) says so if the
+# request implies one it was never given. `image-edit` in particular can't be exercised as "edit
+# this photo" with nothing attached; phrased as a self-contained, answerable question about
+# editing a described photo instead, a real model can actually complete it.
 NODES=(
     "kenji:9101:translate-ja::anthropic:claude-haiku-4-5-20251001"
     "priya:9102:image-edit::openai:gpt-4o-mini"
-    "sam:9103:summarize:translate-ja|please translate this greeting to Japanese:groq:llama-3.1-8b-instant"
-    "dana:9104:image-edit,summarize:translate-ja|translate this label to Japanese:anthropic:claude-haiku-4-5-20251001"
-    "milo:9105:hyperion.ask:summarize|please summarize this paragraph;image-edit|please crop this photo:openai:gpt-4o-mini"
-    "aria:9106:hyperion.ask:translate-ja|say hello in Japanese;image-edit|resize this photo:groq:llama-3.1-8b-instant"
+    "sam:9103:summarize:translate-ja|please translate this greeting to Japanese - Good morning, I hope you have a wonderful day:groq:llama-3.1-8b-instant"
+    "dana:9104:image-edit,summarize:translate-ja|translate this label to Japanese - Emergency Exit:anthropic:claude-haiku-4-5-20251001"
+    "milo:9105:hyperion.ask:summarize|please summarize this paragraph - Hyperion is an intent-native operating system. Instead of asking users to open specific apps or manage files directly, it lets people state a goal in plain language, then figures out which capability, tool, or agent should carry it out. The system is built to be resourceful, self-sustaining, and social, treating other real Hyperion instances as peers to delegate to, not silos.;image-edit|I have a photo I want to crop to a square for Instagram without cutting off a centered subject - what crop dimensions should I use:openai:gpt-4o-mini"
+    "aria:9106:hyperion.ask:translate-ja|say hello in Japanese;image-edit|I need to resize a 1920 by 1080 photo down to 600 pixels wide for a website thumbnail while keeping the aspect ratio - what height should I use:groq:llama-3.1-8b-instant"
 )
 
 for spec in "${NODES[@]}"; do

@@ -87,13 +87,10 @@ fn send_message(port: u16, id: u64, text: &str) -> serde_json::Value {
 fn a_completed_task_can_really_be_re_fetched_by_get_task() {
     const PORT: u16 = 18820;
     let dir = tempfile::tempdir().unwrap();
-    let child = spawn_scenario(
-        dir.path(),
-        &format!("my name is Alex\n/a2a-server {PORT}\n/standby\n"),
-    );
+    let child = spawn_scenario(dir.path(), &format!("/a2a-server {PORT}\n/standby\n"));
     wait_for_port(PORT);
 
-    let sent = send_message(PORT, 1, "what is my name");
+    let sent = send_message(PORT, 1, "hello there");
     let task_id = sent["result"]["id"]
         .as_str()
         .expect("a real task id")
@@ -112,7 +109,7 @@ fn a_completed_task_can_really_be_re_fetched_by_get_task() {
         fetched["result"]["status"]["message"]["parts"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("Alex"),
+            .contains("hello there"),
         "got: {fetched:?}"
     );
 
