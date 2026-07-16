@@ -2574,3 +2574,28 @@ next step on any of these is a design pass, not code.
   changes the hash; and re-scoring the same content (a different `quality_score`) or a different
   statically-observed-permissions list leaves the content fingerprint unchanged. All 19 of this
   crate's own pre-existing tests still pass unchanged.
+
+- **`hyperion-model-router`'s percentage-based canary traffic splitting, landed (2026-07-16)**
+  (docs/23's own named gap: "`RolloutStage::Canary` is tracked and lightly discounted in scoring,
+  but no random sampling actually splits live traffic by percentage"). `RolloutStage::Canary`
+  gains the real `f32` traffic-percentage payload docs/23 §Data Structures always specified
+  (`Canary(f32)`); `ModelRouter::route` now really samples it via a new, deterministic
+  `canary_sampled_in(invocation_id, impl_id, pct)` — a real hash of `(invocation_id, impl_id)`
+  normalized into `[0, 1)` and compared against `pct` — so only that declared fraction of live
+  calls even consider the candidate this cycle; the rest are excluded with a new
+  `ExclusionReason::CanaryNotSampled` and fall straight through to whatever GA (or other in-sample
+  Canary) candidate already exists, docs/23's own "existing fallback chain still live as a safety
+  net." `invocation_id` generation moved to the top of `route()` (previously assigned only when
+  building the final `RoutingDecision`) so the same id both drives the real sampling decision and
+  labels the decision it produced. Additive, not a replacement: a candidate that *is* sampled in
+  still carries the exact same modest `availability_fit` discount (`0.8`) this crate always applied
+  to Canary. `hyperion-api-gateway::router_bridge`'s own exhaustive match over `ExclusionReason`
+  gained the new variant's real rejection-reason text as part of this same change — the one real
+  downstream call site this enum change touched. Proven end to end in a new
+  `tests/canary_traffic_splitting.rs` (5 tests): a `Canary(0.0)` is never sampled in and the real
+  GA candidate is chosen every time; a `Canary(1.0)` is always sampled in; a `Canary(0.3)` lands
+  within `[20%, 40%]` over 2,000 real calls; two independent `Canary(0.5)` candidates for the same
+  capability sometimes disagree (proving independent sampling, not correlated/lockstep behavior);
+  and a sampled-in candidate still carries the real `0.8` availability discount. All 8 of this
+  crate's own pre-existing routing tests, and all 22 of `hyperion-api-gateway`'s, still pass
+  unchanged.

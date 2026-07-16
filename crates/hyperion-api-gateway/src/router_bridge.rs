@@ -170,6 +170,11 @@ pub(crate) fn to_confidence_and_alternatives(
                     ExclusionReason::ResourceInfeasible => {
                         "excluded as not locally feasible before scoring".to_string()
                     }
+                    ExclusionReason::CanaryNotSampled => {
+                        "excluded: this call's traffic sample landed outside this canary's \
+                         declared percentage"
+                            .to_string()
+                    }
                 },
             }),
     );

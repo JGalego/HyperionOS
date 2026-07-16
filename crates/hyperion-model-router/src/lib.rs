@@ -41,10 +41,18 @@
 //!   `CapabilityInvocation.cloud_consent`), but the *policy* deciding what
 //!   counts as consent is a single caller-supplied bool, not 16's real
 //!   per-data-class consent model.
-//! - **Percentage-based canary traffic splitting** — `RolloutStage::Canary`
-//!   is tracked and lightly discounted in scoring, but no random sampling
-//!   actually splits live traffic by percentage; that needs
-//!   [32 — Update System](../32-update-system.md) (Phase 9/10).
+//! - ~~**Percentage-based canary traffic splitting**~~ — now real:
+//!   [`types::RolloutStage::Canary`] carries a real `f32` traffic-percentage payload, and
+//!   [`router::ModelRouter::route`] really samples it — deterministically, keyed on the real
+//!   `invocation_id` and `impl_id`, via a real hash rather than a caller-supplied RNG — so only
+//!   that declared fraction of live calls even consider the candidate; the rest fall straight
+//!   through to whatever GA (or other in-sample Canary) candidate already exists, docs/23's own
+//!   "existing fallback chain still live as a safety net." A candidate that *is* sampled in still
+//!   carries the same modest `availability_fit` discount this crate always applied to Canary —
+//!   the two mechanisms are additive, not a replacement of one by the other. What's still
+//!   deferred: *deciding* what percentage to declare and when to ratchet it up over a real
+//!   rollout's lifetime remains [32 — Update System](../32-update-system.md)'s own job (Phase
+//!   9/10) — this crate only makes an already-declared percentage real, it doesn't decide one.
 //! - ~~Durable decision log~~ — now real: `hyperion-api-gateway`'s
 //!   `invoke_capability` appends every real routing decision's
 //!   [`Rationale`] to `hyperion-observability::AuditLedger` via the new

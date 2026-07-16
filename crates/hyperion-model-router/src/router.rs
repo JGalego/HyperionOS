@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
@@ -193,6 +194,29 @@ impl ModelRouter {
         }
     }
 
+    /// Real, deterministic traffic sampling for a `RolloutStage::Canary(pct)` candidate: `true`
+    /// exactly when this call's own `(invocation_id, impl_id)` pair hashes into the bottom `pct`
+    /// fraction of the real `u64` hash space — over many real, distinct `invocation_id`s this
+    /// converges to genuinely routing `pct` of live traffic to this candidate, per docs/23's own
+    /// "a small percentage of live invocations" framing. Deterministic (not a real RNG) so the
+    /// same `invocation_id` always reproduces the same real sampling decision — useful for
+    /// replaying/debugging a specific routing decision — and independent per `impl_id`, so two
+    /// different Canary candidates for the same capability sample independently rather than
+    /// moving together.
+    fn canary_sampled_in(invocation_id: u64, impl_id: ImplId, pct: f32) -> bool {
+        if pct <= 0.0 {
+            return false;
+        }
+        if pct >= 1.0 {
+            return true;
+        }
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        invocation_id.hash(&mut hasher);
+        impl_id.hash(&mut hasher);
+        let sample = hasher.finish() as f64 / u64::MAX as f64;
+        sample < pct as f64
+    }
+
     fn is_locally_feasible(&self, descriptor: &ImplementationDescriptor) -> bool {
         match (descriptor.kind, descriptor.model_class) {
             (ImplKind::LocalSmallModel | ImplKind::LocalLargeModel, Some(class)) => {
@@ -208,8 +232,14 @@ impl ModelRouter {
 
     /// `route` — docs/23 §Pseudocode. Candidate gathering, the privacy gate
     /// (a hard exclusion, never a score), the feasibility gate, weighted
-    /// scoring, and the fallback chain.
+    /// scoring, and the fallback chain. Real percentage-based canary traffic splitting: a
+    /// `RolloutStage::Canary(pct)` candidate is a real candidate only for the real fraction `pct`
+    /// of calls [`Self::canary_sampled_in`] deterministically samples in, keyed on this call's
+    /// own real `invocation_id` — the rest fall straight through to the next-best real candidate
+    /// (typically an already-GA implementation), docs/23's own "existing fallback chain still
+    /// live as a safety net."
     pub fn route(&self, invocation: &CapabilityInvocation) -> RoutingDecision {
+        let invocation_id = self.next_invocation_id.fetch_add(1, Ordering::Relaxed);
         let registry = self.registry.lock().unwrap();
         let breaker = self.circuit_breaker.lock().unwrap();
         let weights =
@@ -221,6 +251,12 @@ impl ModelRouter {
         for descriptor in registry.by_capability(&invocation.capability_id) {
             if descriptor.rollout_stage == RolloutStage::Shadow {
                 continue; // scored for telemetry only, never chosen — docs/23 §Algorithms 1
+            }
+            if let RolloutStage::Canary(pct) = descriptor.rollout_stage {
+                if !Self::canary_sampled_in(invocation_id, descriptor.impl_id, pct) {
+                    excluded.push((descriptor.impl_id, ExclusionReason::CanaryNotSampled));
+                    continue;
+                }
             }
 
             // The privacy gate — docs/23 §Architecture: "a gate, not a
@@ -248,7 +284,11 @@ impl ModelRouter {
                 .unwrap_or(0.5);
             let availability_fit = match descriptor.rollout_stage {
                 RolloutStage::Ga => 1.0,
-                RolloutStage::Canary => 0.8,
+                // Same modest discount this crate always applied to a Canary candidate that
+                // survives sampling in — real traffic percentage now genuinely gates *whether*
+                // it's even a candidate this call (above); this keeps the "still less proven
+                // than GA" scoring nudge for the calls where it is.
+                RolloutStage::Canary(_) => 0.8,
                 RolloutStage::Shadow => unreachable!("filtered above"),
             };
             // Circuit breaker: demoted to the bottom, never removed —
@@ -303,7 +343,7 @@ impl ModelRouter {
         };
 
         RoutingDecision {
-            invocation_id: self.next_invocation_id.fetch_add(1, Ordering::Relaxed),
+            invocation_id,
             chosen,
             fallback_chain,
             rationale: Rationale {

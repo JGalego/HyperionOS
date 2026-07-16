@@ -47,13 +47,18 @@ pub enum CostModel {
     PerToken(f64),
 }
 
-/// docs/23 §Data Structures' `RolloutStage`, without the `Canary(f32)`
-/// traffic-percentage payload — see this crate's doc comment on deferred
-/// percentage-based splitting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// docs/23 §Data Structures' `RolloutStage`, now with the real `Canary(f32)` traffic-percentage
+/// payload docs/23 asks for. The `f32` is the real fraction (`0.0..=1.0`) of live invocations
+/// this candidate is even eligible to compete for on a given call — the rest of live traffic
+/// never considers it that call, falling straight through to whatever GA (or other in-sample
+/// Canary) candidates already exist, docs/23's own "existing fallback chain still live as a
+/// safety net" made real rather than a flat, uniform score discount applied to every single call
+/// regardless of the declared percentage. See [`crate::router::ModelRouter::route`]'s own doc
+/// comment for the real, deterministic sampling this drives.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RolloutStage {
     Shadow,
-    Canary,
+    Canary(f32),
     Ga,
 }
 
@@ -108,6 +113,11 @@ pub struct RoutingScore {
 pub enum ExclusionReason {
     PrivacyGate,
     ResourceInfeasible,
+    /// This call's real, deterministic traffic sample landed outside a `RolloutStage::Canary`
+    /// candidate's own declared percentage — unlike `Shadow` (never a candidate at all, scored
+    /// only via a separate path), a `Canary` candidate genuinely is a candidate this cycle, it
+    /// just didn't get real traffic sampled its way this particular call.
+    CanaryNotSampled,
 }
 
 #[derive(Debug, Clone)]
