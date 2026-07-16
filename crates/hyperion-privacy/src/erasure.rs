@@ -133,6 +133,25 @@ pub fn erase(
 ///
 /// Returns every `ActionId` this call really expired, so a caller can log or audit exactly what a
 /// sweep did — never a silent bulk operation with no visible effect.
+///
+/// Capability-checked and Trust-Boundary-scoped (2026-07-16), closing a real gap this function
+/// previously had relative to every other call in this crate: `erase` itself gates on
+/// `RightsMask::WRITE` before doing anything, but this sweep took the identical `monitor`/`token`
+/// pair and never checked them at all — any token, including one with zero rights, could call
+/// this and it would run in full. Worse, `recovery.action_records()` returns every
+/// `ActionRecord` in the whole `RecoveryService`, across every Trust Boundary, and nothing
+/// scoped the sweep to the caller's own — a caller from a different boundary than the one that
+/// ran `erase` could permanently seal (via `RecoveryService::expire`) another boundary's own
+/// still-`Committed` grace period, stripping its undo protection, without ever being authorized
+/// to read or write its objects and without the shred ever completing (the same
+/// `GraphError::NotFound` this function already treats as benign would just silently swallow the
+/// unauthorized `delete_node` attempt below). Now: `require`'d the same way `erase` is, and
+/// scoped via a real `graph.get` check — `hyperion_knowledge_graph::KnowledgeGraph::get`'s own
+/// owner-based ACL (this session's own real enforcement) is reused directly rather than this
+/// crate inventing a second, parallel ownership concept: a record is only ever eligible if every
+/// one of its `objects_touched` is genuinely visible to `token`, the same "only ever touches the
+/// caller's own objects" convention `hyperion-knowledge-graph::prune_decayed_edges` established
+/// for exactly this shape of sweep.
 pub fn expire_lapsed_soft_deletes(
     monitor: &CapabilityMonitor,
     token: &CapabilityToken,
@@ -140,14 +159,20 @@ pub fn expire_lapsed_soft_deletes(
     recovery: &RecoveryService,
     now: u64,
     grace_period_secs: u64,
-) -> Vec<ActionId> {
-    recovery
+) -> Result<Vec<ActionId>, PrivacyError> {
+    require(monitor, token, RightsMask::WRITE)?;
+
+    Ok(recovery
         .action_records()
         .into_iter()
         .filter(|record| {
             record.status == ActionStatus::Committed
                 && record.note == SOFT_DELETE_NOTE
                 && now.saturating_sub(record.created_at) >= grace_period_secs
+                && record
+                    .objects_touched
+                    .iter()
+                    .all(|&id| graph.get(monitor, token, id).is_ok())
         })
         .filter_map(|record| {
             recovery.expire(record.action_id).ok().map(|()| {
@@ -164,5 +189,5 @@ pub fn expire_lapsed_soft_deletes(
                 record.action_id
             })
         })
-        .collect()
+        .collect())
 }

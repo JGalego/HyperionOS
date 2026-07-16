@@ -2136,13 +2136,21 @@ mean here):
   `/mesh-dashboard [port]` role — not itself a delegation participant — polls every discovered
   peer's Agent Card + `/mesh/status` once a second and serves a real, self-contained live page
   (`mesh_dashboard.html`, this crate's first `include_str!` asset) rendering the whole mesh as an
-  animated graph: dashed edges for real, persisted trust, a brief pulse for a delegation that just
-  happened, plus a raw scrolling event log. `scripts/run-mesh-demo.sh` launches six such nodes
-  with distinct/overlapping capabilities plus one dashboard end to end. See
-  [999 — Usage Scenarios](999-usage-scenarios.md) scenario 15 for the full transcript, two real
+  animated graph: nodes colored by which real backend each is dispatching through (a live legend,
+  golden-angle hue spacing so a handful of real providers stay visually distinct), dashed edges
+  for real, persisted trust, a small dot that really travels an edge while a discovery/delegation
+  is in flight, an expanding ring for the side that just got asked something, plus a raw scrolling
+  event log. `scripts/run-mesh-demo.sh` launches six such nodes with distinct/overlapping
+  capabilities across three real cloud providers (Anthropic, OpenAI, Groq — a real, redacted
+  `connect my <provider> account` + `/backend` switch per node) plus one dashboard end to end. See
+  [999 — Usage Scenarios](999-usage-scenarios.md) scenario 15 for the full transcript, four real
   bugs this scenario's own manual verification caught and fixed (a dashboard-startup ordering
-  block, and duplicate "ghost" nodes from one peer's several resolved network interfaces), and an
-  honestly-named open finding about real mDNS convergence speed over some virtualized networks.
+  block, duplicate "ghost" nodes from one peer's several resolved network interfaces, jittering
+  node positions from an unsorted per-refresh `HashMap`, and real cross-peer conversation bleed —
+  `SendMessage` shared one undifferentiated history across every caller until
+  `ConsoleSession::handle_utterance_stateless` isolated each dispatch, see scenario 12's own
+  updated A2A section), and an honestly-named open finding about real mDNS convergence speed over
+  some virtualized networks.
 
 ### Self-Sustaining — degrade safely, recover, come out stronger
 
@@ -3384,3 +3392,29 @@ next step on any of these is a design pass, not code.
   the correct `observed_version` (verified still-tombstoned via `explain`). All pre-existing
   `hyperion-knowledge-graph` tests, including `crdt.rs`'s own tombstone-resurrection property
   test (which uses a single boundary throughout, unaffected), pass unchanged.
+
+- **`hyperion-privacy`'s `expire_lapsed_soft_deletes` capability check + Trust-Boundary scoping,
+  landed (2026-07-16)** — the same "invariant enforced inconsistently within one crate"
+  pattern gaps 43/44 established, found in a different crate this round: `erase()` gates on
+  `RightsMask::WRITE` as its very first line, but `expire_lapsed_soft_deletes` took the identical
+  `monitor`/`token` pair and never checked them at all — any token, including one with zero
+  rights, could call it and it would run in full. Worse, `recovery.action_records()` returns
+  every `ActionRecord` in the whole `RecoveryService` across every Trust Boundary, and nothing
+  scoped the sweep to the caller's own: a caller from a different boundary than the one that ran
+  `erase` could permanently seal (via `RecoveryService::expire`) another boundary's own
+  still-`Committed` grace period — stripping its undo protection — without ever being authorized
+  to read or write its objects, and without the shred ever completing (the existing
+  `GraphError::NotFound`-is-benign convention would just silently swallow the unauthorized
+  `delete_node` attempt). Now `require`'d the same way `erase` is (return type changed to
+  `Result<Vec<ActionId>, PrivacyError>`), and scoped via a real `graph.get` check on every one of
+  a record's `objects_touched` — reusing `hyperion-knowledge-graph`'s own real owner-based ACL
+  (gaps 43/44) directly rather than this crate inventing a second, parallel ownership concept,
+  the same "only ever touches the caller's own objects" convention
+  `hyperion-knowledge-graph::prune_decayed_edges` established for the identical sweep shape.
+  Proven with 2 new tests in `tests/grace_period_expiry.rs`: a read-only token is rejected with
+  `PrivacyError::Unauthorized`; a different Trust Boundary's sweep never expires another
+  boundary's own grace period, even when the record is real, `Committed`, and genuinely past its
+  window — the original boundary's `undo` still fully restores the object afterward. All
+  pre-existing `hyperion-privacy` tests pass unchanged (updated only for the new `Result` return
+  type, no behavior change for same-boundary callers). No other in-tree caller of
+  `expire_lapsed_soft_deletes` exists outside this crate's own tests.

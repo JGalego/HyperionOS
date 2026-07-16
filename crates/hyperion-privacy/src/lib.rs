@@ -108,7 +108,19 @@
 //!   the expired action's `objects_touched`, a genuine tombstone no `get`/`query`/`traverse`/
 //!   `dump` call ever surfaces again — the same real primitive [33 — Rollback &
 //!   Recovery](../33-rollback-recovery.md)'s own `apply_snapshot` undo-path already wires to,
-//!   `GraphError::NotFound` treated as benign the same way.
+//!   `GraphError::NotFound` treated as benign the same way. ~~[`erasure::expire_lapsed_soft_deletes`]
+//!   itself took the same `monitor`/`token` `erase` gates on `RightsMask::WRITE`, but never
+//!   checked them at all, and swept every `ActionRecord` in the whole `RecoveryService` with no
+//!   Trust-Boundary scoping~~ (2026-07-16) — now real: it's `require`'d the same way `erase` is
+//!   (returning `Result<Vec<ActionId>, PrivacyError>`, not a bare `Vec`), and a record is only
+//!   ever eligible if every one of its `objects_touched` is genuinely visible to the caller's
+//!   own token via a real `graph.get` check — reusing `hyperion-knowledge-graph`'s own real
+//!   owner-based ACL directly rather than this crate inventing a second, parallel ownership
+//!   concept, the same "only ever touches the caller's own objects" convention
+//!   `hyperion-knowledge-graph::prune_decayed_edges` established for the identical sweep shape.
+//!   Before this fix, a caller from a different Trust Boundary than the one that ran `erase`
+//!   could permanently seal another boundary's own still-`Committed` grace period — stripping
+//!   its undo protection — without ever being authorized to read or write its objects.
 //! - **`memory.*`/`knowledgeGraph.*` full Inspect/Edit/Export API
 //!   surface** (docs/16 §6) — only `erase` is implemented; `inspect`/
 //!   `edit`/`export` are direct callers of `hyperion-knowledge-graph`'s

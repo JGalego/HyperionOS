@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_knowledge_graph::KnowledgeGraph;
-use hyperion_privacy::{erase, expire_lapsed_soft_deletes, ErasureMode};
+use hyperion_privacy::{erase, expire_lapsed_soft_deletes, ErasureMode, PrivacyError};
 use hyperion_recovery::{RecoveryService, Trigger, UndoScope};
 
 fn setup() -> (
@@ -59,7 +59,8 @@ fn a_soft_delete_within_its_grace_period_is_not_expired() {
         &recovery,
         1_000 + GRACE_PERIOD_SECS - 1,
         GRACE_PERIOD_SECS,
-    );
+    )
+    .unwrap();
     assert!(expired.is_empty());
 
     // Still really undoable.
@@ -97,7 +98,8 @@ fn a_soft_delete_past_its_grace_period_is_expired_and_can_never_be_undone_again(
 
     let now = 1_000 + GRACE_PERIOD_SECS;
     let expired =
-        expire_lapsed_soft_deletes(&monitor, &root, &graph, &recovery, now, GRACE_PERIOD_SECS);
+        expire_lapsed_soft_deletes(&monitor, &root, &graph, &recovery, now, GRACE_PERIOD_SECS)
+            .unwrap();
     assert_eq!(expired, vec![action_id]);
 
     let result = recovery
@@ -148,11 +150,13 @@ fn sweeping_twice_only_expires_each_action_once() {
 
     let now = 1_000 + GRACE_PERIOD_SECS;
     let first_sweep =
-        expire_lapsed_soft_deletes(&monitor, &root, &graph, &recovery, now, GRACE_PERIOD_SECS);
+        expire_lapsed_soft_deletes(&monitor, &root, &graph, &recovery, now, GRACE_PERIOD_SECS)
+            .unwrap();
     assert_eq!(first_sweep, vec![action_id]);
 
     let second_sweep =
-        expire_lapsed_soft_deletes(&monitor, &root, &graph, &recovery, now, GRACE_PERIOD_SECS);
+        expire_lapsed_soft_deletes(&monitor, &root, &graph, &recovery, now, GRACE_PERIOD_SECS)
+            .unwrap();
     assert!(
         second_sweep.is_empty(),
         "an already-Expired action must never be re-expired (it's no longer Committed)"
@@ -190,7 +194,8 @@ fn a_crypto_shred_erasure_has_nothing_for_the_sweep_to_touch() {
         &recovery,
         1_000 + GRACE_PERIOD_SECS,
         GRACE_PERIOD_SECS,
-    );
+    )
+    .unwrap();
     assert!(
         expired.is_empty(),
         "CryptoShred journals nothing, so the sweep must find nothing to expire"
@@ -227,11 +232,86 @@ fn an_unrelated_recovery_action_is_never_swept_even_if_old_enough() {
         &recovery,
         1_000 + GRACE_PERIOD_SECS,
         GRACE_PERIOD_SECS,
-    );
+    )
+    .unwrap();
     assert!(expired.is_empty());
 
     // Still really undoable -- the sweep must not have touched it at all.
     recovery
         .undo(&monitor, &root, UndoScope::SingleAction(action_id))
         .unwrap();
+}
+
+#[test]
+fn expire_lapsed_soft_deletes_requires_write_rights() {
+    let (_dir, mut monitor, root, graph, recovery) = setup();
+    let read_only = monitor
+        .cap_derive(&root, RightsMask::READ, None, TrustBoundaryId(1))
+        .unwrap();
+
+    let result = expire_lapsed_soft_deletes(
+        &monitor,
+        &read_only,
+        &graph,
+        &recovery,
+        1_000 + GRACE_PERIOD_SECS,
+        GRACE_PERIOD_SECS,
+    );
+    assert!(matches!(result, Err(PrivacyError::Unauthorized)));
+}
+
+#[test]
+fn expire_lapsed_soft_deletes_never_expires_a_different_trust_boundarys_grace_period() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut monitor = CapabilityMonitor::new();
+    let boundary_a = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let boundary_b = monitor.mint_root(RightsMask::all(), TrustBoundaryId(2), None);
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let recovery = RecoveryService::new(graph.clone());
+
+    let node = graph
+        .put_node(
+            &monitor,
+            &boundary_a,
+            None,
+            "Note",
+            None,
+            serde_json::json!({"text": "sensitive"}),
+        )
+        .unwrap();
+    let receipt = erase(
+        &monitor,
+        &boundary_a,
+        &graph,
+        &recovery,
+        &[node],
+        ErasureMode::SoftDelete,
+        1_000,
+    )
+    .unwrap();
+    let action_id = receipt.grace_period_action.unwrap();
+
+    // A different Trust Boundary's sweep must never expire boundary_a's own grace period, even
+    // though the record is real, `Committed`, and genuinely past its grace period.
+    let now = 1_000 + GRACE_PERIOD_SECS;
+    let expired = expire_lapsed_soft_deletes(
+        &monitor,
+        &boundary_b,
+        &graph,
+        &recovery,
+        now,
+        GRACE_PERIOD_SECS,
+    )
+    .unwrap();
+    assert!(
+        expired.is_empty(),
+        "a foreign boundary must never be able to seal another boundary's own grace period"
+    );
+
+    // boundary_a's own undo protection must still be fully intact.
+    recovery
+        .undo(&monitor, &boundary_a, UndoScope::SingleAction(action_id))
+        .unwrap();
+    let restored = graph.get(&monitor, &boundary_a, node).unwrap();
+    assert_eq!(restored.metadata["text"], serde_json::json!("sensitive"));
 }
