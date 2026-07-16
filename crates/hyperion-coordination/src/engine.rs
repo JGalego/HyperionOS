@@ -22,11 +22,75 @@ use crate::types::{
 /// failure — escalate").
 const RETRY_LIMIT: u32 = 1;
 
+/// docs/998-roadmap.md's Self-Sustaining pillar: the same "demoted, never removed" threshold
+/// `hyperion-model-router`'s own circuit breaker uses (`CIRCUIT_BREAKER_THRESHOLD`), generalized
+/// here to agent *instances* rather than model implementations — see
+/// [`CoordinationEngine::allocate`]'s own doc comment on where this is applied.
+const REPEAT_OFFENDER_THRESHOLD: u32 = 3;
+
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock before Unix epoch")
         .as_secs()
+}
+
+/// The real ranking key `CoordinationEngine::allocate`'s own existing-participant selection
+/// sorts candidates by (ascending, so `min_by_key` picks the smallest) — docs/998-roadmap.md's
+/// Self-Sustaining pillar, generalizing `hyperion-model-router`'s own circuit breaker's
+/// "demoted to the bottom, never removed" precedent from model implementations to agent
+/// instances. `false < true` in Rust's own `Ord` for `bool`, so any non-repeat-offender always
+/// outranks any repeat offender regardless of load; load only breaks ties *within* each group,
+/// never across them. A pure, directly unit-tested function (see `tests` below) rather than
+/// only exercised indirectly through the full multi-agent allocation pipeline, since naturally
+/// racing two same-specialization instances for the same plan needs a real, live-suspended
+/// participant already in that plan — expensive real-time setup a focused unit test on the
+/// actual decision doesn't need.
+fn ranking_key(times_suspended: u32, task_count: usize) -> (bool, usize) {
+    let is_repeat_offender = times_suspended >= REPEAT_OFFENDER_THRESHOLD;
+    (is_repeat_offender, task_count)
+}
+
+#[cfg(test)]
+mod ranking_key_tests {
+    use super::*;
+
+    #[test]
+    fn a_clean_instance_always_outranks_a_repeat_offender_regardless_of_load() {
+        let idle_repeat_offender = ranking_key(REPEAT_OFFENDER_THRESHOLD, 0);
+        let busy_clean_instance = ranking_key(0, 100);
+        assert!(
+            busy_clean_instance < idle_repeat_offender,
+            "a busy but clean instance must still rank ahead of an idle repeat offender"
+        );
+    }
+
+    #[test]
+    fn load_still_breaks_ties_among_clean_instances() {
+        assert!(ranking_key(0, 1) < ranking_key(0, 5));
+        assert!(ranking_key(1, 0) < ranking_key(1, 2));
+    }
+
+    #[test]
+    fn load_still_breaks_ties_among_repeat_offenders_too() {
+        assert!(
+            ranking_key(REPEAT_OFFENDER_THRESHOLD, 0) < ranking_key(REPEAT_OFFENDER_THRESHOLD, 3),
+            "a repeat offender is demoted, never excluded -- it can still be picked over a \
+             busier repeat offender"
+        );
+    }
+
+    #[test]
+    fn the_threshold_is_inclusive() {
+        assert!(
+            !ranking_key(REPEAT_OFFENDER_THRESHOLD - 1, 0).0,
+            "one suspension short of the threshold is still a clean instance"
+        );
+        assert!(
+            ranking_key(REPEAT_OFFENDER_THRESHOLD, 0).0,
+            "reaching the threshold exactly is already a repeat offender"
+        );
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -284,9 +348,15 @@ impl CoordinationSession {
     /// docs/12 §5.1's scored allocation, fused with immediate execution —
     /// see this crate's doc comment on why claim and execute are not
     /// separate steps here. Ready tasks (no unmet dependency) are matched
-    /// against existing team participants first (least-loaded fit), else a
-    /// fresh instance is spawned; every ready task's assigned capability is
-    /// then dispatched concurrently (not one at a time -- see
+    /// against existing team participants first (least-loaded fit *among
+    /// non-repeat-offenders* — docs/998-roadmap.md's Self-Sustaining pillar: an eligible
+    /// instance whose real, whole-life `QuotaState.times_suspended` has reached
+    /// [`REPEAT_OFFENDER_THRESHOLD`] is demoted to the bottom of this ranking, never excluded
+    /// outright, mirroring `hyperion-model-router`'s own circuit breaker's "demoted, never
+    /// removed" precedent applied here to agent instances instead of model implementations —
+    /// a load-balancing tie among two otherwise-equal repeat offenders is still broken by load,
+    /// just underneath every clean instance), else a fresh instance is spawned; every ready
+    /// task's assigned capability is then dispatched concurrently (not one at a time -- see
     /// [`Self::prepare_dispatches`]/[`Self::apply_dispatch_results`]), and each real result
     /// advances its own task to `Done` or, on failure, into docs/12 §5.4's containment path.
     pub fn allocate(
@@ -386,17 +456,21 @@ impl CoordinationSession {
                             || instance.manifest.requestable_capabilities.contains(c)
                     });
                     let trusted_enough = instance.manifest.trust_tier <= required_trust_tier;
-                    (eligible && has_capabilities && trusted_enough).then_some(id)
+                    (eligible && has_capabilities && trusted_enough)
+                        .then_some((id, instance.quota.times_suspended))
                 })
-                .min_by_key(|&id| {
-                    plan.nodes
+                .min_by_key(|&(id, times_suspended)| {
+                    let task_count = plan
+                        .nodes
                         .iter()
                         .filter(|n| {
                             n.assigned_agent == Some(id)
                                 && matches!(n.status, TaskStatus::Claimed | TaskStatus::InProgress)
                         })
-                        .count()
-                });
+                        .count();
+                    ranking_key(times_suspended, task_count)
+                })
+                .map(|(id, _)| id);
 
             let agent_id = match candidate {
                 Some(id) => id,

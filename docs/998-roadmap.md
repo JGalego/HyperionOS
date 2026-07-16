@@ -2072,11 +2072,22 @@ mean here):
   once — while a genuinely different update for the same subject is untouched by that history.
   Proven end to end with both cases.
 
-**Deliberately still deferred:**
-
-- **A model-router-style "demote, never remove" signal for agent instances generally** — the
-  closest existing precedent (`hyperion-model-router`'s circuit breaker, fed by `report_outcome`)
-  is scoped to model selection only.
+- **A model-router-style "demote, never remove" signal for agent instances, landed (2026-07-16).**
+  `hyperion-coordination::CoordinationEngine::allocate`'s own existing-participant selection used
+  to rank candidates by current load alone. It now generalizes `hyperion-model-router`'s own
+  circuit breaker precedent (previously scoped to model selection only) to agent instances: an
+  eligible instance whose real, whole-life `QuotaState.times_suspended` (already tracked by the
+  Slice 3/3b work above) has reached `REPEAT_OFFENDER_THRESHOLD` (3, the same "3 strikes"
+  convention `hyperion-model-router`'s own `CIRCUIT_BREAKER_THRESHOLD` and this pillar's own
+  `SUCCESS_STREAK_TO_DECAY` already use) is demoted to the bottom of the ranking, never excluded
+  outright — a load-balancing tie among two otherwise-equal repeat offenders is still broken by
+  load, just underneath every clean instance. Needed zero new state: purely a selection-ordering
+  change reading data Slice 3/3b already collects. The ranking decision itself
+  (`ranking_key`) is a small, pure function, directly and thoroughly unit-tested (a full live
+  race between two same-specialization participants needs a real, already-suspended instance in
+  the very same plan — real but expensive setup a focused unit test on the actual decision
+  doesn't need); naturally racing that scenario end-to-end remains a real, separate addition, not
+  attempted here.
 
 ## Backlog
 
