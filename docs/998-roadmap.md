@@ -2890,3 +2890,39 @@ next step on any of these is a design pass, not code.
   same fixed default as before. All pre-existing tests across `hyperion-sdk`,
   `hyperion-plugin-framework`, `hyperion-api-gateway`, `hyperion-scalability`, and
   `hyperion-agent-runtime` pass unchanged.
+
+- **`hyperion-scheduler`'s model-tier degradation, landed (2026-07-16)** (this crate's own named
+  gap: `schedule_epoch`'s non-admit branch had no way to ask "what's a cheaper `ResourceVector`
+  for this capability," since `hyperion-model-router::ImplementationDescriptor` had no
+  resource-cost axis and `TaskDescriptor` had no capability reference to look one up by — a schema
+  change to both crates, not a wiring fix). `hyperion-model-router::types` gains a real
+  `ResourceCost` struct — a narrowed local copy of this crate's own `ResourceVector` shape,
+  deliberately not a shared dependency: `hyperion-scheduler` depends on `hyperion-model-router`
+  (to ask for a cheaper alternative), so a reverse dependency would cycle. `ImplementationDescriptor`
+  gains a real, optional `resource_cost: Option<ResourceCost>` field, and a new
+  `ModelRouter::declared_costs(capability_id)` returns every real, non-`Shadow`,
+  not-circuit-broken registered implementation's declared cost. `hyperion-scheduler::TaskDescriptor`
+  gains a real `capability_ref: Option<String>`, and `Scheduler` gains an optional
+  `Arc<ModelRouter>` field (`Scheduler::new_with_model_router`) — `schedule_epoch`'s non-admit
+  branch now calls a new `try_degrade` that asks the wired router for every declared alternative,
+  sorts by total footprint, and admits at the cheapest one that actually fits the real ledgers,
+  falling back to the pre-existing aging-and-requeue behavior when nothing fits or no router is
+  wired. `hyperion-api-gateway::router_bridge` — the seam that already bridges
+  `hyperion-plugin-framework`'s registry shape to `hyperion-model-router`'s own — gained a new
+  `to_router_resource_cost` adapter so a publisher's own `Implementation.resourceProfile`
+  (gap landed just above) genuinely reaches `declared_costs` field-for-field, not just declared in
+  isolation. `hyperion-agent-runtime::AgentRuntime` — this crate's one real production caller — is
+  the real end-to-end consumer: a new `new_with_netstack_and_plugins_and_memory_and_model_router`
+  constructor wires an optional `ModelRouter` straight into its own `Scheduler`, and
+  `prepare_invoke` now names the invoked capability on every submitted `TaskDescriptor`. 11
+  pre-existing `TaskDescriptor` construction sites and 3 `hyperion-model-router::ImplementationDescriptor`
+  construction sites across the workspace were updated to declare the two new fields explicitly,
+  defaulting to `None` — the exact behavior every existing caller already had. Proven end to end:
+  3 new `hyperion-scheduler` unit tests (a non-fitting task admits at a cheaper registered
+  implementation; a task with no `capability_ref` still ages and requeues; a task with no wired
+  router still ages and requeues), a new `hyperion-api-gateway` unit test on the new adapter, and a
+  new `hyperion-agent-runtime` integration test proving a capability whose own declared
+  `resource_profile` doesn't fit the runtime's ledger is genuinely admitted via a separately
+  registered, cheaper Model Router implementation instead of being refused outright. All
+  pre-existing tests across `hyperion-scheduler`, `hyperion-model-router`, `hyperion-api-gateway`,
+  `hyperion-agent-runtime`, `hyperion-sim`, `hyperion-memory`, and `hyperion-update` pass unchanged.

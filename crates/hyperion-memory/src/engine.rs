@@ -658,6 +658,7 @@ impl MemoryEngine {
                         ..Default::default()
                     },
                     cap_token: token.clone(),
+                    capability_ref: None,
                 },
             )?;
             scheduler.schedule_epoch();

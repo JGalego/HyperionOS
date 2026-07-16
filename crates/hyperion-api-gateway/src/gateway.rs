@@ -745,6 +745,7 @@ mod tests {
                     quality_profile: std::collections::HashMap::new(),
                     declared_latency_ms: 100,
                     rollout_stage: RolloutStage::Ga,
+                    resource_cost: None,
                 },
             )
             .unwrap();
@@ -981,6 +982,7 @@ mod tests {
                         quality_profile: std::collections::HashMap::new(),
                         declared_latency_ms: 100,
                         rollout_stage: RolloutStage::Shadow,
+                        resource_cost: None,
                     },
                 )
                 .unwrap();

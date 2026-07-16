@@ -6,11 +6,10 @@
 //! allocation problem, gated by `hyperion-capability` tokens exactly like
 //! every other Phase 1 resource.
 //!
-//! Two of the doc's algorithms are still not implemented, called out at their call site
-//! (`schedule_epoch`'s non-admitted branch) rather than silently omitted: model-tier degradation
-//! and distributed offload. The doc's own reason for each ("needs Model Router, Phase 3" /
-//! "needs Distributed Execution, Phase 7") is now stale — `hyperion-model-router` and
-//! `hyperion-federation` both exist — but closing either is a real design question, not a
+//! One of the doc's algorithms is still not implemented, called out at its call site
+//! (`schedule_epoch`'s non-admitted branch) rather than silently omitted: distributed offload.
+//! The doc's own reason ("needs Distributed Execution, Phase 7") is now stale —
+//! `hyperion-federation` exists — but closing it is a real design question, not a
 //! dependency-missing wiring gap:
 //!
 //! - **Distributed offload.** `hyperion-federation::FederationHub::dispatch_offload` is real and
@@ -23,15 +22,21 @@
 //!   scheduler instance, not `AgentRuntime`'s, and neither instance is reachable from
 //!   `hyperion-federation` without a new architectural decision about which scheduler a
 //!   federation-aware offload path should actually watch.
-//! - **Model-tier degradation.** `hyperion-model-router::ModelRouter::route` scores registered
-//!   implementations by latency/privacy/cost/quality/availability — it has no resource-cost axis
-//!   at all, so there's no direct way to ask it "what's a cheaper `ResourceVector` for this
-//!   capability." Making this real needs `ImplementationDescriptor` to carry a real resource-cost
-//!   dimension and `TaskDescriptor` to carry a capability reference to look one up by — a schema
-//!   change to both crates, not a wiring fix to this one.
+//! - ~~**Model-tier degradation.**~~ — now real: `hyperion-model-router::ImplementationDescriptor`
+//!   carries a real, optional `ResourceCost` (a narrowed local copy of this crate's own
+//!   `ResourceVector` shape, to avoid a dependency cycle — `hyperion-model-router`'s own doc
+//!   comment on `ResourceCost` explains why), and [`TaskDescriptor::capability_ref`] names which
+//!   capability a task is actually invoking. [`Scheduler::schedule_epoch`]'s non-admit branch now
+//!   asks a wired `ModelRouter` (via [`Scheduler::new_with_model_router`]) for every real,
+//!   non-`Shadow`, not-circuit-broken registered implementation of that capability that declares
+//!   a cost, and admits at the cheapest one that actually fits the real ledgers instead of only
+//!   ever aging and requeuing the original request. `hyperion-agent-runtime::AgentRuntime::
+//!   prepare_invoke` is the real production caller: it now wires an optional `ModelRouter` in
+//!   (`AgentRuntime::new_with_netstack_and_plugins_and_memory_and_model_router`) and names the
+//!   invoked capability on every submitted task.
 //!
-//! Everything that *is* implemented — admission, the ledger, and DRF/EDF dispatch — is exactly
-//! what docs/41-implementation-phases.md's Phase 1 exit criteria require.
+//! Everything else — admission, the ledger, and DRF/EDF dispatch — is exactly what
+//! docs/41-implementation-phases.md's Phase 1 exit criteria require.
 
 mod ledger;
 mod owner;

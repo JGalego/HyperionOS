@@ -7,7 +7,9 @@ description = "Hyperion unified multi-resource scheduler: Weighted-EDF + Dominan
 
 [dependencies]
 hyperion-capability = { workspace = true }
+hyperion-model-router = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+hyperion-ai-runtime = { workspace = true }
 proptest = { workspace = true }

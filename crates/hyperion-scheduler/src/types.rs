@@ -150,6 +150,13 @@ pub struct TaskDescriptor {
     /// Per docs/03-kernel-architecture.md; checked by `submit_task` before
     /// the task is ever queued, per docs/04 §Security Considerations.
     pub cap_token: CapabilityToken,
+    /// This crate's own named "model-tier degradation" gap: which Capability this task is
+    /// actually invoking, if any -- `Scheduler::schedule_epoch`'s non-admit branch reads this to
+    /// ask a wired `hyperion_model_router::ModelRouter` whether a cheaper registered
+    /// implementation for the same capability would fit instead of just aging and requeuing the
+    /// original request. `None` (every existing caller's default, unchanged behavior) for a task
+    /// with no Model-Router-visible capability of its own, or when no router is wired at all.
+    pub capability_ref: Option<String>,
 }
 
 pub(crate) fn owner_of(task: &TaskDescriptor) -> OwnerId {

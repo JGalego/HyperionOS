@@ -104,6 +104,7 @@ pub fn run_demo() -> DemoOutcome {
                         ..Default::default()
                     },
                     cap_token: server_work_token.clone(),
+                    capability_ref: None,
                 };
                 let ticket = {
                     let guard = monitor.lock().unwrap();

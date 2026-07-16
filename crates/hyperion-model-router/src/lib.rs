@@ -77,6 +77,6 @@ pub use registry::ImplementationRegistry;
 pub use router::{ModelRouter, ModelRouterError};
 pub use types::{
     CapabilityInvocation, ConsequenceTier, CostModel, ExclusionReason, ImplId, ImplKind,
-    ImplementationDescriptor, PrivacyTier, Rationale, RolloutStage, RoutingDecision, RoutingScore,
-    UrgencyClass,
+    ImplementationDescriptor, PrivacyTier, Rationale, ResourceCost, RolloutStage, RoutingDecision,
+    RoutingScore, UrgencyClass,
 };

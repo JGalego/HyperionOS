@@ -27,6 +27,7 @@ fn task(
             ..Default::default()
         },
         cap_token,
+        capability_ref: None,
     }
 }
 

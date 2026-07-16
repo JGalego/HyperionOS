@@ -83,6 +83,7 @@ fn register_shadow_candidate(
                 quality_profile: Default::default(),
                 declared_latency_ms: 100,
                 rollout_stage: RolloutStage::Shadow,
+                resource_cost: None,
             },
         )
         .unwrap();

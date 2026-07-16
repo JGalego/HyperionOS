@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use hyperion_capability::{CapabilityMonitor, RightsMask};
+use hyperion_model_router::{ImplId, ModelRouter, ResourceCost};
 
 use crate::ledger::ResourceLedger;
 use crate::owner::OwnerAccount;
@@ -65,11 +67,27 @@ pub struct Scheduler {
     other_ready: Vec<TaskDescriptor>,
     allocations: HashMap<TaskId, Allocation>,
     rationale: HashMap<TaskId, SchedulingRationale>,
+    /// This crate's own named "model-tier degradation" gap — see [`Self::new_with_model_router`].
+    model_router: Option<Arc<ModelRouter>>,
 }
 
 impl Scheduler {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// As [`Self::new`], additionally wiring a real [`ModelRouter`] so [`Self::schedule_epoch`]'s
+    /// non-admit branch can ask it for a cheaper, currently-registered implementation of a task's
+    /// own [`TaskDescriptor::capability_ref`] instead of only ever aging and requeuing a request
+    /// that doesn't fit — this crate's own doc comment's "model-tier degradation" gap, made real.
+    /// `Option`, not a required constructor parameter: most existing callers (this crate's own
+    /// tests, `hyperion-memory`'s private scheduler instance) have no Model Router of their own
+    /// and shouldn't need to acquire one just to satisfy a parameter they'd never use.
+    pub fn new_with_model_router(model_router: Arc<ModelRouter>) -> Self {
+        Scheduler {
+            model_router: Some(model_router),
+            ..Self::default()
+        }
     }
 
     /// `register_resource_provider` — docs/04 §Interfaces / APIs.
@@ -163,7 +181,7 @@ impl Scheduler {
         realtime.sort_by_key(deadline_key);
         for task in realtime {
             match try_admit(&task, &self.ledgers, true) {
-                Some(vector) => report.push(self.admit(task, vector)),
+                Some(vector) => report.push(self.admit(task, vector, "admitted".to_string())),
                 None => report.push(self.miss_realtime_deadline(task)),
             }
         }
@@ -177,24 +195,36 @@ impl Scheduler {
             });
             let task = candidates.remove(0);
             match try_admit(&task, &self.ledgers, false) {
-                Some(vector) => report.push(self.admit(task, vector)),
+                Some(vector) => report.push(self.admit(task, vector, "admitted".to_string())),
                 None => {
-                    // Neither the Model Router (23-multi-model-orchestration.md)
-                    // nor Distributed Execution (21-distributed-execution.md)
-                    // exist yet, so §Algorithms 4/5's degrade-then-offload
-                    // steps aren't implemented — every non-fitting task ages
-                    // and is retried next epoch instead (§Recovery Mechanisms).
-                    let ticket = task.id;
-                    let mut aged = task;
-                    aged.priority_weight += AGING_STEP;
-                    let rationale = SchedulingRationale {
-                        ticket,
-                        admitted: false,
-                        note: "did not fit this epoch; aged and requeued".to_string(),
-                    };
-                    self.rationale.insert(ticket, rationale.clone());
-                    report.push(rationale);
-                    self.other_ready.push(aged);
+                    // Distributed Execution (21-distributed-execution.md) still doesn't have a
+                    // real trigger reaching this branch — see this crate's own doc comment.
+                    // Model-tier degradation (23-multi-model-orchestration.md) is real now: a
+                    // wired ModelRouter is asked for a cheaper registered implementation of this
+                    // task's own capability before falling back to aging and requeuing.
+                    match self.try_degrade(&task) {
+                        Some((impl_id, vector)) => {
+                            let note = format!(
+                                "did not fit at its own declared request; admitted at cheaper \
+                                 registered implementation {} instead",
+                                impl_id.0
+                            );
+                            report.push(self.admit(task, vector, note));
+                        }
+                        None => {
+                            let ticket = task.id;
+                            let mut aged = task;
+                            aged.priority_weight += AGING_STEP;
+                            let rationale = SchedulingRationale {
+                                ticket,
+                                admitted: false,
+                                note: "did not fit this epoch; aged and requeued".to_string(),
+                            };
+                            self.rationale.insert(ticket, rationale.clone());
+                            report.push(rationale);
+                            self.other_ready.push(aged);
+                        }
+                    }
                 }
             }
         }
@@ -202,7 +232,33 @@ impl Scheduler {
         report
     }
 
-    fn admit(&mut self, task: TaskDescriptor, vector: ResourceVector) -> SchedulingRationale {
+    /// This crate's own named "model-tier degradation" gap, made real: when `task` didn't fit at
+    /// its own declared [`TaskDescriptor::request`], ask the wired [`ModelRouter`] (if any) for
+    /// every real, currently-registered, non-circuit-broken implementation of `task`'s own
+    /// [`TaskDescriptor::capability_ref`] (if any) that declares a resource cost, and return the
+    /// cheapest one (by total declared footprint) that actually fits the real ledgers — never an
+    /// invented substitute. `None` if no router is wired, the task names no capability, or
+    /// nothing registered for it fits either.
+    fn try_degrade(&self, task: &TaskDescriptor) -> Option<(ImplId, ResourceVector)> {
+        let model_router = self.model_router.as_ref()?;
+        let capability_ref = task.capability_ref.as_deref()?;
+        let mut candidates: Vec<(ImplId, ResourceVector)> = model_router
+            .declared_costs(capability_ref)
+            .into_iter()
+            .map(|(impl_id, cost)| (impl_id, from_declared_cost(cost)))
+            .collect();
+        candidates.sort_by_key(|(_, vector)| total_footprint(vector));
+        candidates
+            .into_iter()
+            .find(|(_, vector)| fits(vector, &self.ledgers, false))
+    }
+
+    fn admit(
+        &mut self,
+        task: TaskDescriptor,
+        vector: ResourceVector,
+        note: String,
+    ) -> SchedulingRationale {
         let ticket = task.id;
         let owner = owner_of(&task);
         for (dim, amount) in vector.iter_dimensions() {
@@ -221,7 +277,7 @@ impl Scheduler {
         let rationale = SchedulingRationale {
             ticket,
             admitted: true,
-            note: "admitted".to_string(),
+            note,
         };
         self.rationale.insert(ticket, rationale.clone());
         rationale
@@ -256,21 +312,61 @@ impl Scheduler {
     }
 }
 
+/// Whether `vector` fits against `ledgers`' remaining headroom — every dimension `vector`
+/// requests a nonzero amount of must both have a registered ledger and have room, exactly
+/// [`try_admit`]'s own per-task check, factored out so [`Scheduler::try_degrade`] can run the
+/// identical real admission check against a substitute vector instead of a task's own request.
+fn fits(
+    vector: &ResourceVector,
+    ledgers: &HashMap<ResourceDimension, ResourceLedger>,
+    use_reserved: bool,
+) -> bool {
+    for (dim, want) in vector.iter_dimensions() {
+        if want == 0 {
+            continue;
+        }
+        let Some(ledger) = ledgers.get(&dim) else {
+            return false;
+        };
+        if ledger.allocated.saturating_add(want) > ledger.headroom(use_reserved) {
+            return false;
+        }
+    }
+    true
+}
+
 fn try_admit(
     task: &TaskDescriptor,
     ledgers: &HashMap<ResourceDimension, ResourceLedger>,
     use_reserved: bool,
 ) -> Option<ResourceVector> {
-    for (dim, want) in task.request.iter_dimensions() {
-        if want == 0 {
-            continue;
-        }
-        let ledger = ledgers.get(&dim)?;
-        if ledger.allocated.saturating_add(want) > ledger.headroom(use_reserved) {
-            return None;
-        }
+    fits(&task.request, ledgers, use_reserved).then_some(task.request)
+}
+
+/// Field-for-field conversion from `hyperion-model-router`'s own narrowed
+/// [`hyperion_model_router::ResourceCost`] to this crate's [`ResourceVector`] — see
+/// `hyperion_model_router::types::ResourceCost`'s own doc comment for why this lives here
+/// (this crate depends on that one, never the reverse) rather than as a shared type.
+fn from_declared_cost(cost: ResourceCost) -> ResourceVector {
+    ResourceVector {
+        cpu_shares: cost.cpu_shares,
+        ram_mb: cost.ram_mb,
+        gpu_shares: cost.gpu_shares,
+        vram_mb: cost.vram_mb,
+        storage_iops: cost.storage_iops,
+        network_bw_kbps: cost.network_bw_kbps,
+        inference_tokens_per_sec: cost.inference_tokens_per_sec,
+        context_window_slots: cost.context_window_slots,
+        battery_budget_mw: cost.battery_budget_mw,
     }
-    Some(task.request)
+}
+
+/// The ranking [`Scheduler::try_degrade`] picks the *cheapest* fitting alternative by — summed
+/// across every dimension, since which single dimension is scarce varies per ledger
+/// configuration and this is only used to order candidates, never to check admission itself
+/// ([`fits`] does that, per-dimension, against the real ledgers).
+fn total_footprint(vector: &ResourceVector) -> u64 {
+    vector.iter_dimensions().map(|(_, v)| u64::from(v)).sum()
 }
 
 fn remove_by_id(queue: &mut Vec<TaskDescriptor>, ticket: Ticket) -> bool {

@@ -36,6 +36,7 @@ fn cloud_descriptor(impl_id: u64, capability_id: &str, quality: f32) -> Implemen
         quality_profile,
         declared_latency_ms: 200,
         rollout_stage: RolloutStage::Ga,
+        resource_cost: None,
     }
 }
 
@@ -58,6 +59,7 @@ fn native_descriptor(
         quality_profile,
         declared_latency_ms: latency_ms,
         rollout_stage: RolloutStage::Ga,
+        resource_cost: None,
     }
 }
 

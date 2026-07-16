@@ -8,8 +8,8 @@ use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use crate::registry::{CircuitBreaker, ImplementationRegistry};
 use crate::types::{
     CapabilityInvocation, ConsequenceTier, CostModel, ExclusionReason, ImplId, ImplKind,
-    ImplementationDescriptor, PrivacyTier, Rationale, RolloutStage, RoutingDecision, RoutingScore,
-    UrgencyClass,
+    ImplementationDescriptor, PrivacyTier, Rationale, ResourceCost, RolloutStage, RoutingDecision,
+    RoutingScore, UrgencyClass,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -159,6 +159,25 @@ impl ModelRouter {
         } else {
             breaker.record_failure(impl_id);
         }
+    }
+
+    /// `hyperion-scheduler`'s own named "model-tier degradation" gap, made real: every real,
+    /// non-`Shadow`, not-circuit-broken registered implementation for `capability_id` that
+    /// declares a resource cost. `Scheduler::schedule_epoch`'s non-admit branch is the real
+    /// caller — it reads this looking for a cheaper tier to retry admission with instead of
+    /// just aging and requeuing the original request forever. Deliberately not `route()`'s own
+    /// scoring pipeline: degradation needs "what would fit," not "what scores best," and has no
+    /// `CapabilityInvocation` (urgency/consequence/consent) to score against in the first place.
+    pub fn declared_costs(&self, capability_id: &str) -> Vec<(ImplId, ResourceCost)> {
+        let breaker = self.circuit_breaker.lock().unwrap();
+        self.registry
+            .lock()
+            .unwrap()
+            .by_capability(capability_id)
+            .filter(|d| d.rollout_stage != RolloutStage::Shadow)
+            .filter(|d| !breaker.is_open(d.impl_id))
+            .filter_map(|d| d.resource_cost.map(|cost| (d.impl_id, cost)))
+            .collect()
     }
 
     fn latency_fit(&self, descriptor: &ImplementationDescriptor, budget_ms: u64) -> f32 {

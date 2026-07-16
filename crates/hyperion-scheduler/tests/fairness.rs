@@ -34,6 +34,7 @@ fn cpu_task(
             ..Default::default()
         },
         cap_token,
+        capability_ref: None,
     }
 }
 

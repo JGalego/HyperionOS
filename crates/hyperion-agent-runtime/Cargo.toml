@@ -13,6 +13,7 @@ hyperion-capability = { workspace = true }
 # docs/998-roadmap.md's Self-Sustaining pillar's "cross-session learning" slice. See
 # `AgentRuntime::spawn`'s own doc comment for what a fresh instance actually does with it.
 hyperion-memory = { workspace = true }
+hyperion-model-router = { workspace = true }
 hyperion-netstack = { workspace = true }
 # Real, optional (Option<Arc<...>>, same shape as `NetstackHub` below) dispatch to an installed
 # plugin's own real `NativeBinary` implementation when `capability_ref` isn't one of this crate's

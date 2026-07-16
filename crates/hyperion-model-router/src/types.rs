@@ -62,6 +62,25 @@ pub enum RolloutStage {
     Ga,
 }
 
+/// A narrowed, local copy of `hyperion_scheduler::ResourceVector`'s shape — this crate's own
+/// declared "what would admitting this implementation cost the Scheduler" axis. Deliberately not
+/// a dependency on that crate: `hyperion-scheduler` is the one that depends on
+/// `hyperion-model-router` (to ask "is there a cheaper registered implementation for this
+/// capability"), so a reverse dependency here would cycle. `hyperion-scheduler`'s own
+/// model-tier-degradation caller converts between the two shapes field-for-field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ResourceCost {
+    pub cpu_shares: u32,
+    pub ram_mb: u32,
+    pub gpu_shares: u32,
+    pub vram_mb: u32,
+    pub storage_iops: u32,
+    pub network_bw_kbps: u32,
+    pub inference_tokens_per_sec: u32,
+    pub context_window_slots: u32,
+    pub battery_budget_mw: u32,
+}
+
 /// docs/23 §Data Structures' `ImplementationDescriptor`, narrowed per this
 /// crate's doc comment (no `trust_level`/`owning_plugin` — Plugin Framework
 /// doesn't exist yet).
@@ -81,6 +100,11 @@ pub struct ImplementationDescriptor {
     /// estimated via `hyperion-ai-runtime` instead.
     pub declared_latency_ms: u64,
     pub rollout_stage: RolloutStage,
+    /// `hyperion-scheduler`'s own named "model-tier degradation" gap: what this implementation
+    /// would cost the real Scheduler admission ledgers, if known. `None` for implementations that
+    /// never draw against the Scheduler at all (e.g. a `CloudApi` candidate whose cost is purely
+    /// `cost_model`, not local resource contention) — honest absence, not zero cost.
+    pub resource_cost: Option<ResourceCost>,
 }
 
 /// docs/23 §Data Structures' `CapabilityInvocation`, narrowed to what this

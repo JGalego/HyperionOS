@@ -39,6 +39,7 @@ fn descriptor(impl_id: u64, capability_id: &str) -> ImplementationDescriptor {
         // separately promote via `set_rollout_stage`, matching every real caller's own two-step
         // registration+promotion flow.
         rollout_stage: RolloutStage::Shadow,
+        resource_cost: None,
     }
 }
 

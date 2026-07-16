@@ -2,12 +2,14 @@ use hyperion_explainability::{Alternative, ConfidenceMethod, ConfidenceScore};
 use hyperion_model_router::{
     CapabilityInvocation, ConsequenceTier, CostModel, ExclusionReason, ImplId,
     ImplKind as RouterImplKind, ImplementationDescriptor as RouterImplementationDescriptor,
-    PrivacyTier as RouterPrivacyTier, RolloutStage, RoutingDecision, UrgencyClass,
+    PrivacyTier as RouterPrivacyTier, ResourceCost as RouterResourceCost, RolloutStage,
+    RoutingDecision, UrgencyClass,
 };
 use hyperion_plugin_framework::{
     ImplementationDescriptor as PluginImplementationDescriptor,
     ImplementationKind as PluginImplKind, PrivacyTier as PluginPrivacyTier,
 };
+use hyperion_scheduler::ResourceVector;
 use hyperion_security::InterventionLevel;
 
 /// Bridges `hyperion-plugin-framework`'s registry shape to
@@ -40,6 +42,29 @@ fn to_router_privacy_tier(tier: PluginPrivacyTier) -> RouterPrivacyTier {
         PluginPrivacyTier::Local => RouterPrivacyTier::Local,
         PluginPrivacyTier::ConsentedCloud => RouterPrivacyTier::ConsentedCloud,
     }
+}
+
+/// The same kind of narrow adapter as [`to_router_kind`]/[`to_router_privacy_tier`], for
+/// `hyperion_scheduler::ResourceVector` -- `hyperion-scheduler`'s own named "model-tier
+/// degradation" gap: a publisher's own declared `Implementation.resourceProfile` now genuinely
+/// reaches `ModelRouter::declared_costs`, so `Scheduler::schedule_epoch` can find a real,
+/// registered cheaper implementation instead of only ever aging and requeuing a task that
+/// doesn't fit. Field-for-field, not a dependency in either direction between the two crates:
+/// `hyperion-scheduler` depends on `hyperion-model-router`, not on `hyperion-plugin-framework` or
+/// this gateway, so this conversion has to live at the one seam that already depends on both
+/// shapes.
+fn to_router_resource_cost(cost: Option<ResourceVector>) -> Option<RouterResourceCost> {
+    cost.map(|c| RouterResourceCost {
+        cpu_shares: c.cpu_shares,
+        ram_mb: c.ram_mb,
+        gpu_shares: c.gpu_shares,
+        vram_mb: c.vram_mb,
+        storage_iops: c.storage_iops,
+        network_bw_kbps: c.network_bw_kbps,
+        inference_tokens_per_sec: c.inference_tokens_per_sec,
+        context_window_slots: c.context_window_slots,
+        battery_budget_mw: c.battery_budget_mw,
+    })
 }
 
 /// `plugin_id` doubles as the router's `ImplId` — both are already plain
@@ -75,6 +100,9 @@ pub(crate) fn to_router_descriptor(
         quality_profile,
         declared_latency_ms: 200,
         rollout_stage: RolloutStage::Ga,
+        // A publisher's own real, declared `Implementation.resourceProfile` -- see
+        // `to_router_resource_cost`'s own doc comment.
+        resource_cost: to_router_resource_cost(descriptor.resource_profile),
     }
 }
 
@@ -228,5 +256,28 @@ mod tests {
         let cloud =
             to_router_descriptor(&descriptor(PluginPrivacyTier::ConsentedCloud), "web.search");
         assert_eq!(cloud.privacy_tier, RouterPrivacyTier::ConsentedCloud);
+    }
+
+    #[test]
+    fn a_manifests_real_declared_resource_profile_really_reaches_the_bridged_descriptor() {
+        let mut with_profile = descriptor(PluginPrivacyTier::Local);
+        with_profile.resource_profile = Some(ResourceVector {
+            inference_tokens_per_sec: 42,
+            ram_mb: 7,
+            ..Default::default()
+        });
+        let bridged = to_router_descriptor(&with_profile, "web.search");
+        let cost = bridged
+            .resource_cost
+            .expect("a declared resource_profile must bridge to a real declared resource_cost");
+        assert_eq!(cost.inference_tokens_per_sec, 42);
+        assert_eq!(cost.ram_mb, 7);
+
+        let without_profile =
+            to_router_descriptor(&descriptor(PluginPrivacyTier::Local), "web.search");
+        assert_eq!(
+            without_profile.resource_cost, None,
+            "no declared resource_profile must bridge to a real, honest None, not an invented cost"
+        );
     }
 }

@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_memory::{MemoryEngine, MemoryFilter, MemoryTier};
+use hyperion_model_router::ModelRouter;
 use hyperion_netstack::{FreshnessPolicy, NetstackHub, WebResolutionRequest};
 use hyperion_plugin_framework::PluginRegistry;
 use hyperion_scheduler::{
@@ -182,7 +183,28 @@ impl AgentRuntime {
         plugins: Option<Arc<PluginRegistry>>,
         memory: Option<Arc<MemoryEngine>>,
     ) -> Self {
-        let mut scheduler = Scheduler::new();
+        Self::new_with_netstack_and_plugins_and_memory_and_model_router(
+            ai_runtime, netstack, plugins, memory, None,
+        )
+    }
+
+    /// As [`Self::new_with_netstack_and_plugins_and_memory`], additionally wiring a real
+    /// [`ModelRouter`] into this instance's own [`Scheduler`] so `prepare_invoke`'s admission
+    /// check can find a cheaper registered implementation of an invoked capability instead of
+    /// only ever aging and requeuing a request that doesn't fit -- `hyperion-scheduler`'s own
+    /// named "model-tier degradation" gap, closed for real at this crate's one real production
+    /// caller.
+    pub fn new_with_netstack_and_plugins_and_memory_and_model_router(
+        ai_runtime: Arc<LocalAiRuntime>,
+        netstack: Option<Arc<NetstackHub>>,
+        plugins: Option<Arc<PluginRegistry>>,
+        memory: Option<Arc<MemoryEngine>>,
+        model_router: Option<Arc<ModelRouter>>,
+    ) -> Self {
+        let mut scheduler = match model_router {
+            Some(model_router) => Scheduler::new_with_model_router(model_router),
+            None => Scheduler::new(),
+        };
         // One nominal dimension stands in for "a Capability invocation's
         // resource footprint" — `DEFAULT_QUOTA` reused as the ledger's
         // capacity keeps this the same number `QuotaState` always used,
@@ -618,6 +640,11 @@ impl AgentRuntime {
                     priority_weight: 1.0,
                     request,
                     cap_token: token.clone(),
+                    // `hyperion-scheduler`'s own named "model-tier degradation" gap: naming the
+                    // real capability lets `Scheduler::schedule_epoch` ask a wired ModelRouter for
+                    // a cheaper registered implementation instead of only ever aging and requeuing
+                    // a request that doesn't fit.
+                    capability_ref: Some(capability_ref.to_string()),
                 },
             )
             .map_err(|_| AgentError::Unauthorized)?;
