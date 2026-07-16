@@ -8,7 +8,7 @@ use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_explainability::{
     ControlState, ExplanationId, ExplanationRecord, ExplanationStore, ReasoningStep,
 };
-use hyperion_intent::{ExecutionTicket, IntentEngine};
+use hyperion_intent::{ExecutionTicket, IntentEngine, IntentStatus};
 use hyperion_knowledge_graph::{EdgeOrigin, KnowledgeGraph, NodeId};
 
 use crate::catalog::{
@@ -271,6 +271,12 @@ pub struct CoordinationSession {
     /// `ExplanationId` per tick (see [`Self::prepare_dispatches`]), so this is deliberately "most
     /// recent," not a single id that lives for a task's whole history.
     last_explanation_by_task: Mutex<HashMap<NodeId, ExplanationId>>,
+    /// `hyperion-intent`'s own named "conflict detection across active graphs" write-back
+    /// prerequisite: real, optional (the same `Option<Arc<...>>` shape this session already uses
+    /// for `recovery`) so [`Self::apply_dispatch_results`] can record a task's own real Intent
+    /// leaf as genuinely `Completed` once its real dispatch succeeds -- see
+    /// [`Self::with_intent_engine`]'s own doc comment for what wiring one in actually does.
+    intent_engine: Option<Arc<IntentEngine>>,
 }
 
 impl CoordinationSession {
@@ -302,6 +308,7 @@ impl CoordinationSession {
             explanations,
             recovery: None,
             last_explanation_by_task: Mutex::new(HashMap::new()),
+            intent_engine: None,
         }
     }
 
@@ -325,6 +332,19 @@ impl CoordinationSession {
     /// constructors for every independent optional dependency.
     pub fn with_recovery(mut self, recovery: Arc<hyperion_recovery::RecoveryService>) -> Self {
         self.recovery = Some(recovery);
+        self
+    }
+
+    /// Opts this session into writing a task's own real Intent leaf status back into
+    /// `hyperion-intent`'s own graph once real dispatch resolves it -- `hyperion-intent`'s own
+    /// named "conflict detection across active graphs" gap named this write-back as the missing
+    /// prerequisite: nothing ever recorded a leaf's real outcome past decomposition time, so
+    /// conflict detection would have had nothing genuine to compare. `apply_dispatch_results`
+    /// is the real writer, on a real `Done` outcome; a best-effort write, like this session's own
+    /// graph/recovery writes in that same code path -- a hiccup here never fails the dispatch
+    /// itself.
+    pub fn with_intent_engine(mut self, intent_engine: Arc<IntentEngine>) -> Self {
+        self.intent_engine = Some(intent_engine);
         self
     }
 
@@ -824,6 +844,17 @@ impl CoordinationSession {
                         }
                     }
                     Self::bump_partition_version(plan, d.task_id);
+                    // `hyperion-intent`'s own named "conflict detection across active graphs"
+                    // write-back prerequisite -- best-effort, like the graph/recovery writes
+                    // above: never fails this dispatch over an intent-engine hiccup.
+                    if let Some(intent_engine) = &self.intent_engine {
+                        let _ = intent_engine.mark_status(
+                            monitor,
+                            token,
+                            d.task_id,
+                            IntentStatus::Completed,
+                        );
+                    }
                     (ControlState::Completed, TaskStatus::Done)
                 }
                 InvokeOutcome::Failed(_) => {

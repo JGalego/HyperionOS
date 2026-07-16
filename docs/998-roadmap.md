@@ -3042,3 +3042,25 @@ next step on any of these is a design pass, not code.
   unchanged (one pre-existing, unrelated `real_web_fetch.rs` timeout-classification test remains
   environment-flaky in this sandbox, confirmed via `git stash` to fail identically without this
   change).
+
+- **`hyperion-intent`'s "conflict detection across active graphs" write-back prerequisite, landed
+  (2026-07-16)** (this crate's own named gap: "needs multiple concurrently-*executing* Intents
+  with real Agents mid-execution... for 'exclusive-resource conflict' to mean anything real" —
+  auditing this found the real *prerequisite* still missing even where the precondition,
+  `hyperion-coordination`, already exists: nothing ever wrote a leaf's real dispatch outcome back
+  into its own Intent status past decomposition time). A new `IntentEngine::mark_status` is the
+  same real read-modify-write `abandon_subtree`/`bump_version` already use, exposed for a real
+  external caller. `CoordinationSession` gains an optional `Arc<IntentEngine>` field via a new
+  `with_intent_engine` builder (the same `Option<Arc<...>>`/builder shape `with_recovery` already
+  established) — `apply_dispatch_results`'s own real `Done` branch now calls `mark_status(...,
+  IntentStatus::Completed)` best-effort, alongside its existing graph/recovery writes in that same
+  code path, never failing the dispatch itself over a hiccup. `TaskNode.task_id` is already
+  literally the Intent leaf's own `NodeId` (`create_session` sets it directly from the leaf), so
+  no new identity mapping was needed. Real conflict detection itself — comparing genuinely
+  `Executing` leaves across *multiple* active graphs — remains open; this closes only the
+  write-back half that any such detection would need real data from. Proven with a new
+  `hyperion-intent` unit test (`mark_status` really transitions status and bumps `updated_at`,
+  leaving every other leaf untouched) and a new `hyperion-coordination` integration test (a real
+  dispatch through a wired `IntentEngine` genuinely lands `IntentStatus::Completed` on the correct
+  leaf, leaving an undispatched sibling `Planned`). All pre-existing tests in both crates pass
+  unchanged.

@@ -293,3 +293,50 @@ fn adding_a_dependency_that_would_cycle_is_rejected_before_persisting() {
     let result = engine.add_dependency(&monitor, &token, market_research, market_research);
     assert!(matches!(result, Err(IntentError::CyclicDependency)));
 }
+
+/// This crate's own named "conflict detection across active graphs" write-back prerequisite:
+/// a real caller (`hyperion-coordination`'s own dispatch pipeline) can now record a leaf's real
+/// outcome instead of that status sitting frozen at whatever decomposition originally set.
+#[test]
+fn mark_status_really_transitions_a_leafs_status_and_bumps_updated_at() {
+    let (_dir, monitor, token, engine, _graph) = setup();
+    let root = match engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "session-1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+    let graph = engine.get_graph(&monitor, &token, root).unwrap();
+    let market_research = graph
+        .iter()
+        .find(|i| i.predicate == "market_research")
+        .unwrap();
+    assert_eq!(market_research.status, IntentStatus::Executing);
+    let updated_at_before = market_research.updated_at;
+    let market_research_id = market_research.id;
+
+    engine
+        .mark_status(
+            &monitor,
+            &token,
+            market_research_id,
+            IntentStatus::Completed,
+        )
+        .unwrap();
+
+    let graph = engine.get_graph(&monitor, &token, root).unwrap();
+    let market_research = graph.iter().find(|i| i.id == market_research_id).unwrap();
+    assert_eq!(market_research.status, IntentStatus::Completed);
+    assert!(
+        market_research.updated_at >= updated_at_before,
+        "a real status transition must really bump updated_at"
+    );
+
+    // Every other leaf is genuinely untouched.
+    let legal = graph
+        .iter()
+        .find(|i| i.predicate == "legal_formation")
+        .unwrap();
+    assert_eq!(legal.status, IntentStatus::Planned);
+}

@@ -627,6 +627,29 @@ impl IntentEngine {
         Ok(())
     }
 
+    /// docs/05 §6's own named "conflict detection across active graphs" prerequisite, made real:
+    /// once `submit()` hands an Intent leaf's execution off, nothing in this crate's own real API
+    /// surface ever transitions its `status` again -- `hyperion-coordination`'s own real dispatch
+    /// pipeline (the one real caller with a genuine "this leaf just finished for real" signal) is
+    /// the intended caller, via a new, optional `Arc<IntentEngine>` it can wire in. Real conflict
+    /// detection itself (comparing genuinely `Executing` leaves across active graphs) remains a
+    /// separate, larger piece this alone doesn't build -- this closes only the write-back half:
+    /// a real caller can now record what actually happened, which is the piece that was missing
+    /// before any conflict-detection logic could have anything real to compare.
+    pub fn mark_status(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        id: NodeId,
+        status: IntentStatus,
+    ) -> Result<(), IntentError> {
+        let mut intent = self.get_intent(monitor, token, id)?;
+        intent.status = status;
+        intent.updated_at = now();
+        self.put_intent(monitor, token, Some(id), &intent)?;
+        Ok(())
+    }
+
     /// Every outgoing `depends_on` edge from `node` — docs/05 §4's
     /// `TaskNode.dependencies` equivalent, public so
     /// `hyperion-coordination` (or any other consumer building a task

@@ -54,7 +54,15 @@
 //! - **Conflict detection across active graphs** (docs/05 §6) — needs
 //!   multiple concurrently-*executing* Intents with real Agents mid-
 //!   execution ([12 — Multi-Agent Coordination](../12-multi-agent-coordination.md),
-//!   Phase 4) for "exclusive-resource conflict" to mean anything real.
+//!   Phase 4) for "exclusive-resource conflict" to mean anything real. Its own real
+//!   prerequisite is now closed: a leaf's `status` used to freeze at whatever decomposition set
+//!   it, with nothing real ever transitioning it again once execution actually started elsewhere.
+//!   [`engine::IntentEngine::mark_status`] is a new, real write-back `hyperion-coordination`'s own
+//!   dispatch pipeline calls (via `CoordinationSession::with_intent_engine`) the moment a task's
+//!   real dispatch completes, so a leaf's `status` now genuinely reflects `IntentStatus::
+//!   Completed` in this crate's own graph, not only `TaskStatus::Done` in coordination's separate
+//!   `SharedPlan`. Real conflict detection itself — comparing genuinely `Executing` leaves across
+//!   *multiple* active graphs — remains a separate, larger piece this alone doesn't build.
 //! - **Using Working Memory as a real grounding signal.**
 //!   [`engine::IntentEngine::handle_utterance`] now pushes every real
 //!   utterance into a real `hyperion_memory::WorkingMemory` turn buffer

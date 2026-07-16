@@ -17,7 +17,7 @@ use hyperion_context::ContextEngine;
 use hyperion_coordination::{ConflictResolution, CoordError, CoordinationSession, TaskStatus};
 use hyperion_crypto::Keystore;
 use hyperion_explainability::ControlState;
-use hyperion_intent::{HandleOutcome, IntentEngine};
+use hyperion_intent::{HandleOutcome, IntentEngine, IntentStatus};
 use hyperion_knowledge_graph::KnowledgeGraph;
 
 fn setup() -> (
@@ -191,6 +191,74 @@ fn launch_trace_completes_all_tasks_across_ticks_respecting_dependencies() {
         2,
         "one research + one writer instance, reused across tasks"
     );
+}
+
+/// `hyperion-intent`'s own named "conflict detection across active graphs" write-back
+/// prerequisite: with a real `IntentEngine` wired in via `with_intent_engine`, a real completed
+/// dispatch now genuinely transitions the task's own Intent leaf to `IntentStatus::Completed` --
+/// not just `TaskStatus::Done` in this crate's own `SharedPlan`.
+#[test]
+fn a_wired_intent_engine_receives_a_real_completed_status_write_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut monitor = CapabilityMonitor::new();
+    let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let context = Arc::new(ContextEngine::new(graph.clone()));
+    let intent_engine = Arc::new(IntentEngine::new(graph.clone(), context));
+    let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+
+    let key_dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&key_dir.path().join("device.key")).unwrap();
+    let mut descriptor = ModelDescriptor {
+        model_id: 1,
+        class: ModelClass::Slm,
+        variants: vec![QuantizedVariant {
+            precision: Precision::Fp16,
+            footprint_mb: 100,
+            expected_tokens_per_sec: 10.0,
+        }],
+        signature: None,
+    };
+    descriptor.signature = Some(sign(&descriptor, &keystore));
+    ai_runtime
+        .register_model(descriptor, &keystore.verifying_key())
+        .expect("a descriptor this test just signed always verifies");
+
+    let coordination = CoordinationSession::new(Arc::new(AgentRuntime::new(ai_runtime)), graph)
+        .with_intent_engine(intent_engine.clone());
+
+    let root = match intent_engine
+        .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")
+        .unwrap()
+    {
+        HandleOutcome::Submitted(id) => id,
+        other => panic!("expected Submitted, got {other:?}"),
+    };
+    let session = coordination
+        .create_session(
+            &monitor,
+            &token,
+            &intent_engine,
+            &intent_engine.submit(&monitor, &token, root).unwrap(),
+        )
+        .unwrap();
+
+    coordination.allocate(&monitor, &token, session).unwrap(); // tick 1: market_research Done
+
+    let plan = coordination.get_plan(&monitor, &token, session).unwrap();
+    let market_research_id = task_named(&plan, "market_research").task_id;
+
+    let intents = intent_engine.get_graph(&monitor, &token, root).unwrap();
+    let market_research_intent = intents.iter().find(|i| i.id == market_research_id).unwrap();
+    assert_eq!(
+        market_research_intent.status,
+        IntentStatus::Completed,
+        "a real completed dispatch must write the leaf's own real status back"
+    );
+
+    // A leaf that hasn't dispatched yet is genuinely untouched.
+    let branding_intent = intents.iter().find(|i| i.predicate == "branding").unwrap();
+    assert_eq!(branding_intent.status, IntentStatus::Planned);
 }
 
 /// `hyperion-console`'s own real use case: knowing which tasks are *about* to run before the
