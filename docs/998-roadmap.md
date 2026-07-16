@@ -2948,3 +2948,23 @@ next step on any of these is a design pass, not code.
   `0.6`, real leaves are recorded, and at least one leaf's predicate is genuinely derived from the
   model's own (mocked) response text — not an invented label. All 22 pre-existing
   `hyperion-intent` tests pass unchanged.
+
+- **`hyperion-observability`'s background scheduled chain verification, landed (2026-07-16)**
+  (this crate's own named gap: "`AuditLedger::verify_chain` is on-demand only, not run on a
+  background schedule" — the ring-buffer write-ahead-spill half of that same bullet remains
+  separately deferred). A new `AuditLedger::start_periodic_verification(interval)` spawns a real
+  background thread that re-invokes `verify_chain` over the whole chain every real `interval`,
+  mirroring `hyperion-federation::FederationHub::start_lease_heartbeat`'s own `Arc<Self>`/
+  stop-flag/join-on-drop shape exactly (a new `VerificationSchedule` handle, structurally
+  identical to `LeaseHeartbeat`). A caller reads `VerificationSchedule::last_report` for the most
+  recent real `VerificationReport` instead of only ever being able to check on demand.
+  `hyperion-observability-service`'s own real, long-running `main()` — the real consumer — now
+  starts one of these (a real 60-second cadence) right after its pre-existing on-demand startup
+  check, for as long as the process lives. Proven end to end with two new unit tests inside
+  `ledger.rs`'s own internal test module (the only place that can simulate a realistic tamper,
+  since `append` is deliberately the only public write path): one confirms the background
+  thread's own first real tick reports `Intact`, and the other tampers an entry directly and
+  confirms the background thread's own *next* tick — not an on-demand `verify_chain` call from
+  the test — catches the corruption at its exact `seq`. All pre-existing tests across
+  `hyperion-observability` and `hyperion-supervisor` (whose own real, sandboxed-process
+  integration test spawns this exact service binary) pass unchanged.

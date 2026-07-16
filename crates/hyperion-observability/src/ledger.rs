@@ -1,5 +1,7 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_crypto::{Hash, Keystore, Signature, VerifyingKey};
@@ -307,6 +309,76 @@ impl AuditLedger {
         }
         VerificationReport::Intact
     }
+
+    /// This crate's own previously-named "background scheduled chain verification" gap, made
+    /// real: starts a real background thread that re-invokes [`Self::verify_chain`] over the
+    /// entire chain every real `interval`, mirroring `hyperion-federation::FederationHub::
+    /// start_lease_heartbeat`'s own `Arc<Self>`/stop-flag/join-on-drop shape exactly. A caller
+    /// reads the schedule's own [`VerificationSchedule::last_report`] instead of only ever being
+    /// able to check on demand -- the ring-buffer write-ahead-spill half of this crate's own
+    /// original gap remains separately deferred (see this crate's doc comment).
+    pub fn start_periodic_verification(
+        self: &Arc<Self>,
+        interval: Duration,
+    ) -> VerificationSchedule {
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let last_report = Arc::new(Mutex::new(None));
+        let thread_report = Arc::clone(&last_report);
+        let ledger = Arc::clone(self);
+        let handle = std::thread::spawn(move || {
+            while !thread_stop.load(Ordering::Relaxed) {
+                std::thread::sleep(interval);
+                if thread_stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let to_seq = ledger.next_seq.load(Ordering::Relaxed).saturating_sub(1);
+                let report = ledger.verify_chain(1, to_seq);
+                *thread_report.lock().unwrap() = Some(report);
+            }
+        });
+        VerificationSchedule {
+            stop,
+            handle: Some(handle),
+            last_report,
+        }
+    }
+}
+
+/// A real background thread [`AuditLedger::start_periodic_verification`] returns -- mirrors
+/// `hyperion-federation::FederationHub`'s own `LeaseHeartbeat` `stop`/join-on-drop shape exactly:
+/// a genuinely running thread the caller can stop and block on, or simply drop to have it
+/// stopped and joined automatically.
+pub struct VerificationSchedule {
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+    last_report: Arc<Mutex<Option<VerificationReport>>>,
+}
+
+impl VerificationSchedule {
+    /// Signals the real background thread to stop and blocks until it has genuinely exited.
+    pub fn stop(mut self) {
+        self.stop_and_join();
+    }
+
+    fn stop_and_join(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+
+    /// The most recent real [`VerificationReport`] the background thread produced -- `None`
+    /// until its first tick has run.
+    pub fn last_report(&self) -> Option<VerificationReport> {
+        self.last_report.lock().unwrap().clone()
+    }
+}
+
+impl Drop for VerificationSchedule {
+    fn drop(&mut self) {
+        self.stop_and_join();
+    }
 }
 
 #[cfg(test)]
@@ -501,5 +573,55 @@ mod tests {
             "an anchor must not verify once its anchored segment's real content hash has changed, \
              even though the anchor record's own bytes are untouched"
         );
+    }
+
+    #[test]
+    fn the_background_schedule_produces_a_real_intact_report_on_its_own_first_tick() {
+        let (monitor, root, ledger) = setup();
+        append_n(&monitor, &root, &ledger, 3);
+        let ledger = Arc::new(ledger);
+
+        let schedule = ledger.start_periodic_verification(Duration::from_millis(50));
+        assert_eq!(
+            schedule.last_report(),
+            None,
+            "no tick has run yet -- nothing to report"
+        );
+
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            schedule.last_report(),
+            Some(VerificationReport::Intact),
+            "the background thread's own real tick must have run and found the untampered chain \
+             intact"
+        );
+        schedule.stop();
+    }
+
+    #[test]
+    fn the_background_schedule_catches_a_real_tamper_on_its_own_next_tick_not_an_on_demand_call() {
+        let (monitor, root, ledger) = setup();
+        append_n(&monitor, &root, &ledger, 3);
+        let ledger = Arc::new(ledger);
+
+        let schedule = ledger.start_periodic_verification(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(schedule.last_report(), Some(VerificationReport::Intact));
+
+        // Tamper directly, the same way the on-demand verify_chain tests above do -- then wait
+        // for the background thread's own next tick, never calling verify_chain ourselves.
+        {
+            let mut entries = ledger.entries.lock().unwrap();
+            entries[1].payload = AuditPayload::Note("tampered".to_string());
+        }
+
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            schedule.last_report(),
+            Some(VerificationReport::Corrupt { at_seq: 2 }),
+            "the background thread's own next real tick must catch the tamper on its own, with \
+             no on-demand verify_chain call from this test"
+        );
+        schedule.stop();
     }
 }

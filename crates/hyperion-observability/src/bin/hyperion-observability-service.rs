@@ -19,10 +19,17 @@
 //! "restarted with a fresh capability grant."
 
 use std::io::Write;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId, WireToken};
 use hyperion_observability::{AuditAction, AuditLedger, AuditPayload, PrincipalRef};
+
+/// A real, if modest, background verification cadence -- frequent enough that this crate's own
+/// previously-named "background scheduled chain verification" gap is genuinely exercised by a
+/// real long-running instance, not so frequent that it dominates a process that otherwise just
+/// idles.
+const VERIFICATION_INTERVAL: Duration = Duration::from_secs(60);
 
 fn now_unix() -> u64 {
     SystemTime::now()
@@ -45,7 +52,7 @@ fn main() {
         TrustBoundaryId(claim.token_id),
         None,
     );
-    let ledger = AuditLedger::new();
+    let ledger = Arc::new(AuditLedger::new());
 
     let entry = ledger
         .append(
@@ -65,6 +72,12 @@ fn main() {
         .expect("this process's own local capability check always authorizes its own append");
 
     write_state(&state_path, &claim, &ledger, entry.seq);
+
+    // This crate's own previously-named "background scheduled chain verification" gap, made
+    // real: a genuine background thread re-checks this instance's own ledger on a real cadence
+    // for as long as this process lives, rather than the one on-demand check `write_state` above
+    // already did at startup.
+    let _verification_schedule = ledger.start_periodic_verification(VERIFICATION_INTERVAL);
 
     // A real, long-running supervised service, not a one-shot: idle until hyperion-supervisor
     // kills and (per M5's exit criterion) respawns this under a fresh grant.

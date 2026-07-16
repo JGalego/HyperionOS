@@ -76,10 +76,16 @@
 //! - ~~Retention/rollup compaction of metrics and logs~~ — now real, see this crate's own "Real:"
 //!   section above (`hyperion-recovery`'s own equivalent retention deferral remains separately
 //!   named in that crate's own doc comment — this closes only this crate's copy of the gap).
-//! - **Ring-buffer write-ahead spill on store degradation, and
-//!   background scheduled chain verification.**
-//!   [`ledger::AuditLedger::verify_chain`] is on-demand only, not run on
-//!   a background schedule.
+//! - **Ring-buffer write-ahead spill on store degradation.** Still deferred.
+//! - ~~Background scheduled chain verification~~ — now real:
+//!   [`ledger::AuditLedger::start_periodic_verification`] spawns a real background thread that
+//!   re-invokes [`ledger::AuditLedger::verify_chain`] over the whole chain every real `interval`,
+//!   mirroring `hyperion-federation::FederationHub::start_lease_heartbeat`'s own `Arc<Self>`/
+//!   stop-flag/join-on-drop shape exactly. A caller reads the returned
+//!   [`ledger::VerificationSchedule::last_report`] instead of only ever being able to check
+//!   on demand. `hyperion-observability-service`'s own real, long-running `main()` is the real
+//!   consumer: it now starts one of these alongside its pre-existing on-demand startup check,
+//!   for as long as the process lives.
 //! - ~~A globally-unique cross-device span identity~~ — now real: [`types::SpanId`] pairs the
 //!   minting collector's own `device_id` with a per-collector monotonic sequence number, and
 //!   [`telemetry::TelemetryCollector::new_with_device_id`] is the real constructor a caller with
@@ -97,7 +103,7 @@ mod telemetry;
 mod types;
 
 pub use aggregate::build_aggregate;
-pub use ledger::{Anchor, AuditLedger};
+pub use ledger::{Anchor, AuditLedger, VerificationSchedule};
 pub use telemetry::{derivative, ewma, TelemetryCollector};
 pub use types::{
     AggregateReport, AuditAction, AuditLogEntry, AuditPayload, ConsentCategory, ConsentScope,
