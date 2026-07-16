@@ -11,10 +11,12 @@ use hyperion_explainability::{
 use hyperion_intent::{ExecutionTicket, IntentEngine};
 use hyperion_knowledge_graph::{EdgeOrigin, KnowledgeGraph, NodeId};
 
-use crate::catalog::{best_fit_manifest_with_plugins, required_capabilities_for};
+use crate::catalog::{
+    best_fit_manifest_with_plugins, judgment_class_for, required_capabilities_for,
+};
 use crate::types::{
-    AllocationRecord, ConflictKind, ConflictRecord, ConflictResolution, Escalation, SharedPlan,
-    TaskNode, TaskStatus, WriteOutcome,
+    AllocationRecord, ConflictKind, ConflictRecord, ConflictResolution, Escalation, JudgmentClass,
+    SharedPlan, TaskNode, TaskStatus, WriteOutcome,
 };
 
 /// docs/12 §5.4: "reallocation is retried up to a bounded limit before
@@ -234,6 +236,7 @@ impl CoordinationSession {
                 attempts: 0,
                 result: None,
                 extra_context: None,
+                judgment_class: judgment_class_for(&leaf.predicate),
             });
         }
 
@@ -546,6 +549,31 @@ impl CoordinationSession {
                 },
                 Vec::new(),
             )?;
+            // docs/998-roadmap.md's Backlog "Protect the Human" item: a real, honest signal
+            // distinct from the risk-based consent gate — this task is a matter of taste or
+            // empathy, and deserves more human involvement regardless of how reversible it is.
+            // Advisory only, per CLAUDE.md's User Control principle: never blocks or changes
+            // dispatch, just names the reason in the same real Explanation Record.
+            if plan.nodes[idx].judgment_class == JudgmentClass::TasteOrEmpathy {
+                self.explanations.append_step(
+                    monitor,
+                    token,
+                    explanation_id,
+                    ReasoningStep {
+                        step_index: 1,
+                        description: format!(
+                            "'{}' is a matter of taste or empathy, not just reversibility -- \
+                             consider more direct human involvement regardless of how easily it \
+                             could be undone",
+                            plan.nodes[idx].description
+                        ),
+                        capability_ref: Some(capability.clone()),
+                        inputs_ref: vec![task_id],
+                        output_ref: None,
+                    },
+                    Vec::new(),
+                )?;
+            }
             self.explanations.transition(
                 monitor,
                 token,

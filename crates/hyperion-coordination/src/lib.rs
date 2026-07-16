@@ -85,14 +85,28 @@
 //!   into their own store) — a follow-up for whichever future slice
 //!   needs one workspace-wide trace
 //!   rather than several independent ones.
+//!
+//! Real (2026-07-16, docs/998-roadmap.md's Backlog "Protect the Human" item): "no declared
+//! judgment/taste/empathy/context boundary, distinct from 'risky'" — [`catalog::judgment_class_for`]
+//! really classifies a task predicate (the item's own worked example: `"branding"` is
+//! [`types::JudgmentClass::TasteOrEmpathy`], `"legal_formation"` is
+//! [`types::JudgmentClass::Mechanical`]), [`create_session`](engine::CoordinationSession::create_session)
+//! stamps it onto each real [`types::TaskNode`], and [`allocate`](engine::CoordinationSession::allocate)
+//! appends a real, second `ReasoningStep` to that dispatch's Explanation Record for a
+//! `TasteOrEmpathy` task — advisory only, per CLAUDE.md's User Control principle: this never
+//! changes dispatch, routing, or eligibility, only names a reason a human-facing surface might
+//! choose to ask for more direct involvement regardless of reversibility.
 
 mod catalog;
 mod engine;
 mod types;
 
-pub use catalog::{best_fit_manifest_with_plugins, default_manifests, required_capabilities_for};
+pub use catalog::{
+    best_fit_manifest_with_plugins, default_manifests, judgment_class_for,
+    required_capabilities_for,
+};
 pub use engine::{CoordError, CoordinationSession};
 pub use types::{
-    AllocationRecord, ConflictKind, ConflictRecord, ConflictResolution, Escalation, SharedPlan,
-    TaskNode, TaskStatus, WriteOutcome,
+    AllocationRecord, ConflictKind, ConflictRecord, ConflictResolution, Escalation, JudgmentClass,
+    SharedPlan, TaskNode, TaskStatus, WriteOutcome,
 };

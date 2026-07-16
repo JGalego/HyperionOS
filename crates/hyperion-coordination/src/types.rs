@@ -15,6 +15,23 @@ pub enum TaskStatus {
     Failed,
 }
 
+/// docs/998-roadmap.md's Backlog "Protect the Human" item: "no declared judgment/taste/empathy/
+/// context boundary, distinct from 'risky.'" `hyperion-security`'s existing consent gate triggers
+/// on irreversibility/cost/security — a different axis from "this decision is a matter of taste
+/// or empathy and deserves more human involvement regardless of how reversible it is." See
+/// [`crate::catalog::judgment_class_for`] for the real classification this crate assigns per task
+/// predicate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JudgmentClass {
+    /// A routine, mechanical task — no particular reason for extra human involvement beyond
+    /// whatever `hyperion-security`'s own risk axis already asks for.
+    Mechanical,
+    /// A matter of taste, brand, or empathy — the roadmap's own worked example is branding a
+    /// startup vs. filing its paperwork, dispatched identically today despite one being a
+    /// judgment call and the other being mechanical.
+    TasteOrEmpathy,
+}
+
 /// docs/12 §4.1's `TaskNode`, narrowed to what this crate's synchronous
 /// allocate-and-execute pass needs — see this crate's doc comment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +68,15 @@ pub struct TaskNode {
     /// reverting to none.
     #[serde(default)]
     pub extra_context: Option<String>,
+    /// docs/998-roadmap.md's Backlog "Protect the Human" item — see [`JudgmentClass`]. Set once,
+    /// at [`crate::CoordinationEngine::create_session`] time, from this task's own real predicate
+    /// via [`crate::catalog::judgment_class_for`].
+    #[serde(default = "default_judgment_class")]
+    pub judgment_class: JudgmentClass,
+}
+
+fn default_judgment_class() -> JudgmentClass {
+    JudgmentClass::Mechanical
 }
 
 /// docs/12 §4.3's `ConflictRecord`.

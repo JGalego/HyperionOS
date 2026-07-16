@@ -1,6 +1,8 @@
 use hyperion_agent_runtime::{AgentManifest, TrustTier};
 use hyperion_plugin_framework::PluginRegistry;
 
+use crate::types::JudgmentClass;
+
 /// A stand-in for deriving `required_capabilities` from a sub-intent's real
 /// semantic contract (docs/12 §5.1) — this crate has no Capability
 /// Registry ([24 — Plugin Framework](../24-plugin-framework.md), Phase 9)
@@ -14,6 +16,20 @@ pub fn required_capabilities_for(predicate: &str) -> Vec<String> {
         "market_research" => vec!["web.search".to_string()],
         "business_model" | "branding" | "legal_formation" => vec!["document.draft".to_string()],
         other => vec![format!("unknown.{other}")],
+    }
+}
+
+/// docs/998-roadmap.md's Backlog "Protect the Human" item's own worked example: "branding a
+/// startup vs. filing its paperwork, dispatched identically today." A real, if necessarily small
+/// and hardcoded, classification per task predicate — the same "no real semantic-contract
+/// registry to consult yet" honesty [`required_capabilities_for`]'s own doc comment already
+/// states applies here too. Every predicate this crate doesn't recognize defaults to
+/// [`JudgmentClass::Mechanical`] rather than guessing — deliberately the least attention-seeking
+/// choice, so an unrecognized task never gets a signal it may not deserve.
+pub fn judgment_class_for(predicate: &str) -> JudgmentClass {
+    match predicate {
+        "branding" => JudgmentClass::TasteOrEmpathy,
+        _ => JudgmentClass::Mechanical,
     }
 }
 

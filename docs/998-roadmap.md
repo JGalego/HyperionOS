@@ -2147,12 +2147,21 @@ have a real architectural home yet.
   (zero leaves) until `/think-proceed`, at which point the exact same decomposition happens as if
   think mode had been off the whole time. Opt-in and per-session, matching this item's own explicit
   constraint — a session that never enables it behaves exactly as before.
-- **No declared judgment/taste/empathy/context boundary, distinct from "risky."** The existing
-  consent gate triggers on irreversibility/cost/security — a different axis from "this decision is
-  a matter of taste or empathy and deserves more human involvement regardless of how reversible it
-  is" (e.g., branding a startup vs. filing its paperwork, dispatched identically today). Likely
-  home: a new classification on `AgentManifest`/`CapabilityManifest` alongside trust tier, or a new
-  field in `hyperion-coordination`'s task assignment.
+- **Declared judgment/taste/empathy/context boundary, distinct from "risky" — landed (2026-07-16).**
+  The existing consent gate triggers on irreversibility/cost/security — a different axis from
+  "this decision is a matter of taste or empathy and deserves more human involvement regardless of
+  how reversible it is" (e.g., branding a startup vs. filing its paperwork, dispatched identically
+  before this pass). `hyperion-coordination::catalog::judgment_class_for` really classifies a task
+  predicate (this item's own worked example: `"branding"` is `JudgmentClass::TasteOrEmpathy`,
+  `"legal_formation"` is `JudgmentClass::Mechanical`), stamped onto each real `TaskNode` at
+  `create_session` time. `allocate` appends a real, second `ReasoningStep` to a `TasteOrEmpathy`
+  task's Explanation Record naming the reason — advisory only, per CLAUDE.md's User Control
+  principle: it never changes dispatch, routing, or eligibility. Proven end to end: branding's own
+  dispatch carries the extra step, business_model's dispatched in the very same tick does not.
+  Honest scope boundary: the classification table is small and hardcoded (one real predicate today,
+  matching this crate's own existing `required_capabilities_for` precedent) and nothing yet
+  consumes the signal on a human-facing surface — the reasoning step is real and queryable, not
+  yet surfaced through `hyperion-console`.
 - **Cache-protection throttle for the human's own skill — the signal half landed (2026-07-16).**
   `hyperion-memory`'s tiered design already protected the *system's* memory ("your brain has a
   cache, don't empty it completely" — the deck's own framing); nothing protected the *user's*.
