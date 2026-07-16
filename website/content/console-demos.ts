@@ -88,4 +88,20 @@ export const consoleDemos = [
       },
     ] satisfies ConsoleLine[],
   },
+  {
+    id: "social-mesh",
+    title: "A node that can't translate, asks one that can",
+    description:
+      "Six real, separately-launched hyperion-console processes discover each other over real mDNS, each backed by a different real cloud model (Anthropic, OpenAI, Groq) -- no human ever names a host, port, or peer.",
+    scenarioFile: "scripts/run-mesh-demo.sh",
+    lines: [
+      { type: "input", text: "/backend groq llama-3.1-8b-instant" },
+      { type: "output", text: 'Switched to the groq (model "llama-3.1-8b-instant") backend.' },
+      { type: "input", text: "/mesh-request 9606 translate-ja say hello in Japanese" },
+      {
+        type: "output",
+        text: 'I don\'t have "translate-ja" myself, so I asked kenji (2)._hyperion-a2a._tcp.local. (127.0.0.1:9601), which does. It replied: status: done -- # Say Hello in Japanese\n\nHere are the most common ways to say hello in Japanese:\n\n1. **おはよう (Ohayou)** - Good morning (casual)\n2. **こんにちは (Konnichiwa)** - Hello / Good afternoon\n3. **こんばんは (Konbanwa)** - Good evening\n\nThe most universally useful greeting is **こんにちは (Konnichiwa)** -- it\'s appropriate for most daytime situations and is what most people learn first!\n\n(Trusting 127.0.0.1:9601\'s identity for the first time: 767e997ba5e2440512ef3b513f210705db2a3618a6bf7d307b03e9cf5254e0b8.)',
+      },
+    ] satisfies ConsoleLine[],
+  },
 ] as const;
