@@ -1984,10 +1984,17 @@ mean here):
   doesn't apply to it, the same "unknown host" fallback SSH itself uses. Proven end to end,
   including a real impersonation scenario: two real, differently-keyed `hyperion-console`
   processes answering the same `host:port` in sequence — the second one's real reply is refused
-  with a real warning, and only shown after an explicit `/trust forget`. **Still not done:** MCP's
-  own `/mcp-call` has no equivalent identity check yet (natural next step, same shape); this is
-  identity *continuity*, not *authorization* — nothing here decides whether a peer *should* be
-  talked to, only whether it's still the same one as last time.
+  with a real warning, and only shown after an explicit `/trust forget`. This is identity
+  *continuity*, not *authorization* — nothing here decides whether a peer *should* be talked to,
+  only whether it's still the same one as last time.
+- **MCP identity parity, landed the same pass (2026-07-16).** The exact same trust-on-first-use
+  check, for `/mcp-call` instead of duplicated as a new one: `initialize`'s response now carries a
+  real public key and every `tools/call` reply is really signed, verified, and checked against
+  the same shared `PeerTrustStore` `/a2a-call` uses (a peer is keyed by `host:port` regardless of
+  which protocol reached it). [`crate::mcp::call_tool`] now performs a real `initialize` round
+  trip first — purely to fetch the key, this also happens to close this module's own previously-
+  named "no real client handshake" gap for free. Proven end to end the identical way: a real
+  impersonation swap is refused, not silently shown.
 - **The rest of each real spec.** MCP: resources, prompts, notifications, the SSE-streaming half
   of "Streamable HTTP," stdio transport. A2A: `GetTask`/`ListTasks`/streaming/push notifications
   (no real task store exists here — every dispatch completes synchronously before `SendMessage`

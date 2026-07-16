@@ -170,7 +170,7 @@ fn try_control_command(
         return standby();
     }
     if let Some(rest) = trimmed.strip_prefix("/mcp-call ") {
-        return ControlOutcome::Handled(vec![mcp_call(rest.trim())]);
+        return ControlOutcome::Handled(vec![mcp_call(rest.trim(), data_dir)]);
     }
     if let Some(rest) = trimmed.strip_prefix("/a2a-call ") {
         return ControlOutcome::Handled(vec![a2a_call(rest.trim(), data_dir)]);
@@ -371,8 +371,10 @@ fn standby() -> ControlOutcome {
 
 /// `/mcp-call <host> <port> <tool> <json arguments>` -- the real outbound half: calls a real,
 /// already-known MCP endpoint's `tools/call` (including another Hyperion instance's own
-/// `/mcp-server`). Not discovery: the caller names the endpoint.
-fn mcp_call(rest: &str) -> String {
+/// `/mcp-server`). Not discovery: the caller names the endpoint. Checked against a real,
+/// persisted peer identity, the same shared trust store `/a2a-call` uses -- see
+/// [`mcp::call_tool`]'s own doc comment.
+fn mcp_call(rest: &str, data_dir: &str) -> String {
     let mut parts = rest.splitn(4, ' ');
     let (Some(host), Some(port_str), Some(tool), Some(json_args)) =
         (parts.next(), parts.next(), parts.next(), parts.next())
@@ -388,7 +390,13 @@ fn mcp_call(rest: &str) -> String {
         Ok(v) => v,
         Err(e) => return format!("that last argument isn't valid JSON: {e}"),
     };
-    match mcp::call_tool(host, port, tool, arguments) {
+    let mut trust_store = match hyperion_console::peer_trust::PeerTrustStore::open_or_create(
+        peer_trust_path(data_dir),
+    ) {
+        Ok(store) => store,
+        Err(e) => return format!("I couldn't open the real peer trust store: {e}"),
+    };
+    match mcp::call_tool(host, port, tool, arguments, &mut trust_store) {
         Ok(text) => text,
         Err(e) => format!("I couldn't call that MCP tool: {e}"),
     }
