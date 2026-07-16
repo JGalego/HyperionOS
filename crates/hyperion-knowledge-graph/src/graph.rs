@@ -153,7 +153,10 @@ impl KnowledgeGraph {
 
     /// `graph.unlink` — docs/09 §6. Tombstones rather than physically
     /// removing (docs/09 §10: "edge deletions are tombstones... undoable
-    /// within a retention window"). A no-op if already tombstoned.
+    /// within a retention window"). A no-op if already tombstoned. Owner-checked (2026-07-16)
+    /// the same way [`Self::get`]/[`Self::delete_node`] now are, and *before* the tombstone
+    /// short-circuit: a caller outside the edge's own Trust Boundary gets `NotFound`, never
+    /// learning whether the edge even exists.
     pub fn unlink(
         &self,
         monitor: &CapabilityMonitor,
@@ -161,11 +164,13 @@ impl KnowledgeGraph {
         edge_id: EdgeId,
     ) -> Result<(), GraphError> {
         self.require(monitor, token, RightsMask::WRITE)?;
+        let caller_boundary = token.origin().0;
 
         let mut index = self.index.lock().unwrap();
         let existing = index
             .edges
             .get(&edge_id)
+            .filter(|e| e.owner == caller_boundary)
             .ok_or(GraphError::NotFound)?
             .clone();
         if existing.tombstone {
@@ -204,7 +209,11 @@ impl KnowledgeGraph {
     /// ones" shape this session's other compaction sweeps already established, rather than
     /// inventing a second, redundant TTL clock this crate's own data model doesn't carry.
     /// Returns every `EdgeId` this call really pruned, so a caller can log or audit exactly what
-    /// a sweep did — never a silent bulk operation with no visible effect.
+    /// a sweep did — never a silent bulk operation with no visible effect. Scoped to the caller's
+    /// own Trust Boundary (2026-07-16), the same owner check [`Self::unlink`] now performs on
+    /// every single edge it tombstones: a sweep only ever considers edges the caller owns, never
+    /// erroring out partway through (nor silently pruning cross-boundary) if some other
+    /// boundary's inferred edges also happen to be decayed.
     pub fn prune_decayed_edges(
         &self,
         monitor: &CapabilityMonitor,
@@ -213,6 +222,7 @@ impl KnowledgeGraph {
         now: u64,
     ) -> Result<Vec<EdgeId>, GraphError> {
         self.require(monitor, token, RightsMask::WRITE)?;
+        let caller_boundary = token.origin().0;
 
         let to_prune: Vec<EdgeId> = {
             let index = self.index.lock().unwrap();
@@ -221,6 +231,7 @@ impl KnowledgeGraph {
                 .iter()
                 .filter(|(_, edge)| {
                     !edge.tombstone
+                        && edge.owner == caller_boundary
                         && edge.origin == EdgeOrigin::Inferred
                         && crate::decay::effective_edge_weight(edge, now) < threshold
                 })
@@ -249,10 +260,23 @@ impl KnowledgeGraph {
         metadata: serde_json::Value,
     ) -> Result<NodeId, GraphError> {
         self.require(monitor, token, RightsMask::WRITE)?;
+        let caller_boundary = token.origin().0;
 
         let mut index = self.index.lock().unwrap();
         let expected_version = node_id.and_then(|id| self.storage.current_version(id));
         let existing = node_id.and_then(|id| index.nodes.get(&id));
+        // Owner-checked (2026-07-16): an update to an existing node this caller doesn't own is
+        // rejected outright -- previously this unconditionally set `owner: token.origin().0` on
+        // every write, silently reassigning a foreign-boundary node to whichever caller last
+        // updated it (and, worse, making every owner check this crate now performs elsewhere
+        // trivially bypassable: steal ownership here, then freely `get`/`delete_node` as the new
+        // "owner"). `link`'s own analogous update path already preserves `existing.owner`
+        // unconditionally; this closes the same gap for nodes.
+        if let Some(existing_node) = existing {
+            if existing_node.owner != caller_boundary {
+                return Err(GraphError::NotFound);
+            }
+        }
         let created_at = existing.map(|n| n.created_at).unwrap_or_else(now);
         // A plain `put_node` update never resurrects a tombstoned node -- the same "an insert
         // never silently revives what was deliberately deleted" precedent `link`'s own tombstone
@@ -264,7 +288,7 @@ impl KnowledgeGraph {
             object_type: object_type.into(),
             embedding,
             metadata,
-            owner: token.origin().0,
+            owner: existing.map_or(caller_boundary, |n| n.owner),
             created_at,
             updated_at: now(),
             tombstone,
@@ -277,7 +301,12 @@ impl KnowledgeGraph {
         Ok(assigned_id)
     }
 
-    /// `graph.get` — docs/09 §6.
+    /// `graph.get` — docs/09 §6. docs/09 §8's "capability-checked at every hop, not merely at
+    /// the query boundary" now really holds here too (2026-07-16): a node outside the caller's
+    /// own Trust Boundary is `NotFound`, the same "never reveal existence of what you can't see"
+    /// [`Self::query`]/[`Self::traverse`]/[`Self::dump`] already give — this crate's own
+    /// `traverse` doc comment already claimed this exact shape for `get`; now it's true rather
+    /// than aspirational.
     pub fn get(
         &self,
         monitor: &CapabilityMonitor,
@@ -285,11 +314,12 @@ impl KnowledgeGraph {
         node_id: NodeId,
     ) -> Result<NodeRecord, GraphError> {
         self.require(monitor, token, RightsMask::READ)?;
+        let caller_boundary = token.origin().0;
         let index = self.index.lock().unwrap();
         index
             .nodes
             .get(&node_id)
-            .filter(|n| !n.tombstone)
+            .filter(|n| !n.tombstone && n.owner == caller_boundary)
             .cloned()
             .ok_or(GraphError::NotFound)
     }
@@ -300,7 +330,10 @@ impl KnowledgeGraph {
     /// precedent, applied to nodes for the first time. [`Self::get`]/[`Self::query`]/
     /// [`Self::traverse`]/[`Self::dump`] all exclude a tombstoned node exactly as they already
     /// exclude a tombstoned edge — a real `NotFound`/omission for every caller, not merely
-    /// hidden metadata. A no-op if already tombstoned.
+    /// hidden metadata. A no-op if already tombstoned. Owner-checked (2026-07-16) the same way
+    /// [`Self::get`] now is, and *before* the tombstone short-circuit: a caller outside the
+    /// node's own Trust Boundary gets `NotFound`, never learning whether the node even exists,
+    /// let alone whether it's already deleted.
     pub fn delete_node(
         &self,
         monitor: &CapabilityMonitor,
@@ -308,11 +341,13 @@ impl KnowledgeGraph {
         node_id: NodeId,
     ) -> Result<(), GraphError> {
         self.require(monitor, token, RightsMask::WRITE)?;
+        let caller_boundary = token.origin().0;
 
         let mut index = self.index.lock().unwrap();
         let existing = index
             .nodes
             .get(&node_id)
+            .filter(|n| n.owner == caller_boundary)
             .ok_or(GraphError::NotFound)?
             .clone();
         if existing.tombstone {
@@ -354,7 +389,10 @@ impl KnowledgeGraph {
     /// on this side that asks for it. `Err(GraphError::NotFound)` covers both "no such version"
     /// and "that version belongs to an edge, not a node" — a caller with the wrong id shape gets
     /// the same "not found" this crate already returns for [`Self::get`], not a different error
-    /// shape to special-case.
+    /// shape to special-case. Owner-checked (2026-07-16) the same way [`Self::get`] now is: a
+    /// node's `owner` never changes across its lifetime (see [`Self::put_node`]'s own doc
+    /// comment), so checking it against the crate's own live `index` is exactly as correct for a
+    /// historical version as for the current one.
     pub fn get_at_version(
         &self,
         monitor: &CapabilityMonitor,
@@ -363,6 +401,14 @@ impl KnowledgeGraph {
         version: VersionId,
     ) -> Result<NodeRecord, GraphError> {
         self.require(monitor, token, RightsMask::READ)?;
+        let caller_boundary = token.origin().0;
+        {
+            let index = self.index.lock().unwrap();
+            match index.nodes.get(&node_id) {
+                Some(n) if n.owner == caller_boundary => {}
+                _ => return Err(GraphError::NotFound),
+            }
+        }
         let payload = match self
             .storage
             .get_object(monitor, token, node_id, Some(version))
@@ -612,7 +658,10 @@ impl KnowledgeGraph {
     }
 
     /// `graph.explain` — docs/09 §6, feeding
-    /// [18 — Explainability & Trust](../18-explainability-and-trust.md).
+    /// [18 — Explainability & Trust](../18-explainability-and-trust.md). Owner-checked
+    /// (2026-07-16) the same way [`Self::get`] now is: this returns `owner`/`provenance`
+    /// verbatim, so leaving it unchecked would leak exactly the cross-boundary metadata docs/09
+    /// §8's "capability-checked at every hop" exists to prevent.
     pub fn explain(
         &self,
         monitor: &CapabilityMonitor,
@@ -620,10 +669,15 @@ impl KnowledgeGraph {
         target: ExplainRef,
     ) -> Result<ProvenanceChain, GraphError> {
         self.require(monitor, token, RightsMask::READ)?;
+        let caller_boundary = token.origin().0;
         let index = self.index.lock().unwrap();
         match target {
             ExplainRef::Node(id) => {
-                let node = index.nodes.get(&id).ok_or(GraphError::NotFound)?;
+                let node = index
+                    .nodes
+                    .get(&id)
+                    .filter(|n| n.owner == caller_boundary)
+                    .ok_or(GraphError::NotFound)?;
                 let mut incident_edges: Vec<EdgeId> = index
                     .forward
                     .get(&id)
@@ -644,7 +698,11 @@ impl KnowledgeGraph {
                 })
             }
             ExplainRef::Edge(id) => {
-                let edge = index.edges.get(&id).ok_or(GraphError::NotFound)?;
+                let edge = index
+                    .edges
+                    .get(&id)
+                    .filter(|e| e.owner == caller_boundary)
+                    .ok_or(GraphError::NotFound)?;
                 Ok(ProvenanceChain::Edge {
                     edge_id: id,
                     subject: edge.subject,

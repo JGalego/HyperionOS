@@ -15,8 +15,13 @@ fn create_session_and_allocate_require_write_rights() {
     let dir = tempfile::tempdir().unwrap();
     let mut monitor = CapabilityMonitor::new();
     let root_token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    // Same Trust Boundary as `root_token` -- this test narrows *rights* (READ, not WRITE), not
+    // ownership. `hyperion-knowledge-graph`'s own owner-based ACL (2026-07-16) means a token from
+    // a genuinely different boundary can't read the intent node `root_token` creates below at
+    // all, regardless of rights -- a different, already-covered gating concern (see that crate's
+    // own `query_never_returns_a_different_trust_boundarys_object`-style tests).
     let read_only = monitor
-        .cap_derive(&root_token, RightsMask::READ, None, TrustBoundaryId(2))
+        .cap_derive(&root_token, RightsMask::READ, None, TrustBoundaryId(1))
         .unwrap();
 
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());

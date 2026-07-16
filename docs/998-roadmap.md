@@ -3314,3 +3314,45 @@ next step on any of these is a design pass, not code.
   `tests/self_consistency_confidence.rs`, proves the real score genuinely flows into a real
   `ExplanationStore` record via `set_confidence` and back out through `resolve_why`, not just the
   pure function in isolation. All pre-existing `hyperion-explainability` tests pass unchanged.
+
+- **`hyperion-knowledge-graph`'s owner-based ACL on single-object accessors, landed
+  (2026-07-16)** — a real, confirmed contradiction between this crate's own doc comments: its
+  `traverse` doc comment already claimed `get` gives "the same 'never reveal existence of what
+  you can't see' shape" `query`/`traverse`/`dump` enforce via an `owner == caller_boundary`
+  check — but `get` never actually checked `owner` at all, only rights and tombstone status. The
+  same missing check existed on `get_at_version`, `delete_node`, `unlink`, and `explain` (the
+  last of which returns `owner`/`provenance` verbatim, directly leaking cross-boundary metadata).
+  All five now real-check `owner`, returning `GraphError::NotFound` (never `Unauthorized`, which
+  would leak that the object exists under a different boundary) — `delete_node`/`unlink` check
+  ownership *before* the tombstone short-circuit, so a foreign-boundary caller can't even learn
+  whether the object is already deleted. `prune_decayed_edges` (landed earlier this session) is
+  updated to scope its own sweep to the caller's Trust Boundary too — otherwise it would now
+  hard-fail partway through a sweep the moment it hit a foreign-owned decayed edge, since it
+  calls `unlink` internally.
+
+  A related, more severe bug surfaced during this fix: `put_node`'s update path unconditionally
+  set `owner: token.origin().0` on every write, silently reassigning a foreign-boundary node to
+  whichever caller last updated it — and, critically, making every owner check just added
+  trivially bypassable (steal ownership via `put_node`, then freely `get`/`delete_node` as the
+  new "owner"). `put_node` now rejects an update to a node the caller doesn't already own
+  (`NotFound`) and preserves `existing.owner` verbatim on a legitimate update, mirroring `link`'s
+  own edge-update path, which never had this bug (edges already preserved their owner across an
+  update).
+
+  One real regression surfaced by this fix and corrected: `hyperion-coordination`'s
+  `create_session_and_allocate_require_write_rights` test derived its own `read_only` token with
+  a *different* `TrustBoundaryId` than the root token that created the intent node it went on to
+  read — incidental to what the test actually meant to exercise (insufficient rights, not
+  boundary-crossing), and only ever worked because `get`/`get_graph` had no owner check before
+  this fix. Corrected to derive `read_only` from the same boundary, matching how every other
+  rights-only gating test in this workspace is authored.
+
+  Proven with 7 new tests in `tests/single_object_owner_acl.rs`: `get`/`get_at_version` never
+  return a different boundary's node; `delete_node`/`unlink` never delete a different boundary's
+  object and never actually tombstone it (verified via a subsequent same-owner read/traverse
+  still succeeding); `explain` never leaks a different boundary's node or edge provenance;
+  `put_node` can never steal a different boundary's node (the original owner's metadata is
+  verified untouched); `prune_decayed_edges` only ever prunes the caller's own edges, never
+  erroring out over another boundary's decayed edge. All pre-existing
+  `hyperion-knowledge-graph` tests pass unchanged, and the one genuine regression
+  (`hyperion-coordination`) was fixed rather than worked around.

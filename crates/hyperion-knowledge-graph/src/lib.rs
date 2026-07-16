@@ -76,7 +76,19 @@
 //!   here too: every real caller across the workspace already operates strictly within its own
 //!   token's boundary). `device_origin`-based filtering (a finer axis than plain `owner`) remains
 //!   unimplemented, as does docs/29's richer per-row `acl` JSONB — this closes the coarser,
-//!   `owner`-only half of the gap this bullet named.
+//!   `owner`-only half of the gap this bullet named. ~~This crate's own `traverse` doc comment
+//!   claimed [`graph::KnowledgeGraph::get`] already gave the same owner-checked shape it does —
+//!   it didn't~~ (2026-07-16): [`graph::KnowledgeGraph::get`]/[`graph::KnowledgeGraph::get_at_version`]/
+//!   [`graph::KnowledgeGraph::delete_node`]/[`graph::KnowledgeGraph::unlink`]/
+//!   [`graph::KnowledgeGraph::explain`] now all real-check `owner` too, closing the same
+//!   contradiction for every single-object accessor `query`/`traverse`/`dump` already had fixed.
+//!   [`graph::KnowledgeGraph::put_node`] had a related, more severe bug this same pass closed:
+//!   updating an *existing* node always overwrote its `owner` to the caller's own boundary,
+//!   letting any caller with a live WRITE-rights token silently steal a foreign-boundary node —
+//!   and, worse, use that theft to bypass every owner check just landed. An update to a node the
+//!   caller doesn't already own is now rejected (`GraphError::NotFound`, never revealing the
+//!   node's existence), mirroring `link`'s own edge-owner-preservation path, which never had
+//!   this bug (edges already preserve `existing.owner` verbatim across an update).
 //! - ~~**Node deletion.**~~ Now real: `hyperion-recovery`/`hyperion-privacy`'s own previously-named
 //!   "no node-delete operation (only edges tombstone)" gap. [`graph::KnowledgeGraph::delete_node`]
 //!   tombstones a node exactly the way [`graph::KnowledgeGraph::unlink`] already tombstones an
