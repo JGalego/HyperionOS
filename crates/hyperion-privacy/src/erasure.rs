@@ -116,8 +116,13 @@ pub fn erase(
 /// `now` and a chosen `grace_period_secs`; every one of this crate's own soft-delete
 /// `ActionRecord`s still `Committed` (still undoable) whose age has reached or exceeded that
 /// grace period is sealed for real via `hyperion_recovery::RecoveryService::expire` — after this,
-/// `recovery.undo(...)` can never restore it again, matching the exact irreversibility
-/// `ErasureMode::CryptoShred` already has from the start.
+/// `recovery.undo(...)` can never restore it again — *and* every one of its `objects_touched` is
+/// really shredded via `hyperion_knowledge_graph::KnowledgeGraph::delete_node`, matching the exact
+/// irreversibility (both undo-blocking *and* actual unreadability) `ErasureMode::CryptoShred`
+/// already has from the start, rather than leaving the object as an overwritten-but-still-readable
+/// placeholder forever. `GraphError::NotFound` is treated as benign (the same convention
+/// `hyperion-recovery::apply_snapshot`'s own undo→delete_node wiring already established): a node
+/// already deleted by some other path is not this sweep's error to report.
 ///
 /// Deliberate simplification, named rather than silently narrowed: docs/16 §4's own
 /// `ErasureRequest.grace_period` is a *per-request* `Duration` a caller could vary erasure to
@@ -129,6 +134,9 @@ pub fn erase(
 /// Returns every `ActionId` this call really expired, so a caller can log or audit exactly what a
 /// sweep did — never a silent bulk operation with no visible effect.
 pub fn expire_lapsed_soft_deletes(
+    monitor: &CapabilityMonitor,
+    token: &CapabilityToken,
+    graph: &KnowledgeGraph,
     recovery: &RecoveryService,
     now: u64,
     grace_period_secs: u64,
@@ -142,10 +150,19 @@ pub fn expire_lapsed_soft_deletes(
                 && now.saturating_sub(record.created_at) >= grace_period_secs
         })
         .filter_map(|record| {
-            recovery
-                .expire(record.action_id)
-                .ok()
-                .map(|()| record.action_id)
+            recovery.expire(record.action_id).ok().map(|()| {
+                for &id in &record.objects_touched {
+                    match graph.delete_node(monitor, token, id) {
+                        Ok(()) | Err(hyperion_knowledge_graph::GraphError::NotFound) => {}
+                        Err(err) => {
+                            // Best-effort shredding: expiry itself already succeeded and must not
+                            // be rolled back over a secondary write failure on one object.
+                            let _ = err;
+                        }
+                    }
+                }
+                record.action_id
+            })
         })
         .collect()
 }

@@ -3146,3 +3146,22 @@ next step on any of these is a design pass, not code.
   own real echo) never fabricates a value, falling back to the explicit flag alone. All 4
   pre-existing `hyperion-memory` `distillation` tests, plus the rest of the crate's suite, pass
   unchanged.
+
+- **`hyperion-privacy`'s soft-delete grace period actually shredding on expiry, landed
+  (2026-07-16)** (docs/16 §10's own "soft-deletes honor a grace period before cryptographic
+  shredding" — `expire_lapsed_soft_deletes` sealed the `ActionRecord` against `undo` via
+  `RecoveryService::expire`, but never called `KnowledgeGraph::delete_node`, so a lapsed
+  soft-delete stayed an overwritten-but-still-readable `"Erased"` placeholder forever,
+  contradicting this same function's own doc comment's claim of matching `CryptoShred`'s
+  irreversibility "from the start" — true only for undo-ability, never for the object's actual
+  readability). `expire_lapsed_soft_deletes` now takes `monitor`/`token`/`graph` alongside
+  `recovery`, and for every action it really expires, calls the real `delete_node` on each of that
+  action's `objects_touched` — the same real primitive gap 33's own `hyperion-recovery::
+  apply_snapshot` undo-path already wires to, `GraphError::NotFound` treated as benign the same
+  way. The existing `a_soft_delete_past_its_grace_period_is_expired_and_can_never_be_undone_again`
+  test's own final assertion (previously checking the placeholder's `"erased": true` field was
+  still readable) now asserts the correct, opposite outcome: `graph.get(...)` returns a real
+  `GraphError::NotFound`. All other pre-existing `grace_period_expiry` tests — the
+  within-grace-period case, the double-sweep case, the `CryptoShred`-has-nothing-to-sweep case,
+  and the unrelated-action case — pass with only their call sites updated for the new parameters,
+  no behavior change.

@@ -52,8 +52,14 @@ fn a_soft_delete_within_its_grace_period_is_not_expired() {
     let action_id = receipt.grace_period_action.unwrap();
 
     // Well within the grace period.
-    let expired =
-        expire_lapsed_soft_deletes(&recovery, 1_000 + GRACE_PERIOD_SECS - 1, GRACE_PERIOD_SECS);
+    let expired = expire_lapsed_soft_deletes(
+        &monitor,
+        &root,
+        &graph,
+        &recovery,
+        1_000 + GRACE_PERIOD_SECS - 1,
+        GRACE_PERIOD_SECS,
+    );
     assert!(expired.is_empty());
 
     // Still really undoable.
@@ -90,7 +96,8 @@ fn a_soft_delete_past_its_grace_period_is_expired_and_can_never_be_undone_again(
     let action_id = receipt.grace_period_action.unwrap();
 
     let now = 1_000 + GRACE_PERIOD_SECS;
-    let expired = expire_lapsed_soft_deletes(&recovery, now, GRACE_PERIOD_SECS);
+    let expired =
+        expire_lapsed_soft_deletes(&monitor, &root, &graph, &recovery, now, GRACE_PERIOD_SECS);
     assert_eq!(expired, vec![action_id]);
 
     let result = recovery
@@ -102,8 +109,16 @@ fn a_soft_delete_past_its_grace_period_is_expired_and_can_never_be_undone_again(
          no-grace-period floor"
     );
 
-    let still_erased = graph.get(&monitor, &root, node).unwrap();
-    assert_eq!(still_erased.metadata["erased"], serde_json::json!(true));
+    let shredded = graph.get(&monitor, &root, node);
+    assert!(
+        matches!(
+            shredded,
+            Err(hyperion_knowledge_graph::GraphError::NotFound)
+        ),
+        "a lapsed soft-delete must really shred the object, matching CryptoShred's own \
+         genuine tombstone, not merely leave an overwritten-but-still-readable placeholder \
+         forever; got: {shredded:?}"
+    );
 }
 
 #[test]
@@ -132,10 +147,12 @@ fn sweeping_twice_only_expires_each_action_once() {
     let action_id = receipt.grace_period_action.unwrap();
 
     let now = 1_000 + GRACE_PERIOD_SECS;
-    let first_sweep = expire_lapsed_soft_deletes(&recovery, now, GRACE_PERIOD_SECS);
+    let first_sweep =
+        expire_lapsed_soft_deletes(&monitor, &root, &graph, &recovery, now, GRACE_PERIOD_SECS);
     assert_eq!(first_sweep, vec![action_id]);
 
-    let second_sweep = expire_lapsed_soft_deletes(&recovery, now, GRACE_PERIOD_SECS);
+    let second_sweep =
+        expire_lapsed_soft_deletes(&monitor, &root, &graph, &recovery, now, GRACE_PERIOD_SECS);
     assert!(
         second_sweep.is_empty(),
         "an already-Expired action must never be re-expired (it's no longer Committed)"
@@ -166,8 +183,14 @@ fn a_crypto_shred_erasure_has_nothing_for_the_sweep_to_touch() {
     )
     .unwrap();
 
-    let expired =
-        expire_lapsed_soft_deletes(&recovery, 1_000 + GRACE_PERIOD_SECS, GRACE_PERIOD_SECS);
+    let expired = expire_lapsed_soft_deletes(
+        &monitor,
+        &root,
+        &graph,
+        &recovery,
+        1_000 + GRACE_PERIOD_SECS,
+        GRACE_PERIOD_SECS,
+    );
     assert!(
         expired.is_empty(),
         "CryptoShred journals nothing, so the sweep must find nothing to expire"
@@ -197,8 +220,14 @@ fn an_unrelated_recovery_action_is_never_swept_even_if_old_enough() {
         recovery.record_action_started(point_id, vec![node], None, "some other subsystem", 1_000);
     recovery.record_action_committed(action_id).unwrap();
 
-    let expired =
-        expire_lapsed_soft_deletes(&recovery, 1_000 + GRACE_PERIOD_SECS, GRACE_PERIOD_SECS);
+    let expired = expire_lapsed_soft_deletes(
+        &monitor,
+        &root,
+        &graph,
+        &recovery,
+        1_000 + GRACE_PERIOD_SECS,
+        GRACE_PERIOD_SECS,
+    );
     assert!(expired.is_empty());
 
     // Still really undoable -- the sweep must not have touched it at all.

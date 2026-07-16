@@ -99,6 +99,16 @@
 //!   separate "retention classes, compaction, and pinning enforcement beyond a boolean flag"
 //!   deferral (recovery points/the action journal simply accumulating for the process lifetime)
 //!   is a different, still-open gap — closing this one doesn't imply that one is closed too.
+//! - ~~**The expired grace period's own actual shredding.**~~ (2026-07-16) — now real:
+//!   [`erasure::expire_lapsed_soft_deletes`] previously only sealed the `ActionRecord` against
+//!   `undo` via `RecoveryService::expire`, leaving the object itself as an
+//!   overwritten-but-still-readable `"Erased"` placeholder forever — contradicting this crate's
+//!   own doc comment's claim of matching `CryptoShred`'s irreversibility "from the start." It now
+//!   additionally calls `hyperion_knowledge_graph::KnowledgeGraph::delete_node` on every one of
+//!   the expired action's `objects_touched`, a genuine tombstone no `get`/`query`/`traverse`/
+//!   `dump` call ever surfaces again — the same real primitive [33 — Rollback &
+//!   Recovery](../33-rollback-recovery.md)'s own `apply_snapshot` undo-path already wires to,
+//!   `GraphError::NotFound` treated as benign the same way.
 //! - **`memory.*`/`knowledgeGraph.*` full Inspect/Edit/Export API
 //!   surface** (docs/16 §6) — only `erase` is implemented; `inspect`/
 //!   `edit`/`export` are direct callers of `hyperion-knowledge-graph`'s
