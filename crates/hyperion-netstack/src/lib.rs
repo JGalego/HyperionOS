@@ -64,9 +64,14 @@
 //!   [23 — Multi-Model Orchestration](../23-multi-model-orchestration.md)
 //!   is a real integration this crate's trait boundary leaves open but
 //!   does not perform.
-//! - **`robots.txt` fetching/parsing.** [`types::FetchedPage`] carries a
-//!   `robots_disallowed` flag a fixture declares directly; this crate
-//!   does not fetch or parse a real `robots.txt`.
+//! - ~~**`robots.txt` fetching/parsing.**~~ — now real for [`fetch::ReqwestFetchBackend`]:
+//!   [`robots::RobotsRules`] is a real parser (group selection by matched `User-agent`, falling
+//!   back to `*`; longest-matching-prefix-wins between `Allow`/`Disallow`), and
+//!   `ReqwestFetchBackend` performs a real `GET {scheme}://{host}/robots.txt` (cached per host for
+//!   the lifetime of the backend) before ever fetching a disallowed path, setting
+//!   [`types::FetchedPage::robots_disallowed`] for real rather than always `false`.
+//!   `MockFetchBackend` is unaffected -- a fixture still declares the flag directly, exactly as
+//!   before.
 //! - **Real prompt-injection classification.** [`quarantine`] is a fixed
 //!   denylist substring scanner, not a model-based classifier.
 //! - **Multi-hop citation-following crawls (§4's `depth`).** `depth` is
@@ -98,6 +103,8 @@ mod fetch;
 mod hub;
 mod quarantine;
 mod resolve;
+#[cfg(feature = "real-http")]
+mod robots;
 mod types;
 mod workspace_bridge;
 

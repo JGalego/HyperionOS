@@ -106,6 +106,11 @@ impl FetchBackend for Arc<MockFetchBackend> {
 #[cfg(feature = "real-http")]
 pub struct ReqwestFetchBackend {
     client: reqwest::blocking::Client,
+    /// A real, per-host `robots.txt` cache -- fetched (and parsed) at most once per host for the
+    /// lifetime of this backend, not once per page fetch. Keyed by `"{scheme}://{host}"`, not the
+    /// bare host, so a real `http://` and `https://` origin (genuinely distinct per the spec) are
+    /// never conflated.
+    robots_cache: std::sync::Mutex<std::collections::HashMap<String, crate::robots::RobotsRules>>,
 }
 
 #[cfg(feature = "real-http")]
@@ -113,6 +118,12 @@ impl ReqwestFetchBackend {
     /// A generous but bounded real timeout -- long enough for a real, slow origin, short enough
     /// that a real hung connection doesn't block this crate's caller indefinitely.
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+    /// Sent as this client's own real `User-Agent` header, and matched (case-insensitively)
+    /// against a fetched `robots.txt`'s own `User-agent` groups by [`crate::robots::RobotsRules::
+    /// parse`] -- a real crawler identifying itself honestly rather than fetching under a generic
+    /// or absent identity.
+    const USER_AGENT: &'static str = "hyperionos-netstack";
 
     pub fn new() -> Result<Self, FetchError> {
         Self::with_timeout(Self::TIMEOUT)
@@ -124,6 +135,7 @@ impl ReqwestFetchBackend {
     pub fn with_timeout(timeout: std::time::Duration) -> Result<Self, FetchError> {
         let client = reqwest::blocking::Client::builder()
             .timeout(timeout)
+            .user_agent(Self::USER_AGENT)
             // hub.rs's own redirect-following loop re-canonicalizes and re-checks SSRF at every
             // hop (docs/19's own real security requirement) -- if this client silently followed
             // redirects itself, every intermediate hop would bypass that per-hop check entirely.
@@ -132,7 +144,42 @@ impl ReqwestFetchBackend {
             .map_err(|e| {
                 FetchError::ConnectionFailed("<client init>".to_string(), e.to_string())
             })?;
-        Ok(ReqwestFetchBackend { client })
+        Ok(ReqwestFetchBackend {
+            client,
+            robots_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+        })
+    }
+
+    /// `true` if `canonical_url` is allowed by its own real `robots.txt` -- fetched (a real `GET
+    /// {scheme}://{host}/robots.txt`) and parsed at most once per host, then cached for this
+    /// backend's own lifetime. A `robots.txt` that can't be reached at all (404, connection
+    /// failure, timeout) allows everything, the same real convention as no `robots.txt` existing.
+    fn robots_allows(&self, canonical_url: &str) -> bool {
+        let Ok(url) = reqwest::Url::parse(canonical_url) else {
+            return true;
+        };
+        let Some(host) = url.host_str() else {
+            return true;
+        };
+        let origin = match url.port() {
+            Some(port) => format!("{}://{host}:{port}", url.scheme()),
+            None => format!("{}://{host}", url.scheme()),
+        };
+
+        if let Some(rules) = self.robots_cache.lock().unwrap().get(&origin) {
+            return rules.allows(url.path());
+        }
+
+        let rules = match self.client.get(format!("{origin}/robots.txt")).send() {
+            Ok(response) if response.status().is_success() => response
+                .text()
+                .map(|body| crate::robots::RobotsRules::parse(&body, Self::USER_AGENT))
+                .unwrap_or_default(),
+            _ => crate::robots::RobotsRules::default(),
+        };
+        let allowed = rules.allows(url.path());
+        self.robots_cache.lock().unwrap().insert(origin, rules);
+        allowed
     }
 
     /// Real error classification, based on this backend's own real, empirically-observed error
@@ -173,6 +220,19 @@ impl ReqwestFetchBackend {
 #[cfg(feature = "real-http")]
 impl FetchBackend for ReqwestFetchBackend {
     fn fetch(&self, canonical_url: &str) -> Result<FetchedPage, FetchError> {
+        // Checked, and honored, before ever requesting the page itself -- a real crawler must
+        // not fetch a path its own robots.txt disallows, not merely label it disallowed after
+        // fetching it anyway.
+        if !self.robots_allows(canonical_url) {
+            return Ok(FetchedPage {
+                final_url: None,
+                structured: None,
+                text: String::new(),
+                robots_disallowed: true,
+                rate_limited: false,
+            });
+        }
+
         let response = self
             .client
             .get(canonical_url)
@@ -208,7 +268,8 @@ impl FetchBackend for ReqwestFetchBackend {
             // deferred gap -- this real backend always returns unstructured text, same as before.
             structured: None,
             text,
-            // Real robots.txt fetch/parse is this crate's own already-named deferred gap too.
+            // Always `false` here: a real `true` already returned above, before this real page
+            // fetch ever ran.
             robots_disallowed: false,
             rate_limited,
         })

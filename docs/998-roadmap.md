@@ -2371,3 +2371,26 @@ next step on any of these is a design pass, not code.
   no model registered for `ModelClass::Slm` falls back to the truncated object, not a panic or an
   error; and a run built via the original `ContextEngine::new` (no `ai_runtime` at all) is
   byte-for-byte identical to this crate's pre-existing behavior.
+
+- **`hyperion-netstack`'s `robots.txt` fetching/parsing, landed (2026-07-16)** (docs/19's own
+  named "`robots.txt` fetching/parsing" gap). `FetchedPage::robots_disallowed` was always
+  hardcoded `false` from `ReqwestFetchBackend`, even under the real, feature-gated HTTP client M10
+  already landed. A new, dependency-free `robots::RobotsRules` parses a real `robots.txt` body:
+  it selects the `User-agent` group naming this crate's own real UA (`hyperionos-netstack`, now
+  also sent as the real client's own `User-Agent` header) if one exists, falling back to
+  `User-agent: *`, then resolves `Allow`/`Disallow` by longest-matching-prefix-wins -- the same
+  real precedence real crawlers use, not a naive first-match or an "apply every group" merge.
+  `ReqwestFetchBackend::fetch` performs a real `GET {scheme}://{host}/robots.txt` *before* ever
+  requesting a real page (a real crawler must not fetch a path it was told not to, not merely
+  label it disallowed after fetching it anyway), cached per real host+scheme for this backend's
+  own lifetime so a session fetching many pages from the same origin only ever fetches its
+  `robots.txt` once. A `robots.txt` that can't be reached at all (404, connection failure) allows
+  everything, the real convention for "no `robots.txt` exists." `MockFetchBackend` is unaffected --
+  a fixture still declares the flag directly. Proven end to end: 7 fast, dependency-free unit
+  tests in `robots.rs` itself cover group selection, wildcard fallback, longest-prefix-wins, empty
+  values, and comment/blank-line handling; a new `candle`-style `real-http`-feature-gated
+  `tests/real_robots.rs`, against a real local HTTP/1.1 fixture server (not a remote host, so the
+  test can assert on which real requests were and weren't received), proves a disallowed path is
+  genuinely never fetched, an allowed path fetches normally, a missing `robots.txt` allows
+  everything, and a second page fetch against the same host reuses the cached ruleset rather than
+  re-fetching it.
