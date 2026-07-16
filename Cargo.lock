@@ -3317,10 +3317,12 @@ dependencies = [
 name = "hyperion-update"
 version = "0.2.0"
 dependencies = [
+ "hyperion-ai-runtime",
  "hyperion-capability",
  "hyperion-crypto",
  "hyperion-knowledge-graph",
  "hyperion-memory",
+ "hyperion-model-router",
  "hyperion-observability",
  "hyperion-recovery",
  "hyperion-storage",

@@ -156,6 +156,8 @@ pub enum UpdateError {
     RepeatedRecentRollback { reason: String },
     #[error("recovery error: {0}")]
     Recovery(#[from] hyperion_recovery::RecoveryError),
+    #[error("model router error: {0}")]
+    ModelRouter(#[from] hyperion_model_router::ModelRouterError),
     #[error(
         "refusing to stage version {attempted} through the normal update path: it is not newer \
          than {highest_ever} (the highest version ever installed) -- a deliberate downgrade must \

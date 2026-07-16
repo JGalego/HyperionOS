@@ -36,6 +36,16 @@
 //! the most recent matching samples off a real
 //! `hyperion_observability::TelemetryCollector` rather than a caller
 //! inventing the numbers.
+//! [`orchestrator::UpdateOrchestrator::apply_update_with_rollout`] (2026-07-16) closes
+//! `hyperion-model-router`'s own named gap for real: this crate is the real
+//! [32 — Update System](32-update-system.md) caller docs/23 always said owned "deciding what
+//! percentage to declare and when to ratchet it up" — each real, health-gated stage really calls
+//! `ModelRouter::set_rollout_stage` with that stage's own real percentage, reaching `Ga` once
+//! every stage passes, and demoted back to `Shadow` (never left live at a partial percentage) on
+//! a health breach. [`orchestrator::UpdateOrchestrator::apply_update`] is unchanged — still every
+//! existing caller's default; the Model-Router-aware entry point is additive, both delegating to
+//! the identical shared pipeline so the two paths can never drift on anything but the rollout
+//! side effect itself.
 //!
 //! Deliberately deferred, and why:
 //!

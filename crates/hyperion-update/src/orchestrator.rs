@@ -3,6 +3,7 @@ use std::sync::Mutex;
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_crypto::{Keystore, Signature, VerifyingKey};
+use hyperion_model_router::{ImplId, ModelRouter, RolloutStage};
 use hyperion_recovery::{RecoveryPointId, RecoveryService, RollbackCause, Trigger};
 
 use crate::types::{
@@ -123,8 +124,69 @@ impl UpdateOrchestrator {
         manifest: &UpdateManifest,
         hardware_compatible: bool,
         now: u64,
+        health_for_stage: impl FnMut(u8) -> crate::types::CohortHealth,
+        verifying_key: &VerifyingKey,
+    ) -> Result<Version, UpdateError> {
+        self.apply_update_inner(
+            monitor,
+            token,
+            manifest,
+            hardware_compatible,
+            now,
+            health_for_stage,
+            verifying_key,
+            None,
+        )
+    }
+
+    /// As [`Self::apply_update`], but each stage's real percentage also really drives
+    /// `model_router`'s own `RolloutStage::Canary` promotion for `impl_id` — this crate's own
+    /// previously-named gap (docs/23's `hyperion-model-router` doc comment: "*deciding* what
+    /// percentage to declare and when to ratchet it up over a real rollout's lifetime remains
+    /// [32 — Update System]'s own job"), closed for real: this crate now really is that caller,
+    /// not just a documented intention. `impl_id` is caller-supplied — `UpdateManifest.subject`
+    /// has no numeric Model Router identity of its own to derive one from (multiple competing
+    /// implementations can share one `capability_id` string), so only the caller genuinely knows
+    /// which specific implementation this update promotes. A health breach demotes `impl_id`
+    /// back to `RolloutStage::Shadow` — never leaving an unhealthy candidate live in front of any
+    /// real traffic — before this method returns its own real
+    /// [`UpdateError::RolloutHealthBreach`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_update_with_rollout(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        manifest: &UpdateManifest,
+        hardware_compatible: bool,
+        now: u64,
+        health_for_stage: impl FnMut(u8) -> crate::types::CohortHealth,
+        verifying_key: &VerifyingKey,
+        model_router: &ModelRouter,
+        impl_id: ImplId,
+    ) -> Result<Version, UpdateError> {
+        self.apply_update_inner(
+            monitor,
+            token,
+            manifest,
+            hardware_compatible,
+            now,
+            health_for_stage,
+            verifying_key,
+            Some((model_router, impl_id)),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_update_inner(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        manifest: &UpdateManifest,
+        hardware_compatible: bool,
+        now: u64,
         mut health_for_stage: impl FnMut(u8) -> crate::types::CohortHealth,
         verifying_key: &VerifyingKey,
+        rollout_target: Option<(&ModelRouter, ImplId)>,
     ) -> Result<Version, UpdateError> {
         self.require(monitor, token, RightsMask::WRITE)?;
 
@@ -184,6 +246,16 @@ impl UpdateOrchestrator {
 
             let health = health_for_stage(stage.percent);
             if !health.within(&manifest.rollout_policy.health_thresholds) {
+                if let Some((model_router, impl_id)) = rollout_target {
+                    // Never leave an unhealthy candidate live in front of any real traffic --
+                    // demoted back to Shadow regardless of which real rollback path below fires.
+                    model_router.set_rollout_stage(
+                        monitor,
+                        token,
+                        impl_id,
+                        RolloutStage::Shadow,
+                    )?;
+                }
                 if manifest.rollout_policy.auto_rollback_on_breach {
                     let cause = RollbackCause {
                         reason: format!(
@@ -209,6 +281,22 @@ impl UpdateOrchestrator {
                 }
                 return Err(UpdateError::RolloutHealthBreach);
             }
+
+            // This stage's real percentage genuinely gates live traffic now, not just a doc's
+            // intention -- see this method's own doc comment.
+            if let Some((model_router, impl_id)) = rollout_target {
+                model_router.set_rollout_stage(
+                    monitor,
+                    token,
+                    impl_id,
+                    RolloutStage::Canary(f32::from(stage.percent) / 100.0),
+                )?;
+            }
+        }
+
+        // Every stage passed healthy -- the candidate has genuinely earned full rollout.
+        if let Some((model_router, impl_id)) = rollout_target {
+            model_router.set_rollout_stage(monitor, token, impl_id, RolloutStage::Ga)?;
         }
 
         self.active_versions

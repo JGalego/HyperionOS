@@ -2708,3 +2708,27 @@ next step on any of these is a design pass, not code.
   claiming a publisher it wasn't really signed by is rejected; an unregistered publisher is
   rejected; and `update_with_publisher_registry` resolves the same real trust. All of both crates'
   pre-existing tests pass unchanged.
+
+- **`hyperion-model-router`'s staged-rollout percentage now really comes from
+  `hyperion-update`, landed (2026-07-16)** (this crate's own named gap: "*deciding* what
+  percentage to declare and when to ratchet it up over a real rollout's lifetime remains
+  [32 — Update System]'s own job" — real canary sampling existed, but nothing ever actually called
+  it from a real rollout). `hyperion_update::UpdateOrchestrator::apply_update_with_rollout` is a
+  new, additive sibling of `apply_update` (unchanged, still every existing caller's default; both
+  delegate to a shared `apply_update_inner` so the two paths can never drift on anything but the
+  rollout side effect) — a real, caller-supplied `ImplId` (this crate's own `UpdateManifest`
+  subject has no numeric Model Router identity of its own to derive one from, since multiple
+  competing implementations can share one `capability_id` string) is really promoted via
+  `ModelRouter::set_rollout_stage` at every real, health-gated stage: `Canary(stage.percent / 100)`
+  on each stage that passes health, `Ga` once every stage has, and demoted back to `Shadow` — never
+  left live at a partial percentage — on a health breach, before the real
+  `UpdateError::RolloutHealthBreach` this crate already returned. No dependency cycle
+  (`hyperion-model-router` has no reverse edge onto `hyperion-update`); a new
+  `UpdateError::ModelRouter(#[from] ModelRouterError)` variant folds the router's own capability
+  check into this crate's existing error type. Proven end to end in a new
+  `tests/staged_rollout_model_router.rs` (3 tests): a fully healthy rollout reaches `Ga`; each
+  stage's own health check observes exactly the *previous* stage's real promotion (`Shadow` →
+  `Canary(0.01)` → `Canary(0.10)` → `Canary(0.50)`), proving genuine ratcheting rather than a jump
+  straight to `Ga`; and a health breach demotes the real candidate back to `Shadow` rather than
+  leaving it stuck at whatever partial percentage it last reached. All 29 of this crate's own
+  pre-existing tests pass unchanged.

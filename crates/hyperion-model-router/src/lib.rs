@@ -52,10 +52,15 @@
 //!   through to whatever GA (or other in-sample Canary) candidate already exists, docs/23's own
 //!   "existing fallback chain still live as a safety net." A candidate that *is* sampled in still
 //!   carries the same modest `availability_fit` discount this crate always applied to Canary —
-//!   the two mechanisms are additive, not a replacement of one by the other. What's still
-//!   deferred: *deciding* what percentage to declare and when to ratchet it up over a real
-//!   rollout's lifetime remains [32 — Update System](../32-update-system.md)'s own job (Phase
-//!   9/10) — this crate only makes an already-declared percentage real, it doesn't decide one.
+//!   the two mechanisms are additive, not a replacement of one by the other. ~~*Deciding* what
+//!   percentage to declare and when to ratchet it up~~ (2026-07-16) — now real too, and
+//!   deliberately not here: `hyperion-update::UpdateOrchestrator::apply_update_with_rollout` is
+//!   the real [32 — Update System](../32-update-system.md) caller docs/23 always named as owning
+//!   this decision, calling `set_rollout_stage` with each real, health-gated stage's own real
+//!   percentage — GA once every stage passes, demoted back to `Shadow` (never left stuck at a
+//!   partial percentage) on a health breach. This crate's own contribution is still exactly
+//!   `route()`/`canary_sampled_in` — it makes an already-declared percentage real, it never
+//!   decides one itself.
 //! - ~~Durable decision log~~ — now real: `hyperion-api-gateway`'s
 //!   `invoke_capability` appends every real routing decision's
 //!   [`Rationale`] to `hyperion-observability::AuditLedger` via the new
