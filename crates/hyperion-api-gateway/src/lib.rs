@@ -71,6 +71,23 @@
 //! see below), so this is the first real `set_confidence` caller in the
 //! workspace.
 //!
+//! [`gateway::ApiGateway::verify_with_ensemble`] (2026-07-16) closes `hyperion-model-router`'s
+//! own previously-named "ensemble/verification dispatch" gap (docs/23 §Algorithms 5) — real for
+//! the first time, and deliberately here rather than in that crate: `hyperion-model-router` is
+//! "a decision, never an execution," so once its own `route()` says a call
+//! (`Rationale::needs_verification`) needs it, this gateway — the real place invocation already
+//! happens — dispatches a real, architecturally distinct second candidate (a different
+//! `hyperion_model_router::ImplKind` than the primary) via the same real
+//! [`gateway::ApiGateway::dispatch_one`] every ordinary dispatch already uses, and reconciles.
+//! Real agreement (identical real outputs) genuinely boosts the recorded confidence — a second,
+//! superseding `set_confidence` call tagged `ConfidenceMethod::Ensemble` — never just an
+//! assertion. Real disagreement is never silently resolved: this crate has no designated
+//! tiebreaker to consult, so it surfaces as [`ApiError::EnsembleDisagreement`], carrying both
+//! real outputs, rather than one being discarded. Fails open (no ensemble dispatch at all) when
+//! there's no architecturally distinct candidate to verify against, or when the verifying
+//! candidate itself can't run — the primary's already-successful result is never blocked on a
+//! verification that can't happen.
+//!
 //! Deliberately deferred, and why:
 //!
 //! - **Deriving `RiskHints` from real signals.** The gateway still takes

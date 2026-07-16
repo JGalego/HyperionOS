@@ -4,22 +4,25 @@ use std::sync::{Arc, Mutex};
 use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, TokenId};
 use hyperion_context::{Budget, ContextBundle, ContextEngine, Scope};
-use hyperion_explainability::{ControlState, ExplanationStore, ReasoningStep};
+use hyperion_explainability::{
+    ConfidenceMethod, ConfidenceScore, ControlState, ExplanationId, ExplanationStore, ReasoningStep,
+};
 use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::{GraphQuery, KnowledgeGraph, NodeId, QueryHit};
 use hyperion_memory::{ErasureReceipt, MemoryEngine, MemoryFilter};
-use hyperion_model_router::{ImplKind, ModelRouter};
+use hyperion_model_router::{ImplId, ImplKind, ModelRouter, RoutingDecision};
 use hyperion_observability::{AuditAction, AuditLedger, AuditPayload, PrincipalRef};
 use hyperion_plugin_framework::PluginRegistry;
 use hyperion_recovery::RecoveryService;
 use hyperion_security::{InterventionLevel, PendingAction};
 
 use crate::router_bridge::{
-    build_invocation, consequence_tier_for, to_confidence_and_alternatives, to_router_descriptor,
+    boost_confidence, build_invocation, consequence_tier_for, to_confidence_and_alternatives,
+    to_router_descriptor,
 };
 use crate::types::{
-    ApiError, ApiScope, InvokeRequest, InvokeResponse, SkillDelegationSignal, SubmitIntentRequest,
-    SubmitIntentResponse,
+    ApiError, ApiScope, EnsembleOutcome, InvokeRequest, InvokeResponse, SkillDelegationSignal,
+    SubmitIntentRequest, SubmitIntentResponse,
 };
 
 /// docs/26 — the API Gateway: "a thin, uniform gateway in front of five
@@ -467,10 +470,26 @@ impl ApiGateway {
         self.explainability
             .transition(monitor, token, explanation_id, ControlState::Executing)?;
 
-        for impl_id in &decision.fallback_chain {
+        for (i, impl_id) in decision.fallback_chain.iter().enumerate() {
             match self.dispatch_one(monitor, token, *impl_id, &request) {
                 Ok(outputs) => {
                     self.model_router.report_outcome(*impl_id, true);
+                    // Ensemble verification only ever applies to the primary candidate (index 0)
+                    // — a fallback that only ran because everything ranked above it already
+                    // failed has nothing left to verify against that hasn't already failed too.
+                    let ensemble = if i == 0 {
+                        self.verify_with_ensemble(
+                            monitor,
+                            token,
+                            *impl_id,
+                            &decision,
+                            &request,
+                            &outputs,
+                            explanation_id,
+                        )?
+                    } else {
+                        None
+                    };
                     self.explainability.transition(
                         monitor,
                         token,
@@ -481,6 +500,7 @@ impl ApiGateway {
                         outputs,
                         implementation_used: impl_id.0,
                         explanation_id,
+                        ensemble,
                     });
                 }
                 Err(_) => {
@@ -492,6 +512,93 @@ impl ApiGateway {
         self.explainability
             .transition(monitor, token, explanation_id, ControlState::RolledBack)?;
         Err(ApiError::NoEligibleImplementation)
+    }
+
+    /// docs/23 §Algorithms 5 / §Pseudocode's `route_ensemble`/`reconcile_ensemble`, real for the
+    /// first time: when the Model Router's own [`hyperion_model_router::Rationale::needs_verification`]
+    /// says this invocation warrants it, actually dispatches a second, real, architecturally
+    /// distinct implementation (the highest-composite candidate with a different
+    /// `hyperion_model_router::ImplKind` than `primary_impl`) and compares its real output against
+    /// the primary's. Fails open, never blocking the primary's already-successful result, when
+    /// there's nothing real to verify against: no `needs_verification`, no architecturally
+    /// distinct candidate considered, or the verifying candidate itself fails to dispatch — this
+    /// crate's own existing "never let a missing capability block execution" convention
+    /// ([`Self::dispatch_one`]'s stub fallback is the identical philosophy one layer down).
+    /// Agreement genuinely boosts confidence (via [`boost_confidence`]) and is recorded as a
+    /// second real `set_confidence` call, superseding the pre-dispatch one. Disagreement has no
+    /// designated tiebreaker to consult in this crate, so it's never silently resolved — see
+    /// [`ApiError::EnsembleDisagreement`].
+    #[allow(clippy::too_many_arguments)]
+    fn verify_with_ensemble(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        primary_impl: ImplId,
+        decision: &RoutingDecision,
+        request: &InvokeRequest,
+        primary_output: &serde_json::Value,
+        explanation_id: ExplanationId,
+    ) -> Result<Option<EnsembleOutcome>, ApiError> {
+        if !decision.rationale.needs_verification {
+            return Ok(None);
+        }
+        let primary_kind = self.model_router.descriptor(primary_impl).map(|d| d.kind);
+        let Some(&(partner_impl, partner_score)) = decision
+            .rationale
+            .candidates_considered
+            .iter()
+            .find(|(id, _)| {
+                *id != primary_impl
+                    && self.model_router.descriptor(*id).map(|d| d.kind) != primary_kind
+            })
+        else {
+            return Ok(None); // no architecturally distinct candidate to verify against
+        };
+
+        let Ok(partner_output) = self.dispatch_one(monitor, token, partner_impl, request) else {
+            return Ok(None); // the verifying candidate itself couldn't run
+        };
+        self.model_router.report_outcome(partner_impl, true);
+
+        if &partner_output != primary_output {
+            self.explainability.transition(
+                monitor,
+                token,
+                explanation_id,
+                ControlState::Interrupted,
+            )?;
+            return Err(ApiError::EnsembleDisagreement {
+                primary_impl: primary_impl.0,
+                primary_output: primary_output.clone(),
+                alternative_impl: partner_impl.0,
+                alternative_output: partner_output,
+            });
+        }
+
+        let primary_score = decision
+            .rationale
+            .candidates_considered
+            .iter()
+            .find(|(id, _)| *id == primary_impl)
+            .map(|(_, s)| s.composite)
+            .unwrap_or(partner_score.composite);
+        let boosted_confidence = boost_confidence(primary_score);
+        let (_, alternatives) = to_confidence_and_alternatives(decision);
+        self.explainability.set_confidence(
+            monitor,
+            token,
+            explanation_id,
+            ConfidenceScore {
+                value: boosted_confidence,
+                method: ConfidenceMethod::Ensemble,
+            },
+            alternatives,
+        )?;
+
+        Ok(Some(EnsembleOutcome {
+            verifying_impl: partner_impl.0,
+            boosted_confidence,
+        }))
     }
 
     /// M8's real router-to-execution wiring: a candidate the Model Router itself registered as
@@ -584,7 +691,8 @@ mod tests {
     use hyperion_capability::RightsMask;
     use hyperion_crypto::Keystore;
     use hyperion_model_router::{
-        CostModel, ImplId, ImplementationDescriptor, PrivacyTier, RolloutStage,
+        CapabilityInvocation, ConsequenceTier, CostModel, ImplId, ImplementationDescriptor,
+        PrivacyTier, RolloutStage, UrgencyClass,
     };
 
     fn gateway_with_registered_slm() -> (CapabilityMonitor, CapabilityToken, ApiGateway, ImplId) {
@@ -809,5 +917,220 @@ mod tests {
             result,
             Err(ApiError::InsufficientScope(ApiScope::MemoryQuery))
         ));
+    }
+
+    /// Two real, distinct local-model candidates (different `ImplKind`, different real
+    /// `ModelClass`/`model_id`, so `MockBackend`'s own real echo genuinely differs between them —
+    /// see `MockBackend::generate`'s doc on baking `model_id` into its output text) competing for
+    /// one `capability_id`, registered directly on `model_router` -- bypassing the Plugin
+    /// Framework bridge for the identical reason `gateway_with_registered_slm`'s own doc comment
+    /// gives: that bridge can't produce a real `Some(ModelClass)` today, but ensemble
+    /// verification's real value is proven independently of that separate, documented gap.
+    fn gateway_with_two_registered_models() -> (CapabilityMonitor, CapabilityToken, ApiGateway) {
+        let mut monitor = CapabilityMonitor::new();
+        let token = monitor.mint_root(
+            RightsMask::all(),
+            hyperion_capability::TrustBoundaryId(1),
+            None,
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+        let context = Arc::new(ContextEngine::new(graph.clone()));
+        let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
+        let memory = Arc::new(MemoryEngine::new(graph.clone()));
+        let registry = Arc::new(PluginRegistry::new());
+        let explainability = Arc::new(ExplanationStore::new());
+        let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+        let model_router = Arc::new(ModelRouter::new(ai_runtime.clone()));
+
+        let key_dir = tempfile::tempdir().unwrap();
+        let keystore = Keystore::open_or_create(&key_dir.path().join("device.key")).unwrap();
+
+        for (model_id, class) in [(1u64, ModelClass::Slm), (2u64, ModelClass::Lrm)] {
+            let mut model_descriptor = ModelDescriptor {
+                model_id,
+                class,
+                variants: vec![QuantizedVariant {
+                    precision: Precision::Fp16,
+                    footprint_mb: 500,
+                    expected_tokens_per_sec: 40.0,
+                }],
+                signature: None,
+            };
+            model_descriptor.signature = Some(sign(&model_descriptor, &keystore));
+            ai_runtime
+                .register_model(model_descriptor, &keystore.verifying_key())
+                .unwrap();
+        }
+
+        for (impl_id, kind, class) in [
+            (ImplId(1), ImplKind::LocalSmallModel, ModelClass::Slm),
+            (ImplId(2), ImplKind::LocalLargeModel, ModelClass::Lrm),
+        ] {
+            model_router
+                .register_implementation(
+                    &monitor,
+                    &token,
+                    ImplementationDescriptor {
+                        impl_id,
+                        capability_id: "document.summarize".to_string(),
+                        kind,
+                        model_class: Some(class),
+                        privacy_tier: PrivacyTier::Local,
+                        cost_model: CostModel::Free,
+                        quality_profile: std::collections::HashMap::new(),
+                        declared_latency_ms: 100,
+                        rollout_stage: RolloutStage::Shadow,
+                    },
+                )
+                .unwrap();
+            model_router
+                .set_rollout_stage(&monitor, &token, impl_id, RolloutStage::Ga)
+                .unwrap();
+        }
+
+        let gateway = ApiGateway::new(
+            intent,
+            memory,
+            graph,
+            registry,
+            explainability,
+            model_router,
+            context,
+            ai_runtime,
+        );
+        (monitor, token, gateway)
+    }
+
+    #[test]
+    fn an_ensemble_disagreement_between_two_real_local_models_is_never_silently_resolved() {
+        let (monitor, token, gateway) = gateway_with_two_registered_models();
+        let invocation = CapabilityInvocation {
+            capability_id: "document.summarize".to_string(),
+            urgency_class: UrgencyClass::Interactive,
+            consequence_tier: ConsequenceTier::HighStakes,
+            quality_floor: None,
+            latency_budget_ms: 5_000,
+            cloud_consent: false,
+        };
+        let decision = gateway.model_router.route(&invocation);
+        assert!(
+            decision.rationale.needs_verification,
+            "a HighStakes invocation must always need verification"
+        );
+        let primary_impl = decision
+            .chosen
+            .expect("both real candidates are locally feasible");
+
+        let request = InvokeRequest {
+            contract_id: "document.summarize".to_string(),
+            inputs: serde_json::json!({"text": "a document to summarize"}),
+            agent_id: 1,
+            intent_id: 1,
+            risk: crate::types::RiskHints::default(),
+            confirmed: false,
+        };
+        let primary_output = gateway
+            .dispatch_one(&monitor, &token, primary_impl, &request)
+            .expect("the real primary local model must dispatch");
+
+        let explanation_id = gateway
+            .explainability
+            .begin(
+                &monitor,
+                &token,
+                gateway.explainability.next_action_id(),
+                1,
+                1,
+                "document.summarize",
+                vec![],
+                1_000,
+            )
+            .unwrap();
+
+        let result = gateway.verify_with_ensemble(
+            &monitor,
+            &token,
+            primary_impl,
+            &decision,
+            &request,
+            &primary_output,
+            explanation_id,
+        );
+
+        match result {
+            Err(ApiError::EnsembleDisagreement {
+                primary_impl: p,
+                alternative_impl: a,
+                primary_output: po,
+                alternative_output: ao,
+            }) => {
+                assert_eq!(p, primary_impl.0);
+                assert_ne!(
+                    a, p,
+                    "the verifying implementation must be a genuinely different real candidate"
+                );
+                assert_ne!(
+                    po, ao,
+                    "two real, distinct local models must genuinely disagree here"
+                );
+            }
+            other => panic!("expected a real EnsembleDisagreement, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ensemble_verification_is_skipped_when_no_architecturally_distinct_candidate_exists() {
+        let (monitor, token, gateway, impl_id) = gateway_with_registered_slm();
+        let invocation = CapabilityInvocation {
+            capability_id: "intent.parse".to_string(),
+            urgency_class: UrgencyClass::Interactive,
+            consequence_tier: ConsequenceTier::HighStakes,
+            quality_floor: None,
+            latency_budget_ms: 5_000,
+            cloud_consent: false,
+        };
+        let decision = gateway.model_router.route(&invocation);
+        let request = InvokeRequest {
+            contract_id: "intent.parse".to_string(),
+            inputs: serde_json::json!({"utterance": "hi"}),
+            agent_id: 1,
+            intent_id: 1,
+            risk: crate::types::RiskHints::default(),
+            confirmed: false,
+        };
+        let primary_output = gateway
+            .dispatch_one(&monitor, &token, impl_id, &request)
+            .unwrap();
+        let explanation_id = gateway
+            .explainability
+            .begin(
+                &monitor,
+                &token,
+                gateway.explainability.next_action_id(),
+                1,
+                1,
+                "intent.parse",
+                vec![],
+                1_000,
+            )
+            .unwrap();
+
+        let result = gateway
+            .verify_with_ensemble(
+                &monitor,
+                &token,
+                impl_id,
+                &decision,
+                &request,
+                &primary_output,
+                explanation_id,
+            )
+            .unwrap();
+        assert!(
+            result.is_none(),
+            "with only one architecturally distinct candidate, ensemble verification must fail \
+             open rather than block or fabricate a partner"
+        );
     }
 }

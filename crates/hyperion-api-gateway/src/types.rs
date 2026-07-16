@@ -124,12 +124,31 @@ pub struct InvokeRequest {
     pub confirmed: bool,
 }
 
-/// docs/26 §2's `InvokeResponse`.
+/// docs/26 §2's `InvokeResponse`. `ensemble` is `Some` exactly when
+/// [`crate::gateway::ApiGateway::invoke_capability`] actually dispatched a real second,
+/// architecturally distinct implementation to verify against the primary — see
+/// [`EnsembleOutcome`] and this crate's own doc comment.
 #[derive(Debug, Clone)]
 pub struct InvokeResponse {
     pub outputs: serde_json::Value,
     pub implementation_used: PluginId,
     pub explanation_id: ExplanationId,
+    pub ensemble: Option<EnsembleOutcome>,
+}
+
+/// docs/23 §Pseudocode's `reconcile_ensemble`, `Agreed` case: a real second, architecturally
+/// distinct implementation (different `hyperion_model_router::ImplKind` from the primary) was
+/// actually dispatched — never merely estimated — and produced the identical real output, so the
+/// primary's confidence is genuinely boosted (see [`crate::router_bridge::boost_confidence`]),
+/// not just asserted. There is no `Disagreed` variant here: this crate has no
+/// `designated_tiebreaker` to consult (docs/23's `SemanticContract` equivalent carries none), so
+/// an unresolvable disagreement is never returned as a success value — see
+/// [`ApiError::EnsembleDisagreement`] instead, matching docs/23's own routing of that case to a
+/// human, not to a silently-chosen winner.
+#[derive(Debug, Clone)]
+pub struct EnsembleOutcome {
+    pub verifying_impl: PluginId,
+    pub boosted_confidence: f32,
 }
 
 /// docs/998-roadmap.md's Backlog "Protect the Human" item: "no signal exists for 'you've
@@ -161,6 +180,21 @@ pub enum ApiError {
     NoEligibleImplementation,
     #[error("this action was assessed as {0:?} and requires explicit confirmation before it can proceed")]
     ConfirmationRequired(InterventionLevel),
+    /// docs/23 §Pseudocode's `reconcile_ensemble`'s `EscalateToHuman` case, real for the first
+    /// time: a real, dispatched verifying implementation disagreed with the primary and this
+    /// crate has no designated tiebreaker to consult — both real outputs are preserved here
+    /// rather than one being silently discarded, matching docs/23's own "-> 18, 01 §9" routing of
+    /// an unresolvable ensemble disagreement to a human, not to a silently-chosen winner.
+    #[error(
+        "implementation {primary_impl} and its verifying implementation {alternative_impl} \
+         disagreed, and there is no designated tiebreaker to consult"
+    )]
+    EnsembleDisagreement {
+        primary_impl: PluginId,
+        primary_output: serde_json::Value,
+        alternative_impl: PluginId,
+        alternative_output: serde_json::Value,
+    },
     #[error("security risk-assessment error: {0}")]
     Security(#[from] hyperion_security::SecurityError),
     #[error("intent engine error: {0}")]

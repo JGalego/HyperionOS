@@ -912,6 +912,143 @@ fn the_routing_decision_produces_a_real_confidence_score_and_a_real_alternative(
 }
 
 #[test]
+fn an_ensemble_agreement_between_two_stub_dispatched_candidates_boosts_confidence() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let context = Arc::new(ContextEngine::new(graph.clone()));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
+    let memory = Arc::new(MemoryEngine::new(graph.clone()));
+    let registry = Arc::new(PluginRegistry::new());
+    let (_key_dir, keystore) = keystore();
+    let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry.clone(),
+        explainability.clone(),
+        router,
+        context,
+        ai_runtime,
+    );
+    gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
+
+    let contract = SemanticContract {
+        inputs: vec!["query".to_string()],
+        outputs: vec!["results".to_string()],
+        side_effects: vec![SideEffect::NetworkEgress],
+    };
+
+    // Two architecturally distinct kinds (`CloudApi` vs `LocalSmallModel`) competing for the same
+    // capability -- neither has a `native_binary` or a real `ModelClass` (the Plugin Framework
+    // bridge can't produce one, see `router_bridge::to_router_descriptor`'s own doc comment), so
+    // both really dispatch through the identical real stub path. That's genuine agreement, not a
+    // fabricated one: two real, independent `dispatch_one` calls that happen to hit the same real
+    // fallback and produce the identical real output.
+    let mut cloud = PluginManifest {
+        plugin_id: 1,
+        publisher: "acme-plugins".to_string(),
+        signature: None,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract: contract.clone(),
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.9,
+            version: 1,
+            native_binary: None,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    cloud.signature = Some(sign(&cloud, &keystore));
+    registry
+        .install(
+            &mut monitor,
+            &root,
+            cloud,
+            TrustDepth::D2,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    let mut local_model = PluginManifest {
+        plugin_id: 2,
+        publisher: "globex-plugins".to_string(),
+        signature: None,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract,
+            implementation_kind: ImplementationKind::LocalSmallModel,
+            quality_score: 0.5,
+            version: 1,
+            native_binary: None,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    local_model.signature = Some(sign(&local_model, &keystore));
+    registry
+        .install(
+            &mut monitor,
+            &root,
+            local_model,
+            TrustDepth::D2,
+            true,
+            1_001,
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    let response = gateway
+        .invoke_capability(
+            &monitor,
+            &root,
+            InvokeRequest {
+                contract_id: "web.search".to_string(),
+                inputs: serde_json::json!({"query": "hyperion os"}),
+                agent_id: 1,
+                intent_id: 1,
+                risk: risky_pending_action_hints(), // HighStakes -> needs_verification
+                confirmed: true,
+            },
+            1_002,
+        )
+        .unwrap();
+
+    let outcome = response.ensemble.expect(
+        "a HighStakes invocation with two real, distinct-kind candidates must actually \
+                 dispatch and reconcile a real ensemble",
+    );
+    assert!(
+        outcome.boosted_confidence > 0.5 && outcome.boosted_confidence <= 1.0,
+        "expected a real, boosted confidence, got {}",
+        outcome.boosted_confidence
+    );
+    assert_ne!(
+        outcome.verifying_impl, response.implementation_used,
+        "the verifying implementation must be genuinely distinct from the primary"
+    );
+
+    let record = explainability.get(response.explanation_id).unwrap();
+    let confidence = record
+        .confidence
+        .expect("ensemble agreement must leave a real, updated confidence on the record");
+    assert_eq!(confidence.value, outcome.boosted_confidence);
+    assert_eq!(
+        confidence.method,
+        hyperion_explainability::ConfidenceMethod::Ensemble,
+        "an ensemble-corroborated confidence must be tagged as such, not as a bare heuristic"
+    );
+}
+
+#[test]
 fn invoke_capability_with_no_registered_contract_is_not_eligible() {
     let (monitor, root, gateway) = setup();
     gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();

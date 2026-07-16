@@ -15,14 +15,17 @@
 //! (§Recovery Mechanisms) and a real Shadow/Canary/GA rollout-stage filter
 //! (§Algorithms 1/6). What's deliberately *not* here, and why:
 //!
-//! - **Ensemble/verification dispatch** (§Algorithms 5, §Architecture's
-//!   "Ensemble / verification pattern") — running two architecturally
-//!   distinct implementations in parallel and reconciling agreement/
-//!   disagreement needs real invokable implementations
-//!   ([11 — Agent Runtime](../11-agent-runtime.md), Phase 4) to dispatch
-//!   to; this crate's `route()` still computes whether ensemble
-//!   verification *would* be needed (`needs_verification`) and reports it
-//!   in the [`Rationale`], but never actually invokes a second candidate.
+//! - ~~**Ensemble/verification dispatch**~~ (§Algorithms 5, §Architecture's "Ensemble /
+//!   verification pattern") — now real, but deliberately not in this crate:
+//!   `hyperion-api-gateway::ApiGateway::verify_with_ensemble` is the real dispatch, since this
+//!   crate's own architecture is "a decision, never an execution" (see this crate's own opening
+//!   paragraph) — actually invoking a second candidate belongs where invocation already happens.
+//!   `route()`'s own real contribution is unchanged: it still computes whether ensemble
+//!   verification *would* be needed (`needs_verification`) and reports it in the [`Rationale`];
+//!   the gateway is the real production caller that acts on that signal, dispatching a real,
+//!   architecturally distinct second candidate (different [`types::ImplKind`]) and reconciling
+//!   agreement (a real, boosted confidence) or disagreement (escalated, never silently resolved —
+//!   this crate has no `designated_tiebreaker` concept for a gateway-level reconciler to consult).
 //! - ~~Real Capability Registry~~ — now real:
 //!   `hyperion-api-gateway::router_bridge` discovers candidates from the
 //!   actual `hyperion-plugin-framework` registry and bridges each into

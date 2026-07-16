@@ -2636,3 +2636,29 @@ next step on any of these is a design pass, not code.
   and a sampled-in candidate still carries the real `0.8` availability discount. All 8 of this
   crate's own pre-existing routing tests, and all 22 of `hyperion-api-gateway`'s, still pass
   unchanged.
+
+- **Ensemble/verification dispatch, landed (2026-07-16)** (docs/23 §Algorithms 5's own named gap:
+  `route()` computed `needs_verification` and reported it in `Rationale`, but nothing ever actually
+  dispatched a second candidate or reconciled agreement/disagreement). Real, but deliberately not
+  in `hyperion-model-router` itself — that crate's own architecture is "a decision, never an
+  execution," so the real dispatch lives in `hyperion-api-gateway::ApiGateway::verify_with_ensemble`,
+  the crate that already bridges decision to real invocation. When `needs_verification` is true,
+  it picks the highest-composite candidate with a different `ImplKind` than the primary (a real,
+  already-available "architecturally distinct" signal — no new taxonomy invented), dispatches it
+  through the exact same real `ApiGateway::dispatch_one` every ordinary call already uses, and
+  compares real outputs. Real agreement genuinely boosts confidence — a real, deterministic
+  `boost_confidence` (halves the remaining distance to `1.0`) — recorded as a second, superseding
+  `set_confidence` call tagged `ConfidenceMethod::Ensemble`, and returned as a new
+  `InvokeResponse.ensemble: Option<EnsembleOutcome>`. Real disagreement is never silently resolved:
+  this crate has no `designated_tiebreaker` concept to consult, so it surfaces as a new
+  `ApiError::EnsembleDisagreement`, carrying both real outputs, rather than discarding one. Fails
+  open — no ensemble dispatch at all — when there's no architecturally distinct candidate to
+  verify against, or the verifying candidate itself can't dispatch, so the primary's already-
+  successful result is never blocked on a verification that can't happen. Proven end to end: two
+  competing, architecturally distinct, non-local-model candidates that both really dispatch
+  through the identical real stub fallback genuinely agree, boosting recorded confidence past 0.5
+  and re-tagging its method as `Ensemble`; two real, distinct local models (different `ModelClass`/
+  `model_id`, so `MockBackend`'s own real echo genuinely differs) registered directly on the
+  router genuinely disagree, returning both real outputs rather than silently picking one; and a
+  candidate pool with only one `ImplKind` present skips ensemble dispatch entirely rather than
+  fabricating a partner.

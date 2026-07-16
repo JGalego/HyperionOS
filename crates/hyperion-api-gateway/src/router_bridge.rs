@@ -74,6 +74,15 @@ pub(crate) fn to_router_descriptor(
 /// both read as ordinary, unremarkable consequence; `RequireExplicitConfirm`
 /// is `Sensitive`; `RequireBackupFirst` — the tier that already forced a
 /// real recovery point — is `HighStakes`.
+/// docs/23 §Pseudocode's `reconcile_ensemble`'s `boosted(a.confidence, b.confidence)`: a real,
+/// deterministic boost — halves the remaining distance to full confidence (`1.0`) — rather than
+/// an arbitrary bump. Two independently-dispatched, architecturally distinct implementations
+/// genuinely agreeing is real corroborating evidence (not proof), so this moves confidence
+/// meaningfully closer to certain without ever claiming certainty itself.
+pub(crate) fn boost_confidence(base: f32) -> f32 {
+    (base + (1.0 - base) * 0.5).min(1.0)
+}
+
 pub(crate) fn consequence_tier_for(level: InterventionLevel) -> ConsequenceTier {
     match level {
         InterventionLevel::SilentProceed | InterventionLevel::NotifyAndProceed => {
