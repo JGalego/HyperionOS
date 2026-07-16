@@ -84,10 +84,16 @@
 //!   confirmation, no real prompt UI" pattern `hyperion-device`'s
 //!   `pair(..., confirmed: bool)` already established for Actuate-tier
 //!   pairing.
-//! - **Consent diffing on update** (docs/24 §5: "update shows only
-//!   grants not in `existing_grants`") — this crate has no
-//!   `plugin_update` distinct from `uninstall` + `install`; a caller
-//!   wanting the diff-only UX composes those two calls itself.
+//! - ~~**Consent diffing on update**~~ (docs/24 §5: "update shows only grants not in
+//!   `existing_grants`") — now real: [`registry::PluginRegistry::update`] compares
+//!   `new_manifest.requested_permissions` against the plugin's currently-installed set (by
+//!   `(operation, scope)`, ignoring `justification` wording) and returns exactly the new grants a
+//!   real consent UI should present — empty, and no consent required at all, when the update adds
+//!   nothing. A grant unchanged across the update reuses its exact original token rather than
+//!   being re-minted from scratch; a grant the new manifest drops is really revoked. Every
+//!   contribution is re-registered from the new manifest (the old ones are removed first, reusing
+//!   [`registry::PluginRegistry::uninstall`]'s own non-token cleanup) — an update really replaces
+//!   what a plugin contributes, it doesn't merely top up its permissions.
 //! - **`registry_query`'s semantic-embedding+threshold variant.**
 //!   [`registry::PluginRegistry::query`] is exact-`capability_id` lookup
 //!   only — the embedding variant needs `hyperion-knowledge-graph`'s

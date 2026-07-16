@@ -7,8 +7,8 @@ use hyperion_crypto::VerifyingKey;
 
 use crate::review::validate_manifest;
 use crate::types::{
-    AgentContribution, AutomationWorkflowContribution, CapabilityId, CapabilityManifest,
-    Contribution, ExecutionEngineContribution, HardwareSupportContribution,
+    AgentContribution, AutomationWorkflowContribution, CapabilityGrantRequest, CapabilityId,
+    CapabilityManifest, Contribution, ExecutionEngineContribution, HardwareSupportContribution,
     ImplementationDescriptor, ImplementationKind, InstallState, KnowledgeProviderContribution,
     MemoryProviderContribution, PluginError, PluginHandle, PluginId, PluginManifest,
     QuarantineReason, RegistryEntry, TrustDepth, UiComponentContribution,
@@ -21,6 +21,57 @@ fn rights_for(op: crate::types::Operation) -> RightsMask {
         Operation::Write | Operation::NetworkEgress => RightsMask::WRITE,
         Operation::Execute => RightsMask::EXEC,
     }
+}
+
+/// `true` if `a` and `b` are "the same grant" for [`PluginRegistry::update`]'s own diffing
+/// purposes -- compared by `(operation, scope)` only, deliberately ignoring `justification`: a
+/// publisher rewording why it needs a permission it already has doesn't make that permission
+/// "new," and re-prompting a user's consent over wording alone would be exactly the kind of
+/// needless re-confirmation docs/24 §5's diff-only update UX exists to avoid.
+fn grants_equal(a: &CapabilityGrantRequest, b: &CapabilityGrantRequest) -> bool {
+    a.operation == b.operation && a.scope == b.scope
+}
+
+/// `true` if `manifest` contains a `NativeBinary`-kind `Capability` contribution -- the one case
+/// [`PluginRegistry::install`]/[`PluginRegistry::update`] mint a real sandbox token for. Shared so
+/// the two call sites can never drift on what "needs a sandbox token" means.
+fn needs_sandbox_token(manifest: &PluginManifest) -> bool {
+    manifest.contributions.iter().any(|c| {
+        matches!(
+            c,
+            Contribution::Capability(cm) if cm.implementation_kind == ImplementationKind::NativeBinary
+        )
+    })
+}
+
+/// An honest check at install/update time, not a trusted claim: every `NativeBinary`-backed
+/// contribution (a `Capability` of that kind, or any `ExecutionEngine`) must really name a
+/// program that really exists and is really executable right now. Shared by
+/// [`PluginRegistry::install`] and [`PluginRegistry::update`], and run before either one mutates
+/// any state, so a manifest that fails this never partially installs/updates.
+fn validate_contributions(manifest: &PluginManifest) -> Result<(), PluginError> {
+    for contribution in &manifest.contributions {
+        match contribution {
+            Contribution::Capability(cm) => {
+                if cm.implementation_kind == ImplementationKind::NativeBinary {
+                    validate_native_binary(cm.native_binary.as_ref())?;
+                }
+            }
+            // Same honest "must really exist and really be executable now" check a
+            // Capability's own `NativeBinaryDescriptor` gets -- an engine that can never
+            // actually launch anything must not install as if it could.
+            Contribution::ExecutionEngine(ee) => {
+                validate_native_binary(Some(&ee.launcher))?;
+            }
+            Contribution::Agent(_)
+            | Contribution::HardwareSupport(_)
+            | Contribution::KnowledgeProvider(_)
+            | Contribution::UiComponent(_)
+            | Contribution::AutomationWorkflow(_)
+            | Contribution::MemoryProvider(_) => {}
+        }
+    }
+    Ok(())
 }
 
 /// Real Linux sandboxing only, and only depths this workspace's real enforcement can actually
@@ -166,39 +217,8 @@ impl PluginRegistry {
         // An honest check now, not a trusted claim -- see `NativeBinaryDescriptor`'s own doc
         // comment. Checked before any minting/registration below, so a manifest that fails this
         // never partially installs, matching this function's own existing invariant.
-        let needs_sandbox_token = manifest.contributions.iter().any(|c| match c {
-            Contribution::Capability(cm) => {
-                cm.implementation_kind == ImplementationKind::NativeBinary
-            }
-            Contribution::Agent(_)
-            | Contribution::HardwareSupport(_)
-            | Contribution::KnowledgeProvider(_)
-            | Contribution::UiComponent(_)
-            | Contribution::AutomationWorkflow(_)
-            | Contribution::MemoryProvider(_)
-            | Contribution::ExecutionEngine(_) => false,
-        });
-        for contribution in &manifest.contributions {
-            match contribution {
-                Contribution::Capability(cm) => {
-                    if cm.implementation_kind == ImplementationKind::NativeBinary {
-                        validate_native_binary(cm.native_binary.as_ref())?;
-                    }
-                }
-                // Same honest "must really exist and really be executable now" check a
-                // Capability's own `NativeBinaryDescriptor` gets -- an engine that can never
-                // actually launch anything must not install as if it could.
-                Contribution::ExecutionEngine(ee) => {
-                    validate_native_binary(Some(&ee.launcher))?;
-                }
-                Contribution::Agent(_)
-                | Contribution::HardwareSupport(_)
-                | Contribution::KnowledgeProvider(_)
-                | Contribution::UiComponent(_)
-                | Contribution::AutomationWorkflow(_)
-                | Contribution::MemoryProvider(_) => {}
-            }
-        }
+        validate_contributions(&manifest)?;
+        let needs_sandbox_token = needs_sandbox_token(&manifest);
 
         let plugin_id = self.next_plugin_id.fetch_add(1, Ordering::Relaxed);
         let boundary =
@@ -225,6 +245,153 @@ impl PluginRegistry {
                 .insert(plugin_id, sandbox_token);
         }
 
+        self.register_contributions(plugin_id, &manifest)?;
+
+        self.plugins.lock().unwrap().insert(plugin_id, manifest);
+        self.boundaries.lock().unwrap().insert(plugin_id, boundary);
+        self.tokens.lock().unwrap().insert(plugin_id, minted);
+
+        Ok(PluginHandle {
+            plugin_id,
+            boundary,
+        })
+    }
+
+    /// docs/24 §5's `plugin_update`, closing this crate's own previously-named gap ("this crate
+    /// has no `plugin_update` distinct from `uninstall` + `install`; a caller wanting the
+    /// diff-only UX composes those two calls itself"). Presents (and returns, for a real caller's
+    /// own consent UI to show) only the *new* grants `new_manifest.requested_permissions` asks
+    /// for that the plugin's currently-installed permission set doesn't already cover, compared
+    /// by `(operation, scope)` -- a reworded `justification` alone doesn't make a grant "new."
+    /// Already-granted permissions reuse their existing token rather than being re-minted (and
+    /// re-consented to) from scratch the way composing `uninstall` + `install` would; a permission
+    /// present in the old manifest but dropped from the new one is really revoked, not silently
+    /// left grantable forever. No consent is required at all when the diff is empty. Every
+    /// contribution is re-registered from `new_manifest` (the old ones are removed first, exactly
+    /// like `uninstall`'s own non-token cleanup) -- an update really replaces what a plugin
+    /// contributes, it doesn't merely top up its permissions.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update(
+        &self,
+        monitor: &mut CapabilityMonitor,
+        admin_token: &CapabilityToken,
+        plugin_id: PluginId,
+        new_manifest: PluginManifest,
+        available_depth: TrustDepth,
+        consented_to_new_grants: bool,
+        verifying_key: &VerifyingKey,
+    ) -> Result<Vec<CapabilityGrantRequest>, PluginError> {
+        monitor
+            .check_rights_ok_result(admin_token, RightsMask::GRANT)
+            .map_err(|_| PluginError::Unauthorized)?;
+
+        let old_manifest = self
+            .plugins
+            .lock()
+            .unwrap()
+            .get(&plugin_id)
+            .cloned()
+            .ok_or(PluginError::NoSuchPlugin)?;
+        let boundary = *self
+            .boundaries
+            .lock()
+            .unwrap()
+            .get(&plugin_id)
+            .ok_or(PluginError::NoSuchPlugin)?;
+
+        validate_manifest(&new_manifest, verifying_key)?;
+        if new_manifest.min_trust_depth > available_depth {
+            return Err(PluginError::InsufficientTrustDepth);
+        }
+
+        let new_grants: Vec<CapabilityGrantRequest> = new_manifest
+            .requested_permissions
+            .iter()
+            .filter(|grant| {
+                !old_manifest
+                    .requested_permissions
+                    .iter()
+                    .any(|existing| grants_equal(existing, grant))
+            })
+            .cloned()
+            .collect();
+        if !new_grants.is_empty() && !consented_to_new_grants {
+            return Err(PluginError::ConsentDeclined);
+        }
+        // Same real "must exist and be executable now" check `install` performs, before any real
+        // mutation below -- a failing update must leave the plugin's previous, still-working
+        // install untouched.
+        validate_contributions(&new_manifest)?;
+
+        let old_tokens = self
+            .tokens
+            .lock()
+            .unwrap()
+            .get(&plugin_id)
+            .cloned()
+            .unwrap_or_default();
+        let mut updated_tokens = Vec::with_capacity(new_manifest.requested_permissions.len());
+        for grant in &new_manifest.requested_permissions {
+            let reused_token = old_manifest
+                .requested_permissions
+                .iter()
+                .position(|existing| grants_equal(existing, grant))
+                .map(|i| old_tokens[i].clone());
+            let token = match reused_token {
+                Some(token) => token,
+                None => {
+                    monitor.cap_derive(admin_token, rights_for(grant.operation), None, boundary)?
+                }
+            };
+            updated_tokens.push(token);
+        }
+        for (i, old_grant) in old_manifest.requested_permissions.iter().enumerate() {
+            let still_requested = new_manifest
+                .requested_permissions
+                .iter()
+                .any(|grant| grants_equal(grant, old_grant));
+            if !still_requested {
+                monitor.cap_revoke(&old_tokens[i]);
+            }
+        }
+
+        self.remove_registry_and_contributions(plugin_id);
+        self.register_contributions(plugin_id, &new_manifest)?;
+
+        let needs_sandbox = needs_sandbox_token(&new_manifest);
+        let mut sandbox_tokens = self.sandbox_tokens.lock().unwrap();
+        if needs_sandbox && !sandbox_tokens.contains_key(&plugin_id) {
+            let sandbox_token = monitor.cap_derive(
+                admin_token,
+                RightsMask::READ | RightsMask::WRITE,
+                None,
+                boundary,
+            )?;
+            sandbox_tokens.insert(plugin_id, sandbox_token);
+        } else if !needs_sandbox {
+            sandbox_tokens.remove(&plugin_id);
+        }
+        drop(sandbox_tokens);
+
+        self.plugins.lock().unwrap().insert(plugin_id, new_manifest);
+        self.tokens
+            .lock()
+            .unwrap()
+            .insert(plugin_id, updated_tokens);
+
+        Ok(new_grants)
+    }
+
+    /// Registers every one of `manifest`'s own contributions under `plugin_id` -- `Capability`
+    /// contributions into the shared registry via [`Self::register_implementation`], every other
+    /// variant into its own per-`plugin_id` map. Shared by [`Self::install`] and [`Self::update`];
+    /// callers must run [`validate_contributions`] first (this method only mutates, it never
+    /// validates).
+    fn register_contributions(
+        &self,
+        plugin_id: PluginId,
+        manifest: &PluginManifest,
+    ) -> Result<(), PluginError> {
         for contribution in &manifest.contributions {
             match contribution {
                 Contribution::Capability(cm) => {
@@ -288,15 +455,30 @@ impl PluginRegistry {
                 }
             }
         }
+        Ok(())
+    }
 
-        self.plugins.lock().unwrap().insert(plugin_id, manifest);
-        self.boundaries.lock().unwrap().insert(plugin_id, boundary);
-        self.tokens.lock().unwrap().insert(plugin_id, minted);
+    /// Removes every registered contribution and registry entry belonging to `plugin_id` -- the
+    /// non-token half of [`Self::uninstall`]'s own cleanup, reused as-is by [`Self::update`]
+    /// (which must remove the plugin's *old* contributions before registering its new ones, but
+    /// -- unlike a real uninstall -- never revokes every token, only the ones the new manifest no
+    /// longer requests; see [`Self::update`]'s own doc comment).
+    fn remove_registry_and_contributions(&self, plugin_id: PluginId) {
+        let mut registry = self.registry.lock().unwrap();
+        for entry in registry.values_mut() {
+            entry.implementations.retain(|d| d.plugin_id != plugin_id);
+            entry.owning_plugins.retain(|&id| id != plugin_id);
+        }
+        registry.retain(|_, entry| !entry.implementations.is_empty());
+        drop(registry);
 
-        Ok(PluginHandle {
-            plugin_id,
-            boundary,
-        })
+        self.agent_contributions.lock().unwrap().remove(&plugin_id);
+        self.hardware_support.lock().unwrap().remove(&plugin_id);
+        self.knowledge_providers.lock().unwrap().remove(&plugin_id);
+        self.ui_components.lock().unwrap().remove(&plugin_id);
+        self.automation_workflows.lock().unwrap().remove(&plugin_id);
+        self.memory_providers.lock().unwrap().remove(&plugin_id);
+        self.execution_engines.lock().unwrap().remove(&plugin_id);
     }
 
     /// docs/24 §5's structural-compatibility check on `capability_id`
@@ -366,23 +548,10 @@ impl PluginRegistry {
             monitor.cap_revoke(token);
         }
 
-        let mut registry = self.registry.lock().unwrap();
-        for entry in registry.values_mut() {
-            entry.implementations.retain(|d| d.plugin_id != plugin_id);
-            entry.owning_plugins.retain(|&id| id != plugin_id);
-        }
-        registry.retain(|_, entry| !entry.implementations.is_empty());
-        drop(registry);
+        self.remove_registry_and_contributions(plugin_id);
 
         self.plugins.lock().unwrap().remove(&plugin_id);
         self.boundaries.lock().unwrap().remove(&plugin_id);
-        self.agent_contributions.lock().unwrap().remove(&plugin_id);
-        self.hardware_support.lock().unwrap().remove(&plugin_id);
-        self.knowledge_providers.lock().unwrap().remove(&plugin_id);
-        self.ui_components.lock().unwrap().remove(&plugin_id);
-        self.automation_workflows.lock().unwrap().remove(&plugin_id);
-        self.memory_providers.lock().unwrap().remove(&plugin_id);
-        self.execution_engines.lock().unwrap().remove(&plugin_id);
         self.quarantined_plugins.lock().unwrap().remove(&plugin_id);
         Ok(())
     }
@@ -540,6 +709,18 @@ impl PluginRegistry {
 
     pub fn boundary_of(&self, plugin_id: PluginId) -> Option<TrustBoundaryId> {
         self.boundaries.lock().unwrap().get(&plugin_id).copied()
+    }
+
+    /// The real, currently-tracked tokens this plugin was minted, in the same order as its own
+    /// `requested_permissions` -- exposed for the same reason [`Self::boundary_of`] is: real
+    /// capability state a caller (or this crate's own tests) can inspect without a second,
+    /// parallel bookkeeping system. [`Self::update`] reuses a token here across an update exactly
+    /// when the corresponding grant is unchanged, rather than re-minting one with equivalent
+    /// rights under a new identity -- checkable here via plain [`CapabilityToken`] equality, not
+    /// just [`hyperion_capability::CapabilityMonitor::is_live`]. `None` if `plugin_id` isn't
+    /// installed.
+    pub fn tokens_of(&self, plugin_id: PluginId) -> Option<Vec<CapabilityToken>> {
+        self.tokens.lock().unwrap().get(&plugin_id).cloned()
     }
 
     /// The real, previously-missing execution this crate's own doc comment named: given a

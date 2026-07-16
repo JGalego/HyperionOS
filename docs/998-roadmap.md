@@ -2423,3 +2423,36 @@ next step on any of these is a design pass, not code.
   can't be re-proven against a local fixture: this crate's own real SSRF containment correctly
   refuses a loopback target at that layer, the same reason `real_web_fetch.rs`'s own hub-level
   tests use a real remote host instead of a local one.
+
+- **`hyperion-plugin-framework`'s consent-diffing `plugin_update`, landed (2026-07-16)** (docs/24
+  §5's own named gap: "this crate has no `plugin_update` distinct from `uninstall` + `install`; a
+  caller wanting the diff-only UX composes those two calls itself"). A new
+  `PluginRegistry::update(monitor, admin_token, plugin_id, new_manifest, available_depth,
+  consented_to_new_grants, verifying_key) -> Result<Vec<CapabilityGrantRequest>, PluginError>`
+  compares `new_manifest.requested_permissions` against the plugin's own currently-installed
+  permission set (a new `grants_equal` helper, comparing by `(operation, scope)` — a reworded
+  `justification` alone doesn't make a grant "new") and returns exactly the new grants a real
+  consent UI should present; consent is required only when that diff is non-empty. A grant
+  unchanged across the update reuses its exact original `CapabilityToken` (checked by identity,
+  not just equivalent rights, in this landed work's own tests) rather than being re-derived from
+  scratch the way composing `uninstall` + `install` would force; a grant the new manifest drops is
+  really revoked via `monitor.cap_revoke`, not silently left grantable forever. Every contribution
+  is re-registered from the new manifest — the old ones are removed first via a new
+  `remove_registry_and_contributions` helper, factored out of `uninstall`'s own non-token cleanup
+  so the two can never drift — since an update really replaces what a plugin contributes, not
+  merely tops up its permissions. `install`/`uninstall` were refactored to share three small new
+  helpers (`validate_contributions`, `needs_sandbox_token`, `register_contributions`,
+  `remove_registry_and_contributions`) with `update` rather than duplicating their own validation/
+  registration logic a third time; all of `install_and_uninstall.rs`'s pre-existing tests still
+  pass unchanged, confirming the refactor preserved exact prior behavior. A new, small
+  `PluginRegistry::tokens_of(plugin_id)` accessor (mirroring the existing `boundary_of`) exposes a
+  plugin's currently-tracked tokens for real inspection — needed to make token reuse/revocation
+  observable at all, by a real caller or this landed work's own tests, without a second, parallel
+  bookkeeping system. Proven end to end in a new `tests/plugin_update.rs` (7 tests): an update with
+  no new permissions needs no consent; one adding a permission is rejected without consent and
+  leaves the previous install completely untouched; one adding a permission returns exactly that
+  one new grant and reuses the unchanged grant's exact original token; one dropping a permission
+  really revokes that permission's token while the kept one stays live; an update replaces the
+  registered contribution (not stacks it); updating an unknown plugin fails with `NoSuchPlugin`;
+  and updating without `GRANT` rights fails with `Unauthorized`, matching `install`/`uninstall`'s
+  own existing rights-gating tests.
