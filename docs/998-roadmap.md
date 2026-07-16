@@ -3064,3 +3064,27 @@ next step on any of these is a design pass, not code.
   dispatch through a wired `IntentEngine` genuinely lands `IntentStatus::Completed` on the correct
   leaf, leaving an undispatched sibling `Planned`). All pre-existing tests in both crates pass
   unchanged.
+
+- **`hyperion-knowledge-graph`'s real node deletion (tombstone), landed (2026-07-16)** (this
+  crate's own gap named by its two real consumers: `hyperion-recovery`/`hyperion-privacy`'s "no
+  node-delete operation (only edges tombstone)"). `NodeRecord` gains a real `tombstone: bool`
+  field (`#[serde(default)]`, so every pre-existing WAL record replays as "not tombstoned" —
+  unchanged behavior); a new `KnowledgeGraph::delete_node` tombstones a node exactly the way
+  `unlink` already tombstones an edge, per docs/09 §10's own "deletions are tombstones...
+  undoable within a retention window" precedent, now applied to nodes for the first time.
+  `get`/`query`/`traverse`/`dump` all now exclude a tombstoned node — `get`/`traverse`'s own
+  start-node check both return a real, honest `NotFound`, indistinguishable from a node that
+  never existed. A plain `put_node` update on an already-tombstoned node id never silently
+  resurrects it (the same "an insert never revives a deliberate deletion" invariant `link`
+  already enforces for edges) — `delete_node` is the one real way a tombstone is ever set.
+  `explain`/`get_at_version` deliberately still read a tombstoned node's history unfiltered — an
+  audit/historical-read path, not a live-view one, matching this workspace's own Explainability
+  principle ("Undo?"). Deliberately scoped to the KG-side primitive only: neither
+  `hyperion-privacy::erasure::erase(CryptoShred)` nor `hyperion-recovery`'s "un-creating a freshly
+  created object" limitation calls it yet — both crates' own doc comments now name this as real,
+  separate follow-up wiring rather than a missing primitive. Proven with 9 new tests: real
+  `NotFound` after delete; deleting an unknown/already-deleted node; exclusion from
+  `query`/`dump`; `traverse` refusing a tombstoned start and never expanding into a tombstoned
+  neighbor; the tombstone surviving a real WAL replay (`KnowledgeGraph::open` twice); and a plain
+  `put_node` update never resurrecting one. All 25 pre-existing `hyperion-knowledge-graph` tests
+  pass unchanged.

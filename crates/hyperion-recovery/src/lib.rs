@@ -56,11 +56,14 @@
 //!   (`restore_objects`, `undo`, `redo`, `recover_from_crash`), not a
 //!   one-line wiring fix — worth its own careful pass rather than folding
 //!   into an unrelated change.
-//! - **Un-creating a freshly created object.** `hyperion-knowledge-graph`
-//!   has no node-delete operation (only edges tombstone); a recovery-
-//!   point snapshot of an object that didn't exist yet is recorded as
-//!   `None` and is simply not restorable — this crate's `restore`
-//!   reverts *modifications* to pre-existing objects, never *creations*.
+//! - **Un-creating a freshly created object.** ~~`hyperion-knowledge-graph`
+//!   has no node-delete operation (only edges tombstone)~~ — that primitive is now real
+//!   (`hyperion_knowledge_graph::KnowledgeGraph::delete_node`, tombstones a node exactly the way
+//!   `unlink` already tombstones an edge), but this crate doesn't call it yet: a recovery-point
+//!   snapshot of an object that didn't exist yet is still recorded as `None` and is simply not
+//!   restorable — this crate's `restore` reverts *modifications* to pre-existing objects, never
+//!   *creations*. Wiring `restore` to call the real `delete_node` for exactly this case remains
+//!   separate, real follow-up work this bullet does not itself close.
 //! - **`InverseOperation`/symbolic inverses** (docs/33 §4's
 //!   `ActionRecord.inverse_op`) — every "inverse" here is the literal
 //!   pre-action snapshot restored verbatim, not a separately-declared

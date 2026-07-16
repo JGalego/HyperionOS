@@ -206,10 +206,13 @@ impl KnowledgeGraph {
 
         let mut index = self.index.lock().unwrap();
         let expected_version = node_id.and_then(|id| self.storage.current_version(id));
-        let created_at = node_id
-            .and_then(|id| index.nodes.get(&id))
-            .map(|n| n.created_at)
-            .unwrap_or_else(now);
+        let existing = node_id.and_then(|id| index.nodes.get(&id));
+        let created_at = existing.map(|n| n.created_at).unwrap_or_else(now);
+        // A plain `put_node` update never resurrects a tombstoned node -- the same "an insert
+        // never silently revives what was deliberately deleted" precedent `link`'s own tombstone
+        // handling already establishes for edges. `Self::delete_node` is the one real way a
+        // tombstone is ever set; nothing here clears it.
+        let tombstone = existing.is_some_and(|n| n.tombstone);
 
         let record = NodeRecord {
             object_type: object_type.into(),
@@ -218,6 +221,7 @@ impl KnowledgeGraph {
             owner: token.origin().0,
             created_at,
             updated_at: now(),
+            tombstone,
         };
         let payload = serde_json::to_value(Record::Node(record.clone())).unwrap();
         let (assigned_id, _) =
@@ -239,8 +243,51 @@ impl KnowledgeGraph {
         index
             .nodes
             .get(&node_id)
+            .filter(|n| !n.tombstone)
             .cloned()
             .ok_or(GraphError::NotFound)
+    }
+
+    /// `graph.delete_node` — this crate's own previously-named "no node-delete operation (only
+    /// edges tombstone)" gap, closed the same way [`Self::unlink`] already tombstones an edge:
+    /// per docs/09 §10's own "deletions are tombstones... undoable within a retention window"
+    /// precedent, applied to nodes for the first time. [`Self::get`]/[`Self::query`]/
+    /// [`Self::traverse`]/[`Self::dump`] all exclude a tombstoned node exactly as they already
+    /// exclude a tombstoned edge — a real `NotFound`/omission for every caller, not merely
+    /// hidden metadata. A no-op if already tombstoned.
+    pub fn delete_node(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        node_id: NodeId,
+    ) -> Result<(), GraphError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+
+        let mut index = self.index.lock().unwrap();
+        let existing = index
+            .nodes
+            .get(&node_id)
+            .ok_or(GraphError::NotFound)?
+            .clone();
+        if existing.tombstone {
+            return Ok(());
+        }
+
+        let record = NodeRecord {
+            tombstone: true,
+            updated_at: now(),
+            ..existing
+        };
+        let payload = serde_json::to_value(Record::Node(record.clone())).unwrap();
+        self.storage.put_object(
+            monitor,
+            token,
+            Some(node_id),
+            self.storage.current_version(node_id),
+            payload,
+        )?;
+        index.apply(node_id, Record::Node(record));
+        Ok(())
     }
 
     /// The node's current `VersionId`, if it exists — the handle a caller needs to hold onto now
@@ -306,7 +353,7 @@ impl KnowledgeGraph {
         let mut hits: Vec<QueryHit> = index
             .nodes
             .iter()
-            .filter(|(_, n)| n.owner == caller_boundary)
+            .filter(|(_, n)| !n.tombstone && n.owner == caller_boundary)
             .filter(|(_, n)| {
                 query
                     .type_filter
@@ -369,7 +416,7 @@ impl KnowledgeGraph {
         let mut nodes: Vec<(NodeId, NodeRecord)> = index
             .nodes
             .iter()
-            .filter(|(_, n)| n.owner == caller_boundary)
+            .filter(|(_, n)| !n.tombstone && n.owner == caller_boundary)
             .map(|(id, n)| (*id, n.clone()))
             .collect();
         nodes.sort_by_key(|(id, _)| *id);
@@ -434,7 +481,7 @@ impl KnowledgeGraph {
             index
                 .nodes
                 .get(id)
-                .is_some_and(|n| n.owner == caller_boundary)
+                .is_some_and(|n| !n.tombstone && n.owner == caller_boundary)
         };
         if !visible(&start) {
             return Err(GraphError::NotFound);

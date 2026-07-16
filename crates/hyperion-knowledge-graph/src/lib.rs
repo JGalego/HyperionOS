@@ -5,7 +5,7 @@
 //! riding on `hyperion-storage`'s existing version chain, `collections` as a
 //! thin view expressible in terms of the other two) and the graph/embedding
 //! model of docs/09-knowledge-graph.md (typed weighted edges, vector
-//! similarity, bidirectional traversal, CRDT-style tombstoned edge deletion)
+//! similarity, bidirectional traversal, CRDT-style tombstoned node/edge deletion)
 //! on top of `hyperion-storage`'s WAL — never as a second, independently
 //! committed store. Every node and every edge is written through
 //! [`hyperion_storage::StorageEngine::put_object`], so "the four stores are
@@ -68,6 +68,18 @@
 //!   token's boundary). `device_origin`-based filtering (a finer axis than plain `owner`) remains
 //!   unimplemented, as does docs/29's richer per-row `acl` JSONB — this closes the coarser,
 //!   `owner`-only half of the gap this bullet named.
+//! - ~~**Node deletion.**~~ Now real: `hyperion-recovery`/`hyperion-privacy`'s own previously-named
+//!   "no node-delete operation (only edges tombstone)" gap. [`graph::KnowledgeGraph::delete_node`]
+//!   tombstones a node exactly the way [`graph::KnowledgeGraph::unlink`] already tombstones an
+//!   edge; [`graph::KnowledgeGraph::get`]/[`graph::KnowledgeGraph::query`]/
+//!   [`graph::KnowledgeGraph::traverse`]/[`graph::KnowledgeGraph::dump`] all now treat a
+//!   tombstoned node as genuinely gone, and a plain [`graph::KnowledgeGraph::put_node`] update
+//!   never silently resurrects one — the same "an insert never revives a deliberate deletion"
+//!   invariant edges already had. This closes only the KG-side primitive itself; neither
+//!   `hyperion-privacy::erasure::erase` nor `hyperion-recovery` calls it yet, so `CryptoShred`
+//!   still overwrites metadata with a tombstone-shaped placeholder rather than using this real
+//!   one, and "un-creating a freshly created object" via undo remains separately unimplemented —
+//!   both are real, separate follow-up wiring this bullet does not itself close.
 //! - **Multi-device CRDT merge.** Edge version tracking here is a single
 //!   monotonic counter per `(subject, predicate, target)` triple, enough to
 //!   prove and test the core invariant docs/09 §5.4 cares about most — "a

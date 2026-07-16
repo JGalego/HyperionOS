@@ -35,6 +35,14 @@ pub struct NodeRecord {
     pub owner: u64,
     pub created_at: u64,
     pub updated_at: u64,
+    /// This crate's own previously-named "no node-delete operation (only edges tombstone)" gap,
+    /// closed the same way edges already are: [`crate::graph::KnowledgeGraph::delete_node`]
+    /// tombstones rather than physically removing, per docs/09 §10's own "deletions are
+    /// tombstones... undoable within a retention window" precedent. `#[serde(default)]` so a
+    /// WAL record written before this field existed still replays as "not tombstoned" -- the
+    /// exact behavior every such node already had.
+    #[serde(default)]
+    pub tombstone: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

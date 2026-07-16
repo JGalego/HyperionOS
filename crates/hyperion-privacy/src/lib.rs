@@ -72,11 +72,13 @@
 //!   model to propagate across; `hyperion-federation` is where multiple
 //!   devices exist in this workspace, and it isn't wired to this crate.
 //! - **Physical deletion / `CryptoShred`'s wire-indistinguishability
-//!   guarantee.** `hyperion-knowledge-graph` has no node-delete operation
-//!   (only edges tombstone); [`erasure::erase`] overwrites a node's
-//!   current metadata with a tombstone-shaped placeholder — a real,
-//!   observable state change, not a byte-level history deletion, and
-//!   nothing here disguises an erasure's network/timing signature (moot
+//!   guarantee.** ~~`hyperion-knowledge-graph` has no node-delete operation
+//!   (only edges tombstone)~~ — that primitive is now real
+//!   (`hyperion_knowledge_graph::KnowledgeGraph::delete_node`), but [`erasure::erase`] doesn't
+//!   call it yet: it still overwrites a node's current metadata with a tombstone-shaped
+//!   placeholder — a real, observable state change, not the real tombstone the KG itself now
+//!   supports. Wiring `erase(CryptoShred)` to call the real `delete_node` instead remains
+//!   separate follow-up work; nothing here disguises an erasure's network/timing signature (moot
 //!   without a real transport anyway).
 //! - ~~**Real crash-recovery timers expiring the grace period.**~~ — now real:
 //!   [`erasure::expire_lapsed_soft_deletes`] is the real, caller-driven clock (matching this
