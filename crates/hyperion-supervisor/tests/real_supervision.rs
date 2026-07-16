@@ -256,3 +256,51 @@ fn killing_one_supervised_service_gets_a_fresh_grant_without_touching_its_siblin
     // real process when `supervisor` goes out of scope here, including on a panic unwind from any
     // assertion above it.
 }
+
+/// A third, independent real Phase 2-10 subsystem (`hyperion-privacy`) run the same real,
+/// capability-scoped, sandboxed way -- proving M5's supervision mechanism generalizes rather than
+/// being coincidentally correct for the first two crates it was proven against. Doesn't repeat
+/// the full kill+respawn choreography above (already proven generically, crate-agnostically,
+/// there); this test's own real, distinct value is that `hyperion-privacy`'s own real routing
+/// algorithm (`route_capability_call`) genuinely reflects a real, just-requested consent grant
+/// from *inside* a real sandboxed process, not merely that some process started.
+#[test]
+fn a_third_independent_subsystem_runs_under_real_supervision_and_does_its_own_real_work() {
+    let root = tempfile::tempdir().expect("create a real tempdir for this test's fs_scopes");
+    let ipc_dir = root.path().join("ipc");
+
+    let privacy = build_fixture(
+        root.path(),
+        "hyperion-privacy",
+        "hyperion-privacy-service",
+        "privacy",
+    );
+
+    let mut supervisor =
+        Supervisor::new(ipc_dir, None).expect("create the real supervisor + IPC rendezvous dir");
+    supervisor
+        .spawn_sandboxed(privacy.spec.clone())
+        .expect("spawn the real privacy service");
+
+    let token_id = supervisor
+        .token_id_of("privacy")
+        .expect("a sandboxed service always has a live token id");
+    let pid = supervisor
+        .pid_of("privacy")
+        .expect("privacy is tracked right after spawning it");
+
+    let state = wait_for_state_containing(
+        &privacy.state_path,
+        &format!("spawn_token_id={token_id}"),
+        Duration::from_secs(10),
+    );
+    assert!(
+        state.contains(&format!("pid={pid}")),
+        "privacy's own state file should record its own real pid: {state:?}"
+    );
+    assert!(
+        state.contains("routing_decision=DispatchCloud"),
+        "a real consent grant this instance itself requested must really flip \
+         route_capability_call's own decision from Degraded to DispatchCloud: {state:?}"
+    );
+}

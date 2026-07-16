@@ -15,14 +15,18 @@
 //! security, threat-model, plugin-framework, sdk, api-gateway, compat, scalability, update) needs
 //! nothing structural changed in its own `lib.rs` to become real under this crate -- only a real
 //! process entry point that constructs its existing, already-real API and does something with it.
-//! Two representative examples exist end to end (`hyperion-observability`'s
+//! Three representative examples exist end to end (`hyperion-observability`'s
 //! `src/bin/hyperion-observability-service.rs`, `hyperion-explainability`'s
-//! `src/bin/hyperion-explainability-service.rs`), proving the mechanism against real crate logic
-//! rather than a synthetic stand-in. Wrapping the remaining ~30 crates the same way is a real,
-//! separate, purely mechanical migration this mechanism now makes straightforward -- not attempted
-//! here for all of them, the same scoping discipline M2/M3/M4 each already applied to their own
-//! milestone (prove the mechanism for real against a representative case; don't redo the same
-//! wrapping thirty times with no new engineering insight).
+//! `src/bin/hyperion-explainability-service.rs`, and (2026-07-16) `hyperion-privacy`'s
+//! `src/bin/hyperion-privacy-service.rs` -- proving the mechanism generalizes to a third,
+//! independent subsystem whose one real unit of work, docs/16's own consent-gated routing
+//! algorithm, genuinely reflects a real, just-requested `ConsentGrant` from inside a real
+//! sandboxed process, not merely that some process started), proving the mechanism against real
+//! crate logic rather than a synthetic stand-in. Wrapping the remaining ~29 crates the same way
+//! is a real, separate, purely mechanical migration this mechanism now makes straightforward --
+//! not attempted here for all of them, the same scoping discipline M2/M3/M4 each already applied
+//! to their own milestone (prove the mechanism for real against a representative case; don't redo
+//! the same wrapping thirty times with no new engineering insight).
 //!
 //! ## What's real here vs. deferred, and why
 //!

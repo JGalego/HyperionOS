@@ -2807,3 +2807,20 @@ next step on any of these is a design pass, not code.
   `real_supervision.rs` suite), and `hyperion-plugin-framework` (whose own `NativeBinary`
   sandboxed-execution grant now explicitly carries `ipc_rendezvous: None`, since a one-shot tool
   invocation has no rendezvous socket to bind) pass unchanged.
+
+- **`hyperion-privacy` wrapped as a third real supervised service, landed (2026-07-16)**
+  (`hyperion-supervisor`'s own reuse-map: ~30 Phase 2-10 crates need "nothing structural changed
+  in their own `lib.rs`... only a real process entry point," and only two, `hyperion-observability`/
+  `hyperion-explainability`, had one so far). A new `hyperion-privacy/src/bin/hyperion-privacy-service.rs`
+  proves the same real M5 supervision mechanism generalizes to a third, independent subsystem: it
+  mints its own local capability domain from its real spawn-time `WireToken` claim (the identical
+  pattern the first two services established), requests a real `ConsentGrant` via
+  `ConsentLedger::request`, and calls docs/16 §5's real `route_capability_call` for a domain
+  requiring exactly that consent — its real, written state file shows `routing_decision=DispatchCloud`,
+  proving the routing algorithm genuinely reflects a real, just-granted consent from *inside* a
+  real sandboxed process, not a hardcoded decision. Proven end to end in a new
+  `hyperion-supervisor` test, `a_third_independent_subsystem_runs_under_real_supervision_and_does_its_own_real_work`
+  — deliberately not repeating the existing kill+respawn choreography already proven generically
+  crate-agnostic by the first two services, per this crate's own "don't redo the same wrapping
+  thirty times with no new engineering insight" scoping discipline. All pre-existing tests in
+  `hyperion-privacy` and `hyperion-supervisor` pass unchanged.

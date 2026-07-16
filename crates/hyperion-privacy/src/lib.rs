@@ -23,7 +23,12 @@
 //! Recovery](../33-rollback-recovery.md) grace period via
 //! `hyperion-recovery::RecoveryService` — the erasure is journaled as a
 //! committed, undoable `ActionRecord`, not merely tombstoned with no way
-//! back.
+//! back. `src/bin/hyperion-privacy-service.rs` (2026-07-16) is this crate's own real
+//! `hyperion-supervisor` (M5) process entry point — a third, independent proof (after
+//! `hyperion-observability`/`hyperion-explainability`) that a Phase 2-10 subsystem runs
+//! unmodified as a real, capability-scoped supervised process; its own one real unit of work
+//! requests a real `ConsentGrant` and shows `route_capability_call`'s real decision genuinely
+//! reflecting it.
 //!
 //! **On `hyperion-model-router`/`hyperion-netstack`/`hyperion-federation`'s
 //! own narrow, two-value `PrivacyTier{Local, ConsentedCloud}` gates**:
