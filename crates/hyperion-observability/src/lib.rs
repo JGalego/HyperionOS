@@ -39,6 +39,18 @@
 //! first time, even though lookup is still by `seq`/`target`
 //! (the capability id), not a dedicated `invocation_id` index.
 //!
+//! [`telemetry::TelemetryCollector::compact_metrics`]/[`telemetry::TelemetryCollector::expire_logs`]
+//! (2026-07-16) close this crate's own previously-named "retention/rollup compaction" gap:
+//! docs/34 §5's "raw metrics are kept at full resolution for a short window (default 24h) then
+//! compacted to percentile rollups" is now real — every real raw [`types::MetricSample`] older
+//! than a caller-supplied retention window is removed from raw storage and folded into one real
+//! [`types::MetricRollup`] per metric name (real min/max/count and real p50/p95/p99 via the
+//! nearest-rank method, computed from the actual aged-out values, never fabricated); "logs age
+//! out per level-based TTL" is real via [`types::LogRetentionPolicy`] (a real, distinct TTL per
+//! [`types::LogLevel`], with a real, deliberately-chosen default — noisier levels expire sooner).
+//! Both are caller-driven passes (no background scheduler runs them), matching this crate's own
+//! existing "on-demand, not backgrounded" convention for `AuditLedger::verify_chain`.
+//!
 //! Deliberately deferred, and why:
 //!
 //! - ~~**Periodic Ed25519-signed Merkle anchors over the hash chain.**~~ Now real:
@@ -61,10 +73,9 @@
 //!   describes feeding a `LoadSignal`; this crate does not itself
 //!   publish to `hyperion-scheduler`, which has no subscription API to
 //!   receive one.
-//! - **Retention/rollup compaction of metrics and logs.** Samples and
-//!   log events accumulate for the process lifetime; docs/34 §5's 24h-
-//!   then-percentile-rollup aging is not implemented (mirrors
-//!   `hyperion-recovery`'s equivalent retention deferral).
+//! - ~~Retention/rollup compaction of metrics and logs~~ — now real, see this crate's own "Real:"
+//!   section above (`hyperion-recovery`'s own equivalent retention deferral remains separately
+//!   named in that crate's own doc comment — this closes only this crate's copy of the gap).
 //! - **Ring-buffer write-ahead spill on store degradation, and
 //!   background scheduled chain verification.**
 //!   [`ledger::AuditLedger::verify_chain`] is on-demand only, not run on
@@ -89,6 +100,6 @@ pub use ledger::{Anchor, AuditLedger};
 pub use telemetry::{derivative, ewma, TelemetryCollector};
 pub use types::{
     AggregateReport, AuditAction, AuditLogEntry, AuditPayload, ConsentCategory, ConsentScope,
-    LogEvent, LogLevel, MetricSample, ObservabilityError, PrincipalRef, RedactionClass, SpanStatus,
-    TraceId, TraceSpan, VerificationReport,
+    LogEvent, LogLevel, LogRetentionPolicy, MetricRollup, MetricSample, ObservabilityError,
+    PrincipalRef, RedactionClass, SpanStatus, TraceId, TraceSpan, VerificationReport,
 };

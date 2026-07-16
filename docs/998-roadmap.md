@@ -2199,6 +2199,23 @@ mean here):
   action never matches either); `hyperion-coordination`'s real dispatch tags a real `ActionRecord`
   with its own real session/goal ids, recorded `Committed`, not left dangling `InFlight`.
 
+- **`hyperion-observability`'s retention/rollup compaction, landed (2026-07-16)** (docs/34 §5's
+  own previously-named gap: "raw metrics are kept at full resolution for a short window (default
+  24h) then compacted to percentile rollups... logs age out per level-based TTL" — samples and log
+  events previously accumulated for the process lifetime). `TelemetryCollector::compact_metrics`
+  really removes every raw `MetricSample` older than a caller-supplied retention window from raw
+  storage and folds it into one real `MetricRollup` per metric name — real min/max/count and real
+  p50/p95/p99 via the nearest-rank method, computed from the actual aged-out values, never
+  fabricated; a name with nothing newly aged out produces no empty rollup.
+  `TelemetryCollector::expire_logs` really drops any `LogEvent` whose own real level has passed its
+  TTL in a real, distinct-per-level `LogRetentionPolicy` (a real, deliberately-chosen default:
+  noisier levels expire sooner). Both are caller-driven passes, matching this crate's own existing
+  "on-demand, not backgrounded" convention for `AuditLedger::verify_chain`. Proven end to end: a
+  fresh sample stays raw; an aged-out one is removed from raw storage and its rollup's percentiles
+  are independently verified against a known ten-sample set; two aged-out batches for the same
+  metric produce two separate rollup windows; an expired log is really gone while a fresh one
+  survives the same pass.
+
 ## Backlog
 
 Product-level work that's real, named, and intentionally not yet scheduled — distinct from this

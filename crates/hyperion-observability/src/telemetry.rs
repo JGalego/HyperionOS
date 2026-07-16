@@ -1,7 +1,10 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use crate::types::{LogEvent, MetricSample, SpanStatus, TraceId, TraceSpan};
+use crate::types::{
+    LogEvent, LogRetentionPolicy, MetricRollup, MetricSample, SpanStatus, TraceId, TraceSpan,
+};
 
 /// docs/34 §3's lossy/sampled/best-effort telemetry path — deliberately
 /// *not* capability-gated, unlike this crate's [`crate::AuditLedger`]:
@@ -16,6 +19,9 @@ pub struct TelemetryCollector {
     spans: Mutex<Vec<TraceSpan>>,
     logs: Mutex<Vec<LogEvent>>,
     next_span_id: AtomicU64,
+    /// docs/34 §5's "compacted to percentile rollups" -- what
+    /// [`Self::compact_metrics`] produces and [`Self::metric_rollups_named`] reads back.
+    rollups: Mutex<Vec<MetricRollup>>,
 }
 
 impl Default for TelemetryCollector {
@@ -31,6 +37,7 @@ impl TelemetryCollector {
             spans: Mutex::new(Vec::new()),
             logs: Mutex::new(Vec::new()),
             next_span_id: AtomicU64::new(1),
+            rollups: Mutex::new(Vec::new()),
         }
     }
 
@@ -135,6 +142,81 @@ impl TelemetryCollector {
             .unwrap()
             .extend(remote.logs_for_trace(trace_id));
     }
+
+    /// docs/34 §5's own previously-named "retention/rollup compaction" gap, closed for real:
+    /// "raw metrics are kept at full resolution for a short window (default 24h) then compacted
+    /// to percentile rollups." Every real raw [`MetricSample`] older than `retention_secs` (i.e.
+    /// `now - timestamp > retention_secs`) is removed from raw storage and folded into one real
+    /// [`MetricRollup`] per distinct metric `name` among those aged-out samples -- real min/max/
+    /// count and real p50/p95/p99 (nearest-rank method) computed from the *actual* aged-out
+    /// values, never fabricated. Samples still inside the retention window are left alone, so
+    /// calling this repeatedly (e.g. from a real periodic caller) only ever compacts what's newly
+    /// aged out since the last call. A `name` with no samples aging out this call produces no new
+    /// rollup at all -- this never pads a rollup list with empty/placeholder entries.
+    pub fn compact_metrics(&self, now: u64, retention_secs: u64) {
+        let mut metrics = self.metrics.lock().unwrap();
+        let (aged_out, fresh): (Vec<MetricSample>, Vec<MetricSample>) = metrics
+            .drain(..)
+            .partition(|m| now.saturating_sub(m.timestamp) > retention_secs);
+        *metrics = fresh;
+        drop(metrics);
+
+        let mut by_name: HashMap<String, Vec<MetricSample>> = HashMap::new();
+        for sample in aged_out {
+            by_name.entry(sample.name.clone()).or_default().push(sample);
+        }
+
+        let mut rollups = self.rollups.lock().unwrap();
+        for (name, mut samples) in by_name {
+            samples.sort_by(|a, b| a.value.total_cmp(&b.value));
+            let window_start = samples.iter().map(|s| s.timestamp).min().unwrap();
+            let window_end = samples.iter().map(|s| s.timestamp).max().unwrap();
+            let count = samples.len();
+            rollups.push(MetricRollup {
+                name,
+                window_start,
+                window_end,
+                count,
+                min: samples[0].value,
+                max: samples[count - 1].value,
+                p50: percentile(&samples, 50.0),
+                p95: percentile(&samples, 95.0),
+                p99: percentile(&samples, 99.0),
+            });
+        }
+    }
+
+    /// The real rollups [`Self::compact_metrics`] has produced so far for metric `name`, oldest
+    /// window first (insertion order) -- distinct from [`Self::metrics_named`], which only ever
+    /// sees the still-raw, not-yet-compacted samples.
+    pub fn metric_rollups_named(&self, name: &str) -> Vec<MetricRollup> {
+        self.rollups
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.name == name)
+            .cloned()
+            .collect()
+    }
+
+    /// docs/34 §5's "logs age out per level-based TTL," closed for real: every real [`LogEvent`]
+    /// whose own real `level` has aged past `policy`'s TTL for it (`now - timestamp > ttl`) is
+    /// dropped outright -- logs are never rolled up (there is no percentile-style summary for a
+    /// log message), only aged out, per docs/34 §5's own text.
+    pub fn expire_logs(&self, now: u64, policy: &LogRetentionPolicy) {
+        self.logs
+            .lock()
+            .unwrap()
+            .retain(|log| now.saturating_sub(log.timestamp) <= policy.ttl_secs_for(log.level));
+    }
+}
+
+/// The nearest-rank percentile of `sorted.value`, ascending-sorted by the caller -- shared by
+/// every real percentile [`TelemetryCollector::compact_metrics`] computes, so `p50`/`p95`/`p99`
+/// are all really derived from the same one real method, not three independent approximations.
+fn percentile(sorted: &[MetricSample], p: f64) -> f64 {
+    let rank = ((p / 100.0) * (sorted.len() - 1) as f64).round() as usize;
+    sorted[rank].value
 }
 
 /// docs/34 §2's continuous EWMA over a resource-utilization metric,

@@ -16,6 +16,24 @@ pub struct MetricSample {
     pub tags: HashMap<String, String>,
 }
 
+/// docs/34 §5's `MetricRollup` — "percentiles only, never a raw per-user series." What
+/// [`crate::telemetry::TelemetryCollector::compact_metrics`] produces from a window of real raw
+/// [`MetricSample`]s of the same `name` once that window ages out of the retention period, per
+/// docs/34 §5's "raw metrics are kept at full resolution for a short window (default 24h) then
+/// compacted to percentile rollups."
+#[derive(Debug, Clone)]
+pub struct MetricRollup {
+    pub name: String,
+    pub window_start: u64,
+    pub window_end: u64,
+    pub count: usize,
+    pub min: f64,
+    pub max: f64,
+    pub p50: f64,
+    pub p95: f64,
+    pub p99: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpanStatus {
     Ok,
@@ -65,6 +83,46 @@ pub struct LogEvent {
     pub redaction_class: RedactionClass,
     pub timestamp: u64,
     pub trace_id: Option<TraceId>,
+}
+
+/// docs/34 §5's "logs age out per level-based TTL" — a real, per-[`LogLevel`] retention window,
+/// consumed by [`crate::telemetry::TelemetryCollector::expire_logs`]. `Default` is a real,
+/// deliberately-chosen policy (noisier levels expire sooner): `Trace`/`Debug` age out fastest,
+/// `Error` slowest — a caller with its own real retention requirements constructs one directly
+/// instead.
+#[derive(Debug, Clone, Copy)]
+pub struct LogRetentionPolicy {
+    pub trace_ttl_secs: u64,
+    pub debug_ttl_secs: u64,
+    pub info_ttl_secs: u64,
+    pub warn_ttl_secs: u64,
+    pub error_ttl_secs: u64,
+}
+
+impl Default for LogRetentionPolicy {
+    fn default() -> Self {
+        const HOUR: u64 = 3_600;
+        const DAY: u64 = 24 * HOUR;
+        LogRetentionPolicy {
+            trace_ttl_secs: HOUR,
+            debug_ttl_secs: HOUR,
+            info_ttl_secs: DAY,
+            warn_ttl_secs: 7 * DAY,
+            error_ttl_secs: 30 * DAY,
+        }
+    }
+}
+
+impl LogRetentionPolicy {
+    pub(crate) fn ttl_secs_for(&self, level: LogLevel) -> u64 {
+        match level {
+            LogLevel::Trace => self.trace_ttl_secs,
+            LogLevel::Debug => self.debug_ttl_secs,
+            LogLevel::Info => self.info_ttl_secs,
+            LogLevel::Warn => self.warn_ttl_secs,
+            LogLevel::Error => self.error_ttl_secs,
+        }
+    }
 }
 
 /// docs/34 §1's `AuditLogEntry.actor`, `CapabilityId` narrowed to a plain
