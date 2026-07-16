@@ -3287,3 +3287,30 @@ next step on any of these is a design pass, not code.
   across a real `KnowledgeGraph::open` reopen (the prune survives replay, not just the live
   in-memory index). All pre-existing `hyperion-knowledge-graph` tests, including the existing
   `edge_decay.rs` suite, pass unchanged.
+
+- **`hyperion-explainability`'s `ConfidenceMethod::SelfConsistency`, landed (2026-07-16)** (this
+  crate's own named gap: "`ConfidenceScore.method` implementations" — `SelfConsistency`/
+  `Verifier`/`Ensemble` were declared but none were ever computed). New
+  `self_consistency_confidence(ai_runtime, monitor, token, prompt, samples) ->
+  Option<ConfidenceScore>` is docs/18 §9's own "self-consistency across repeated sampling": calls
+  a real, wired `hyperion-ai-runtime::LocalAiRuntime` with the identical `prompt` `samples` real
+  times and reports the real majority-answer agreement fraction as the confidence value —
+  `None` (never a fabricated score) if this token isn't authorized, nothing is resident for
+  `ModelClass::Slm`, or any one of the `samples` real calls fails, matching every other
+  `ai_runtime`-backed method's graceful-degradation contract in this workspace
+  (`hyperion-context::ContextEngine::summarize` is the template this mirrors). A free function
+  exported directly at crate level (matching `resolve_why`'s own precedent), not a stateful
+  `ExplanationStore` field — the store itself gains no new `ai_runtime` dependency, since
+  `set_confidence` already accepts any real `ConfidenceScore` a caller computed. `Verifier`/
+  `Ensemble` remain declared but uncomputed, exactly as before: `Verifier` needs real formal
+  verification this workspace doesn't have, and `Ensemble` needs
+  [23 — Multi-Model Orchestration](../23-multi-model-orchestration.md)'s actual candidate
+  models — neither is what this function computes. Proven with 4 new inline unit tests in
+  `src/confidence.rs` (using a real, deterministically-cycling test `InferenceBackend` —
+  `MockBackend`'s own echo is identical every call for a fixed prompt, which can only prove the
+  always-agrees case): unanimous real answers yield full confidence; a real 3-of-4 partial
+  disagreement yields exactly `0.75`, not a fabricated value; no resident model degrades to
+  `None`; zero `samples` is never a real computation. A new integration test,
+  `tests/self_consistency_confidence.rs`, proves the real score genuinely flows into a real
+  `ExplanationStore` record via `set_confidence` and back out through `resolve_why`, not just the
+  pure function in isolation. All pre-existing `hyperion-explainability` tests pass unchanged.

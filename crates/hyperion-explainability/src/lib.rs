@@ -52,11 +52,15 @@
 //!   describes a *mechanism* (tiering by depth/user complexity level),
 //!   not literal copy; this crate implements the mechanism's shape
 //!   (`Depth::Headline`/`Depth::Full`) without a real model behind it.
-//! - **`ConfidenceScore.method` implementations.** `SelfConsistency`/
-//!   `Verifier`/`Ensemble` are declared as an enum a caller tags a score
-//!   with; this crate computes none of them (`Ensemble` in particular
-//!   depends on [23 — Multi-Model Orchestration](../23-multi-model-orchestration.md)'s
-//!   actual candidate models).
+//! - **`ConfidenceScore.method` implementations.** ~~`SelfConsistency`~~ (2026-07-16) — now real:
+//!   [`self_consistency_confidence`] is docs/18 §9's own "self-consistency across repeated
+//!   sampling" — calls a real, wired `hyperion-ai-runtime::LocalAiRuntime` with an identical
+//!   prompt several real times and reports the real majority-answer agreement fraction, `None`
+//!   (never a fabricated score) if any one of those real calls couldn't run. `Verifier`/
+//!   `Ensemble` remain declared but uncomputed: `Verifier` needs real formal verification this
+//!   workspace doesn't have, and `Ensemble` depends on
+//!   [23 — Multi-Model Orchestration](../23-multi-model-orchestration.md)'s actual candidate
+//!   models — neither is what [`self_consistency_confidence`] computes.
 //! - **`best_effort_reconstruction` via the Event System (31).** No Event
 //!   System crate exists yet anywhere in this workspace to replay from;
 //!   docs/18 §9's degrade path ("store unavailable → reconstruct, flagged
@@ -90,10 +94,12 @@
 //!   crate.
 
 mod calibration;
+mod confidence;
 mod render;
 mod store;
 mod types;
 
+pub use confidence::self_consistency_confidence;
 pub use render::resolve_why;
 pub use store::ExplanationStore;
 pub use types::{

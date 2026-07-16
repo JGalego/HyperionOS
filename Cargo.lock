@@ -2969,12 +2969,15 @@ dependencies = [
 name = "hyperion-explainability"
 version = "0.2.0"
 dependencies = [
+ "hyperion-ai-runtime",
  "hyperion-capability",
+ "hyperion-crypto",
  "hyperion-knowledge-graph",
  "hyperion-privacy",
  "hyperion-recovery",
  "hyperion-storage",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 

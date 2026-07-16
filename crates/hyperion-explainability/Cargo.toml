@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+hyperion-ai-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
 hyperion-privacy = { workspace = true }
@@ -14,4 +15,6 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+hyperion-crypto = { workspace = true }
 hyperion-storage = { workspace = true }
+tempfile = { workspace = true }
