@@ -2349,3 +2349,25 @@ next step on any of these is a design pass, not code.
   (`tests/candle_inference.rs`) proves the real thing — a real `infer_cancellable` call against the
   real downloaded TinyStories model, cancelled from a concurrent real thread mid-generation,
   produces genuinely fewer real generated tokens than an uncancelled real run of the same prompt.
+
+- **`hyperion-context`'s semantic summarization, landed (2026-07-16)** (docs/06 §2's own `summary`
+  inclusion mode, previously blocked on "Phase 3's Local AI Runtime" — which now exists, hardened
+  this same day with cancellable streaming above). `ContextEngine::summarize` truncated an entry's
+  metadata to its first 3 fields as a stand-in for a real summary; a new `ContextEngine::
+  new_with_ai_runtime(graph, ai_runtime)` constructor wires a real `hyperion_ai_runtime::
+  LocalAiRuntime` in (no circular dependency — `hyperion-ai-runtime` has no reverse dependency on
+  this crate), and `summarize` now sends the entry's metadata through a real `ModelClass::Slm`
+  inference call, returning the model's real generated text as the entry's `summary`-mode content
+  rather than a truncated copy of its own metadata. `ContextEngine::new` (no `ai_runtime` supplied)
+  keeps the exact previous behavior unchanged, and `summarize` falls back to the same truncation
+  stand-in — not an error — when this caller's token isn't authorized for real inference or
+  nothing is resident locally for `ModelClass::Slm`, exactly like this method's own caller already
+  tolerates one unreachable anchor without failing the rest of `assemble()`. `hyperion-console`'s
+  real `ConsoleSession::open` is the one production caller wired end to end: it now builds its real
+  `LocalAiRuntime` before its `ContextEngine` and passes it through, so every real console session's
+  own Context Bundles get real summarization, not the stub. Proven end to end in a new
+  `tests/summarization.rs`: a real `MockBackend`-backed run produces the backend's own real,
+  distinguishable response text as a plain string (not the old truncated JSON object); a run with
+  no model registered for `ModelClass::Slm` falls back to the truncated object, not a panic or an
+  error; and a run built via the original `ContextEngine::new` (no `ai_runtime` at all) is
+  byte-for-byte identical to this crate's pre-existing behavior.

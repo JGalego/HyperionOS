@@ -57,10 +57,15 @@
 //!   activity yet still reports the same fixed, zero-confidence `Novice`
 //!   estimate this method always returned, honestly labeled as such in its
 //!   own `evidence` field.
-//! - **Semantic summarization** (docs/06 §2's `summary` inclusion mode) —
-//!   without Phase 3's Local AI Runtime, `summary` mode truncates metadata to
-//!   its first few fields rather than computing a real summary. Noted at the
-//!   call site in [`engine`].
+//! ~~**Semantic summarization** (docs/06 §2's `summary` inclusion mode)~~ — now real:
+//!   [`engine::ContextEngine::new_with_ai_runtime`] wires a real
+//!   [`hyperion_ai_runtime::LocalAiRuntime`] in, and [`engine`]'s own `summarize` uses it to
+//!   produce a real, model-generated summary of an entry's metadata rather than truncating it
+//!   to the first few fields. Honest fallback, not a hard requirement: [`engine::ContextEngine::
+//!   new`] (no `ai_runtime` wired), an unauthorized token, or nothing resident for
+//!   `ModelClass::Slm` all fall back to the exact same truncation stand-in this bullet
+//!   previously described as the *only* behavior — a caller loses summary fidelity, never the
+//!   whole bundle.
 //! - ~~Real signatures~~: now real. `hyperion-crypto` (Phase 8/M9) didn't
 //!   exist when this bullet was written; [`propagation::ContextEnvelope`]'s
 //!   `integrity.signature` is now a real Ed25519 [`hyperion_crypto::Signature`],

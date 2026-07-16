@@ -346,16 +346,25 @@ impl ConsoleSession {
         let mut monitor = CapabilityMonitor::new();
         let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
         let graph = Arc::new(KnowledgeGraph::open(&kg_path)?);
-        let context = Arc::new(hyperion_context::ContextEngine::new(graph.clone()));
-        let netstack = Arc::new(Self::build_netstack(graph.clone()));
-        let graph_explorer = GraphExplorer::new(graph.clone());
-        let intent_engine = IntentEngine::new(graph.clone(), context.clone());
-        let memory = MemoryEngine::new(graph.clone());
 
         let keystore = Keystore::open_or_create(&data_dir.join("device.key"))
             .expect("open or create this session's real device signing key");
         let (runtime, current_backend) = Self::build_ai_runtime(&keystore);
         let ai_runtime = Arc::new(runtime);
+
+        // Real, model-generated summarization (docs/06 §2) rather than the truncate-to-first-
+        // few-fields stand-in `ContextEngine::new` still falls back to -- this session already
+        // has a real `LocalAiRuntime` for every other capability-gated dispatch, so a Context
+        // Bundle's own `summary`-mode entries get the same real backend, not a second one.
+        let context = Arc::new(hyperion_context::ContextEngine::new_with_ai_runtime(
+            graph.clone(),
+            ai_runtime.clone(),
+        ));
+        let netstack = Arc::new(Self::build_netstack(graph.clone()));
+        let graph_explorer = GraphExplorer::new(graph.clone());
+        let intent_engine = IntentEngine::new(graph.clone(), context.clone());
+        let memory = MemoryEngine::new(graph.clone());
+
         let agent_runtime = Arc::new(AgentRuntime::new_with_netstack(
             ai_runtime.clone(),
             Some(netstack.clone()),

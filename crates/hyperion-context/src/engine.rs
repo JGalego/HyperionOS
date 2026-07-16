@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
 use hyperion_knowledge_graph::{GraphError, GraphQuery, KnowledgeGraph, NodeId, ProvenanceChain};
 use hyperion_storage::ObjectId;
@@ -65,7 +66,17 @@ pub struct ContextEngine {
     graph: Arc<KnowledgeGraph>,
     working_sets: Mutex<HashMap<String, WorkingSet>>,
     next_bundle_id: AtomicU64,
+    /// `None` by default: [`Self::summarize`] falls back to its own truncation stand-in — see
+    /// [`Self::new_with_ai_runtime`]'s own doc comment for the real path this unlocks.
+    ai_runtime: Option<Arc<LocalAiRuntime>>,
 }
+
+/// Matches `hyperion-agent-runtime::AgentRuntime::dispatch_document_draft`'s own precedent for
+/// one real, resident `Slm`-class inference call -- generous enough that a real, modest-
+/// throughput resident variant (see `hyperion_ai_runtime::CapabilityContract::
+/// meets_latency_budget`'s own ~100-token-response proxy) still passes tier selection, without
+/// letting one `summary`-mode entry's real inference call stall `assemble()` indefinitely.
+const SUMMARIZE_LATENCY_BUDGET_MS: u64 = 15_000;
 
 impl ContextEngine {
     pub fn new(graph: Arc<KnowledgeGraph>) -> Self {
@@ -73,6 +84,25 @@ impl ContextEngine {
             graph,
             working_sets: Mutex::new(HashMap::new()),
             next_bundle_id: AtomicU64::new(1),
+            ai_runtime: None,
+        }
+    }
+
+    /// As [`Self::new`], but wires docs/06 §2's real `summary` inclusion mode this crate's own
+    /// doc comment previously named as blocked on "Phase 3's Local AI Runtime" — which now
+    /// exists. [`Self::summarize`] uses `ai_runtime` to produce a real, model-generated summary
+    /// of an entry's metadata rather than truncating it to the first few fields; a caller not
+    /// yet ready to wire this (or one whose token lacks the exec rights `LocalAiRuntime::infer`
+    /// requires) keeps the exact same truncation behavior via [`Self::new`].
+    pub fn new_with_ai_runtime(
+        graph: Arc<KnowledgeGraph>,
+        ai_runtime: Arc<LocalAiRuntime>,
+    ) -> Self {
+        ContextEngine {
+            graph,
+            working_sets: Mutex::new(HashMap::new()),
+            next_bundle_id: AtomicU64::new(1),
+            ai_runtime: Some(ai_runtime),
         }
     }
 
@@ -82,10 +112,43 @@ impl ContextEngine {
             .unwrap_or(0)
     }
 
-    /// A stand-in for real semantic summarization (docs/06 §2's `summary`
-    /// mode) — see this crate's doc comment. Keeps only the first few
-    /// fields of an object's metadata rather than computing a real summary.
-    fn summarize(metadata: &serde_json::Value) -> serde_json::Value {
+    /// docs/06 §2's `summary` inclusion mode: a real, model-generated summary when
+    /// [`Self::new_with_ai_runtime`] wired an `ai_runtime`, falling back to the previous
+    /// truncate-to-first-few-fields stand-in when it didn't, when this `token` isn't authorized
+    /// for real inference (`RuntimeError::Unauthorized`), or when nothing is resident locally
+    /// for `ModelClass::Slm` (`RuntimeError::InfeasibleLocally`) — a caller loses fidelity, not
+    /// the whole bundle, exactly like this method's own caller already tolerates one
+    /// unreachable anchor without failing the rest of `assemble()`.
+    fn summarize(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        metadata: &serde_json::Value,
+    ) -> serde_json::Value {
+        if let Some(ai_runtime) = &self.ai_runtime {
+            let request = InferenceRequest {
+                prompt: format!(
+                    "Summarize the following JSON object in one short sentence, keeping only \
+                     its most salient fields:\n{metadata}"
+                ),
+            };
+            let contract = CapabilityContract {
+                latency_budget_ms: SUMMARIZE_LATENCY_BUDGET_MS,
+                always_on: false,
+            };
+            if let Ok(result) =
+                ai_runtime.infer(monitor, token, ModelClass::Slm, &contract, &request)
+            {
+                return serde_json::Value::String(result.text);
+            }
+        }
+        Self::truncate(metadata)
+    }
+
+    /// The stand-in [`Self::summarize`] falls back to when no real `ai_runtime` is wired, or a
+    /// real inference call couldn't run — keeps only the first few fields of an object's
+    /// metadata rather than computing a real summary.
+    fn truncate(metadata: &serde_json::Value) -> serde_json::Value {
         match metadata {
             serde_json::Value::Object(map) => serde_json::Value::Object(
                 map.iter()
@@ -230,7 +293,7 @@ impl ContextEngine {
                 if score > FULL_THRESHOLD && full_tokens <= SMALL_ENTRY_TOKENS {
                     (InclusionMode::Full, node.metadata.clone(), full_tokens)
                 } else if score > SUMMARY_THRESHOLD {
-                    let summary = Self::summarize(&node.metadata);
+                    let summary = self.summarize(monitor, token, &node.metadata);
                     let cost = Self::estimate_tokens(&summary).min(60);
                     (InclusionMode::Summary, summary, cost)
                 } else {

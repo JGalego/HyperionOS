@@ -2894,6 +2894,7 @@ dependencies = [
 name = "hyperion-context"
 version = "0.2.0"
 dependencies = [
+ "hyperion-ai-runtime",
  "hyperion-capability",
  "hyperion-crypto",
  "hyperion-ipc",
