@@ -56,7 +56,7 @@ fn heavy_vision_policy() -> DegradationPolicy {
             min_compute_tops: 20,
         },
         fallback_order: vec![
-            Substitution::CheaperLocalTier(ModelTier::TinyEdge),
+            Substitution::CheaperLocalTier(ModelTier::TinyEdge, tiny_edge_footprint()),
             Substitution::Disable,
         ],
     }
@@ -74,17 +74,13 @@ fn sbc_profile() -> HardwareProfile {
     }
 }
 
-/// `TinyEdge`'s real resource footprint, standing in for a table a real
-/// caller would maintain -- this crate's own `Substitution` has no
-/// footprint field (see `fit`'s doc comment).
-fn footprint_for(substitution: &Substitution) -> Option<CapacityDescriptor> {
-    match substitution {
-        Substitution::CheaperLocalTier(ModelTier::TinyEdge) => Some(CapacityDescriptor {
-            ram_mb: 2_048,
-            vram_mb: 0,
-            compute_tops: 2,
-        }),
-        _ => None,
+/// `TinyEdge`'s real resource footprint -- now carried directly on the `Substitution` itself
+/// (see `Substitution::footprint`'s own doc comment), not looked up via a caller-supplied table.
+fn tiny_edge_footprint() -> CapacityDescriptor {
+    CapacityDescriptor {
+        ram_mb: 2_048,
+        vram_mb: 0,
+        compute_tops: 2,
     }
 }
 
@@ -98,14 +94,17 @@ fn degrade_capability_substitutes_when_the_real_scheduler_has_room() {
         &sbc_profile(),
         &ledger,
         1,
-        scheduler_backed_resolver(&scheduler, footprint_for),
+        scheduler_backed_resolver(&scheduler),
         1_000,
     );
 
     assert_eq!(
         plan.outcome,
         DegradationOutcome::Substituted {
-            substitution: Substitution::CheaperLocalTier(ModelTier::TinyEdge)
+            substitution: Substitution::CheaperLocalTier(
+                ModelTier::TinyEdge,
+                tiny_edge_footprint()
+            )
         }
     );
 }
@@ -122,7 +121,7 @@ fn degrade_capability_disables_when_the_real_scheduler_has_no_room() {
         &sbc_profile(),
         &ledger,
         1,
-        scheduler_backed_resolver(&scheduler, footprint_for),
+        scheduler_backed_resolver(&scheduler),
         1_000,
     );
 

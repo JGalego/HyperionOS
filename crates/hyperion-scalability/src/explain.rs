@@ -43,7 +43,7 @@ pub fn apply_and_explain(
 
     if let Some(registry) = registry {
         if let DegradationOutcome::Substituted {
-            substitution: Substitution::AlternateImplementation(capability_ref),
+            substitution: Substitution::AlternateImplementation(capability_ref, _),
         } = &plan.outcome
         {
             if registry.query(capability_ref).is_none() {

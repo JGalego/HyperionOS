@@ -11,8 +11,17 @@ use hyperion_plugin_framework::{
     PluginManifest, PluginRegistry, PrivacyTier, SemanticContract, TrustDepth,
 };
 use hyperion_scalability::{
-    apply_and_explain, DegradationOutcome, DegradationPlan, ScalabilityError, Substitution,
+    apply_and_explain, CapacityDescriptor, DegradationOutcome, DegradationPlan, ScalabilityError,
+    Substitution,
 };
+
+fn small_footprint() -> CapacityDescriptor {
+    CapacityDescriptor {
+        ram_mb: 512,
+        vram_mb: 0,
+        compute_tops: 1,
+    }
+}
 
 fn keystore() -> (tempfile::TempDir, Keystore) {
     let dir = tempfile::tempdir().unwrap();
@@ -135,6 +144,7 @@ fn an_alternate_implementation_substitution_naming_a_real_registered_capability_
         outcome: DegradationOutcome::Substituted {
             substitution: Substitution::AlternateImplementation(
                 "vision.generate.small".to_string(),
+                small_footprint(),
             ),
         },
         notice: "vision.generate substituted with a smaller local model".to_string(),
@@ -169,6 +179,7 @@ fn an_alternate_implementation_substitution_naming_an_unregistered_capability_is
         outcome: DegradationOutcome::Substituted {
             substitution: Substitution::AlternateImplementation(
                 "vision.generate.nonexistent".to_string(),
+                small_footprint(),
             ),
         },
         notice: "vision.generate substituted with a smaller local model".to_string(),

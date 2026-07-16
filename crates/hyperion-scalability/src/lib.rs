@@ -36,21 +36,18 @@
 //!   actual silicon/thermal sensors; this crate's [`types::HardwareProfile`]
 //!   is always caller-supplied, matching this workspace's established
 //!   `HardwareProfileSource`-as-fixture pattern.
-//! - **Full nine-dimension parity with `hyperion_scheduler::ResourceVector`,
-//!   and a `Substitution` -> resource-footprint mapping.**
-//!   [`degrade::degrade_capability`]'s `resolve_alternate_fits` callback
-//!   is still caller-supplied — [`fit::scheduler_backed_resolver`] now
-//!   builds a real one backed by the scheduler's actual `Ram`/`Vram`
-//!   ledgers, but this crate's own [`types::Substitution`] carries no
-//!   `CapacityDescriptor` (a `ModelTier`/`CapabilityRef` alone doesn't
-//!   say how much RAM/VRAM it needs), so the caller still supplies that
-//!   lookup; and `compute_tops`/storage IOPS/network bandwidth/battery
-//!   are still not checked — this crate's own narrow
-//!   [`types::ResourceConstraint`] (RAM/VRAM/compute-TOPS, matching
-//!   docs/37's own tier table) was a deliberate choice not to force
-//!   parity with dimensions docs/37's tier discussion never touches, and
-//!   `compute_tops` specifically has no scheduler dimension that means
-//!   the same thing (see [`fit`]'s doc comment).
+//! - ~~A `Substitution` -> resource-footprint mapping~~ (2026-07-16) — now real:
+//!   [`types::Substitution::CheaperLocalTier`]/[`types::Substitution::AlternateImplementation`]
+//!   each carry their own real [`types::CapacityDescriptor`], and the new
+//!   [`types::Substitution::footprint`] accessor is what [`fit::scheduler_backed_resolver`] now
+//!   reads directly — no more caller-supplied `footprint_for` lookup table standing in for
+//!   information the fallback declaration already has. Full nine-dimension parity with
+//!   `hyperion_scheduler::ResourceVector` remains deliberately out of scope: `compute_tops`/
+//!   storage IOPS/network bandwidth/battery are still not checked — this crate's own narrow
+//!   [`types::ResourceConstraint`] (RAM/VRAM/compute-TOPS, matching docs/37's own tier table) is
+//!   a deliberate choice not to force parity with dimensions docs/37's tier discussion never
+//!   touches, and `compute_tops` specifically has no scheduler dimension that means the same
+//!   thing (see [`fit`]'s doc comment).
 //! - **`capability_registry.install(plan.capability)`.** [`explain::apply_and_explain`]
 //!   still doesn't install a substituted implementation — a full
 //!   `CapabilityManifest` is genuinely more than a bare

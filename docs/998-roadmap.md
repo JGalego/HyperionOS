@@ -2847,3 +2847,24 @@ next step on any of these is a design pass, not code.
   the `ConsentedCloud` one and wins real candidate selection — not just carries a different label.
   All pre-existing tests across `hyperion-plugin-framework`, `hyperion-api-gateway`,
   `hyperion-sdk`, `hyperion-scalability`, and `hyperion-agent-runtime` pass unchanged.
+
+- **`hyperion-scalability`'s `Substitution` -> real resource-footprint mapping, landed
+  (2026-07-16)** (this crate's own named gap: `fit::scheduler_backed_resolver` built a real
+  fit-check backed by `hyperion_scheduler::Scheduler`'s live ledgers, but `types::Substitution`
+  carried no `CapacityDescriptor` at all, so a caller still had to separately maintain a
+  `ModelTier`/`CapabilityRef` -> footprint lookup table just to use it). `Substitution::CheaperLocalTier`/
+  `AlternateImplementation` each gain a real `CapacityDescriptor` field — the footprint now
+  travels with the fallback declaration itself, since whoever declares "fall back to this cheaper
+  tier" already knows what it costs. A new `Substitution::footprint()` accessor
+  (`ConsentedCloudUpgrade`/`Disable` real, honest `None`s: a cloud upgrade's footprint is the
+  remote provider's problem, disabling costs nothing) is what `fit::scheduler_backed_resolver`
+  now reads directly, dropping its caller-supplied `footprint_for` closure parameter entirely —
+  `scheduler_backed_resolver(&scheduler)` instead of `scheduler_backed_resolver(&scheduler,
+  footprint_for)`. `CapacityDescriptor` gained `PartialEq`/`Eq` to support this (all-`u32` fields,
+  no floats). Fully self-contained: confirmed zero external crates construct or depend on
+  `Substitution`. All 10 pre-existing call sites across 3 test files were updated to declare a
+  real footprint explicitly, preserving exact prior test behavior. Proven end to end in two new
+  unit tests on `Substitution::footprint()` itself (real footprint for the two variants that carry
+  one, real `None` for the two that don't) plus all 3 existing `scheduler_fit.rs` integration
+  tests continuing to pass with the closure parameter gone. All 13 of this crate's own
+  pre-existing tests pass unchanged.

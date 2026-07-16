@@ -46,7 +46,7 @@ pub fn degrade_capability(
 
     for substitution in &policy.fallback_order {
         let accepted = match substitution {
-            Substitution::CheaperLocalTier(_) | Substitution::AlternateImplementation(_) => {
+            Substitution::CheaperLocalTier(_, _) | Substitution::AlternateImplementation(_, _) => {
                 resolve_alternate_fits(substitution)
             }
             Substitution::ConsentedCloudUpgrade(provider) => consent_ledger

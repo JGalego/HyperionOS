@@ -30,19 +30,16 @@ fn dimension_fits(scheduler: &Scheduler, dim: ResourceDimension, want: u32) -> b
 
 /// Builds a real `resolve_alternate_fits` closure ready to hand straight
 /// to [`crate::degrade::degrade_capability`], backed by
-/// [`scheduler_has_headroom_for`]. This crate's own [`Substitution`]
-/// carries no resource footprint (`CheaperLocalTier`/`AlternateImplementation`
-/// name a tier or capability, not a `CapacityDescriptor`), so the caller
-/// supplies `footprint_for` to look one up (e.g. from a `ModelTier` ->
-/// `CapacityDescriptor` table it maintains); a substitution this lookup
-/// can't resolve never fits, matching `degrade_capability`'s existing
-/// deny-by-default fallback-order walk.
-pub fn scheduler_backed_resolver<'a>(
-    scheduler: &'a Scheduler,
-    footprint_for: impl Fn(&Substitution) -> Option<CapacityDescriptor> + 'a,
-) -> impl Fn(&Substitution) -> bool + 'a {
+/// [`scheduler_has_headroom_for`]. `CheaperLocalTier`/`AlternateImplementation` now carry their
+/// own real [`CapacityDescriptor`] (see [`Substitution::footprint`]'s own doc comment), so this
+/// no longer needs a caller-supplied `footprint_for` lookup — a substitution with no footprint of
+/// its own (`ConsentedCloudUpgrade`/`Disable`) never fits here, matching `degrade_capability`'s
+/// existing deny-by-default fallback-order walk (though neither variant is ever routed through
+/// `resolve_alternate_fits` in the first place — see that function's own match).
+pub fn scheduler_backed_resolver(scheduler: &Scheduler) -> impl Fn(&Substitution) -> bool + '_ {
     move |substitution| {
-        footprint_for(substitution)
+        substitution
+            .footprint()
             .is_some_and(|footprint| scheduler_has_headroom_for(scheduler, &footprint))
     }
 }

@@ -32,6 +32,14 @@ fn workstation_profile() -> HardwareProfile {
     }
 }
 
+fn tiny_edge_footprint() -> CapacityDescriptor {
+    CapacityDescriptor {
+        ram_mb: 2_048,
+        vram_mb: 0,
+        compute_tops: 2,
+    }
+}
+
 fn heavy_vision_policy() -> DegradationPolicy {
     DegradationPolicy {
         capability_ref: "vision.generate".to_string(),
@@ -41,7 +49,7 @@ fn heavy_vision_policy() -> DegradationPolicy {
             min_compute_tops: 20,
         },
         fallback_order: vec![
-            Substitution::CheaperLocalTier(ModelTier::TinyEdge),
+            Substitution::CheaperLocalTier(ModelTier::TinyEdge, tiny_edge_footprint()),
             Substitution::ConsentedCloudUpgrade("acme-cloud".to_string()),
             Substitution::Disable,
         ],
@@ -77,13 +85,16 @@ fn a_cheaper_local_tier_is_tried_first_when_it_fits() {
         &sbc_profile(),
         &ledger,
         1,
-        |sub| matches!(sub, Substitution::CheaperLocalTier(_)),
+        |sub| matches!(sub, Substitution::CheaperLocalTier(_, _)),
         1_000,
     );
     assert_eq!(
         plan.outcome,
         DegradationOutcome::Substituted {
-            substitution: Substitution::CheaperLocalTier(ModelTier::TinyEdge)
+            substitution: Substitution::CheaperLocalTier(
+                ModelTier::TinyEdge,
+                tiny_edge_footprint()
+            )
         }
     );
 }
