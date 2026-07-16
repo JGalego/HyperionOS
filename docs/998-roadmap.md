@@ -2456,3 +2456,32 @@ next step on any of these is a design pass, not code.
   registered contribution (not stacks it); updating an unknown plugin fails with `NoSuchPlugin`;
   and updating without `GRANT` rights fails with `Unauthorized`, matching `install`/`uninstall`'s
   own existing rights-gating tests.
+
+- **`hyperion-privacy`'s soft-delete grace-period expiry timer, landed (2026-07-16)** (docs/16
+  §10's own named gap: "nothing in this workspace runs a background clock that turns that grace
+  period into a permanent `CryptoShred` once it lapses"). `erase(SoftDelete)` already registered a
+  real, undoable `hyperion-recovery::ActionRecord`; it just stayed undoable forever, with no real
+  mechanism to ever seal it. `hyperion-recovery` gains a genuinely new state transition,
+  `RecoveryService::expire(action_id)`, and `ActionStatus` gains a fourth variant, `Expired`
+  (distinct from `Aborted` — never took effect — and `Undone` — reverted: an `Expired` action's
+  real effects stand permanently, exactly like `Committed`, but it can never be undone/redone
+  again). Only valid from `Committed`; a new `RecoveryError::ActionNotCommitted` rejects expiring
+  anything else. `hyperion-privacy`'s new `expire_lapsed_soft_deletes(recovery, now,
+  grace_period_secs)` is the real, caller-driven clock (matching this workspace's hosted-simulator
+  convention of a caller-supplied `now` over a real background thread): it sweeps every soft-delete
+  `ActionRecord` still `Committed` (recognized by the exact `note` string `erase` already tags
+  them with, since `hyperion-recovery`'s own `ActionRecord` deliberately stays privacy-agnostic —
+  many other crates journal through it too) whose age has reached `grace_period_secs`, and expires
+  each one for real. Named simplification: docs/16 §4's own `ErasureRequest.grace_period` is a
+  per-request `Duration`; this sweep applies one caller-supplied duration uniformly at sweep time,
+  since `ActionRecord` has no per-action grace-period field of its own to vary it by. Proven end to
+  end: a new `hyperion-recovery` test file (`tests/expire.rs`, 5 tests) proves `expire` seals a
+  `Committed` action against further undo, rejects expiring an `InFlight`/already-`Undone`/unknown
+  action, and — critically — proves an `Expired` action's own real effects still count as a
+  genuine conflict blocking an *earlier* action's own undo, exactly like `Committed` does (not
+  silently excluded the way `Aborted`/`Undone` are). A new `hyperion-privacy` test file
+  (`tests/grace_period_expiry.rs`, 5 tests) proves a soft-delete within its grace period is
+  untouched and stays undoable; one past it is expired and never undoable again; sweeping twice
+  never double-expires the same action; a `CryptoShred` erasure (which journals nothing) gives the
+  sweep nothing to touch; and an unrelated subsystem's own real `ActionRecord` (not tagged with
+  this crate's own soft-delete note) is never swept even once old enough, and stays undoable.

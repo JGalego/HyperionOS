@@ -43,6 +43,13 @@ pub enum ActionStatus {
     /// redoable via [`crate::service::RecoveryService::redo`]; an aborted
     /// one never ran to begin with and has nothing to redo.
     Undone,
+    /// Sealed by [`crate::service::RecoveryService::expire`] once a caller (docs/16 §10's own
+    /// motivating case: `hyperion-privacy`'s soft-delete grace period) decides this action's own
+    /// undo window has genuinely lapsed. Distinct from [`Self::Aborted`] (never took effect) and
+    /// [`Self::Undone`] (reverted): an `Expired` action's real effects stand permanently, exactly
+    /// like [`Self::Committed`], but -- like `CryptoShred`'s own no-grace-period floor -- it can
+    /// never be undone or redone again.
+    Expired,
 }
 
 /// docs/33 §4's `ActionRecord` — the "undo record." No separate undo-
@@ -142,6 +149,8 @@ pub enum RecoveryError {
     NoSuchRecoveryPoint,
     #[error("no such action record")]
     NoSuchAction,
+    #[error("only a Committed action can expire")]
+    ActionNotCommitted,
     #[error("knowledge graph error: {0}")]
     Graph(#[from] hyperion_knowledge_graph::GraphError),
     #[error("agent runtime error: {0}")]

@@ -202,6 +202,27 @@ impl RecoveryService {
         self.set_status(action_id, ActionStatus::Aborted)
     }
 
+    /// docs/16 §10's own real motivating case (`hyperion-privacy`'s soft-delete grace period):
+    /// seals a `Committed` action into [`ActionStatus::Expired`], permanently past the point
+    /// `undo`/`redo` will ever touch it again. This is a pure state transition -- deciding
+    /// *whether* enough time has genuinely passed is the caller's own job (this crate has no
+    /// opinion on any particular grace-period duration); this method just performs the one-way
+    /// transition once a caller has already decided it should happen. Only valid from
+    /// `Committed` -- expiring an `InFlight`, already-`Aborted`, already-`Undone`, or
+    /// already-`Expired` action is a real caller error, not silently accepted.
+    pub fn expire(&self, action_id: ActionId) -> Result<(), RecoveryError> {
+        let mut actions = self.actions.lock().unwrap();
+        let record = actions
+            .iter_mut()
+            .find(|a| a.action_id == action_id)
+            .ok_or(RecoveryError::NoSuchAction)?;
+        if record.status != ActionStatus::Committed {
+            return Err(RecoveryError::ActionNotCommitted);
+        }
+        record.status = ActionStatus::Expired;
+        Ok(())
+    }
+
     /// Writes every `Some` entry of `snapshot` back to the graph verbatim,
     /// restricted to `objects` — shared by [`Self::restore_objects`] (a
     /// `RecoveryPointId`-keyed "before" snapshot) and [`Self::redo`] (an

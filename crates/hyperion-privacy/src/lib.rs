@@ -73,14 +73,21 @@
 //!   observable state change, not a byte-level history deletion, and
 //!   nothing here disguises an erasure's network/timing signature (moot
 //!   without a real transport anyway).
-//! - **Real crash-recovery timers expiring the grace period.**
-//!   [`erasure::erase`] now registers a real, undoable `ActionRecord` for
-//!   every `SoftDelete`, but nothing in this workspace runs a background
-//!   clock that turns that grace period into a permanent `CryptoShred`
-//!   once it lapses — the `ActionRecord` stays undoable indefinitely
-//!   until a caller either calls `recovery.undo(...)` or re-erases with
-//!   `CryptoShred`, matching `hyperion-recovery`'s own "retention/rollup
-//!   compaction" deferral.
+//! - ~~**Real crash-recovery timers expiring the grace period.**~~ — now real:
+//!   [`erasure::expire_lapsed_soft_deletes`] is the real, caller-driven clock (matching this
+//!   workspace's hosted-simulator convention of a caller-supplied `now` rather than a real
+//!   background thread): every soft-delete `ActionRecord` still `Committed` whose age has
+//!   reached a caller-chosen `grace_period_secs` is sealed via
+//!   `hyperion_recovery::RecoveryService::expire` (a new state transition that crate gained for
+//!   exactly this), after which it can never be undone again — the same irreversibility
+//!   `ErasureMode::CryptoShred` already had from the start. Named simplification: docs/16 §4's
+//!   own `ErasureRequest.grace_period` is a per-request field; this sweep applies one
+//!   caller-supplied duration uniformly to every pending soft-delete, since `ActionRecord` has no
+//!   per-action grace-period field of its own to vary it by (deliberately — that type stays
+//!   privacy-agnostic; many other crates journal through it too). `hyperion-recovery`'s own
+//!   separate "retention classes, compaction, and pinning enforcement beyond a boolean flag"
+//!   deferral (recovery points/the action journal simply accumulating for the process lifetime)
+//!   is a different, still-open gap — closing this one doesn't imply that one is closed too.
 //! - **`memory.*`/`knowledgeGraph.*` full Inspect/Edit/Export API
 //!   surface** (docs/16 §6) — only `erase` is implemented; `inspect`/
 //!   `edit`/`export` are direct callers of `hyperion-knowledge-graph`'s
@@ -93,7 +100,7 @@ mod routing;
 mod types;
 
 pub use consent::ConsentLedger;
-pub use erasure::erase;
+pub use erasure::{erase, expire_lapsed_soft_deletes};
 pub use routing::{filter_for_recipient, route_capability_call};
 pub use types::{
     ConsentGrant, DataScope, DegradeReason, ErasureMode, ErasureReceipt, PrivacyError,

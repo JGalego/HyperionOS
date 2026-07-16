@@ -1,8 +1,15 @@
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_knowledge_graph::{KnowledgeGraph, NodeId};
-use hyperion_recovery::{RecoveryService, Trigger};
+use hyperion_recovery::{ActionId, ActionStatus, RecoveryService, Trigger};
 
 use crate::types::{ErasureMode, ErasureReceipt, PrivacyError};
+
+/// The exact `ActionRecord.note` [`erase`]'s own `SoftDelete` path journals under -- reused by
+/// [`expire_lapsed_soft_deletes`] to recognize which `Committed` actions are really this crate's
+/// own grace periods (and not some unrelated caller's own journaled action) without needing a
+/// dedicated field on `hyperion-recovery`'s own, deliberately privacy-agnostic `ActionRecord`
+/// type.
+const SOFT_DELETE_NOTE: &str = "hyperion-privacy erase (soft-delete)";
 
 fn require(
     monitor: &CapabilityMonitor,
@@ -59,7 +66,7 @@ pub fn erase(
                 point_id,
                 object_ids.to_vec(),
                 None,
-                "hyperion-privacy erase (soft-delete)",
+                SOFT_DELETE_NOTE,
                 now,
             ))
         }
@@ -87,4 +94,47 @@ pub fn erase(
         completed_at: Some(now),
         grace_period_action,
     })
+}
+
+/// docs/16 §10's own "soft-deletes honor a grace period before cryptographic shredding" real
+/// timer, closing this crate's own previously-named gap: `erase(SoftDelete)` registered a real,
+/// undoable `ActionRecord`, but nothing in this workspace ran a background clock that turned that
+/// grace period into a permanent `CryptoShred` once it lapsed. A real caller (this crate has no
+/// scheduler of its own to tick on — matching this workspace's hosted-simulator convention of a
+/// caller-driven clock rather than a real background thread) calls this with its own current
+/// `now` and a chosen `grace_period_secs`; every one of this crate's own soft-delete
+/// `ActionRecord`s still `Committed` (still undoable) whose age has reached or exceeded that
+/// grace period is sealed for real via `hyperion_recovery::RecoveryService::expire` — after this,
+/// `recovery.undo(...)` can never restore it again, matching the exact irreversibility
+/// `ErasureMode::CryptoShred` already has from the start.
+///
+/// Deliberate simplification, named rather than silently narrowed: docs/16 §4's own
+/// `ErasureRequest.grace_period` is a *per-request* `Duration` a caller could vary erasure to
+/// erasure; this sweep applies one caller-supplied `grace_period_secs` uniformly to every pending
+/// soft-delete at sweep time, since `hyperion-recovery`'s own `ActionRecord` (deliberately
+/// privacy-agnostic — many other crates journal through it) has no per-action grace-period field
+/// of its own to vary it by.
+///
+/// Returns every `ActionId` this call really expired, so a caller can log or audit exactly what a
+/// sweep did — never a silent bulk operation with no visible effect.
+pub fn expire_lapsed_soft_deletes(
+    recovery: &RecoveryService,
+    now: u64,
+    grace_period_secs: u64,
+) -> Vec<ActionId> {
+    recovery
+        .action_records()
+        .into_iter()
+        .filter(|record| {
+            record.status == ActionStatus::Committed
+                && record.note == SOFT_DELETE_NOTE
+                && now.saturating_sub(record.created_at) >= grace_period_secs
+        })
+        .filter_map(|record| {
+            recovery
+                .expire(record.action_id)
+                .ok()
+                .map(|()| record.action_id)
+        })
+        .collect()
 }
