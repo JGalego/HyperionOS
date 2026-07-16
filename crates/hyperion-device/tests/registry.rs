@@ -102,6 +102,69 @@ fn register_persists_the_device_as_a_real_knowledge_graph_node() {
     assert_eq!(node.metadata["device_id"], device);
     assert_eq!(node.metadata["manufacturer"], "Acme");
     assert_eq!(node.metadata["model"], "Display-1");
+    assert_eq!(
+        node.metadata["pairing"],
+        serde_json::Value::Null,
+        "a freshly registered device has no pairing yet"
+    );
+}
+
+#[test]
+fn heartbeat_tick_pair_and_revoke_all_really_resync_the_kg_node() {
+    let (_dir, monitor, token, registry, graph, keystore) = setup();
+    let device = register_device(
+        &registry,
+        &monitor,
+        &token,
+        &keystore,
+        DeviceType::Mobile,
+        "Acme",
+        "Phone-1",
+        vec![CapabilityManifestEntry {
+            capability_name: "phone.notify".to_string(),
+            direction: Direction::Render,
+            safety_class: SafetyClass::Cosmetic,
+        }],
+        1,
+        0,
+    )
+    .unwrap();
+    let node_id = registry.kg_node_for(device).unwrap();
+
+    // heartbeat -- real, updated last_heartbeat really lands on the same real node.
+    registry.heartbeat(&monitor, &token, device, 41).unwrap();
+    let node = graph.get(&monitor, &token, node_id).unwrap();
+    assert_eq!(node.metadata["last_heartbeat"], 41);
+
+    // tick -- a real presence change really lands on the same real node too.
+    registry.tick(&monitor, &token, 100, 10, 30).unwrap();
+    let node = graph.get(&monitor, &token, node_id).unwrap();
+    assert_eq!(node.metadata["presence"], "Disconnected");
+
+    // pair -- the real grant now really appears on the node's own `pairing` field.
+    registry
+        .pair(
+            &monitor,
+            &token,
+            device,
+            TrustTier::View,
+            vec!["phone.notify".to_string()],
+            false,
+        )
+        .unwrap();
+    let node = graph.get(&monitor, &token, node_id).unwrap();
+    assert_eq!(
+        node.metadata["pairing"]["granted_capabilities"],
+        serde_json::json!(["phone.notify"])
+    );
+
+    // revoke -- the real grant is really gone from the node afterward, not left stale.
+    registry.revoke(&monitor, &token, device).unwrap();
+    let node = graph.get(&monitor, &token, node_id).unwrap();
+    assert_eq!(node.metadata["pairing"], serde_json::Value::Null);
+
+    // Every re-sync updates the same real node in place -- never a second, parallel one.
+    assert_eq!(registry.kg_node_for(device), Some(node_id));
 }
 
 #[test]
@@ -263,25 +326,25 @@ fn presence_degrades_then_disconnects_and_recovers_on_heartbeat() {
     )
     .unwrap();
 
-    registry.tick(5, 10, 30);
+    registry.tick(&monitor, &token, 5, 10, 30).unwrap();
     assert_eq!(
         registry.get(device).unwrap().presence,
         PresenceState::Connected
     );
 
-    registry.tick(20, 10, 30);
+    registry.tick(&monitor, &token, 20, 10, 30).unwrap();
     assert_eq!(
         registry.get(device).unwrap().presence,
         PresenceState::Degraded
     );
 
-    registry.tick(40, 10, 30);
+    registry.tick(&monitor, &token, 40, 10, 30).unwrap();
     assert_eq!(
         registry.get(device).unwrap().presence,
         PresenceState::Disconnected
     );
 
-    registry.heartbeat(device, 41).unwrap();
+    registry.heartbeat(&monitor, &token, device, 41).unwrap();
     assert_eq!(
         registry.get(device).unwrap().presence,
         PresenceState::Connected
@@ -339,8 +402,8 @@ fn a_disconnected_device_refuses_invocation_and_a_substitute_is_found() {
 
     // The car loses connectivity mid-navigation; the phone keeps sending
     // heartbeats throughout.
-    registry.tick(1000, 10, 30);
-    registry.heartbeat(phone, 1000).unwrap();
+    registry.tick(&monitor, &token, 1000, 10, 30).unwrap();
+    registry.heartbeat(&monitor, &token, phone, 1000).unwrap();
     let result = registry.invoke(&monitor, &token, car, nav_capability, serde_json::json!({}));
     assert!(matches!(result, Err(DeviceError::Unreachable)));
 

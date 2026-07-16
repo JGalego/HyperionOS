@@ -34,6 +34,25 @@ pub enum DeviceError {
     Graph(#[from] hyperion_knowledge_graph::GraphError),
 }
 
+/// The one real function every write to a device's Knowledge Graph node goes through --
+/// [`DeviceRegistry::register`]'s first write and every real [`DeviceRegistry::resync_kg_node`]
+/// re-sync alike -- so the node's own metadata shape can never drift between them.
+/// `DeviceObject`'s own fields are still flattened at the top level (unchanged from before this
+/// re-sync gap closed, so an existing query by e.g. `metadata["manufacturer"]` keeps working
+/// unchanged); `pairing` is a real, new sibling field carrying the device's current
+/// `PairingRecord`, or `null` when never paired (or revoked) -- the "grants" half of this crate's
+/// own previously-named "presence, `last_heartbeat`, grants" re-sync gap.
+fn device_metadata(device: &DeviceObject, pairing: Option<&PairingRecord>) -> serde_json::Value {
+    let mut metadata = serde_json::to_value(device).expect("DeviceObject always serializes");
+    if let serde_json::Value::Object(ref mut map) = metadata {
+        map.insert(
+            "pairing".to_string(),
+            serde_json::to_value(pairing).expect("Option<&PairingRecord> always serializes"),
+        );
+    }
+    metadata
+}
+
 /// docs/20 — Device Framework. See this crate's doc comment for what's
 /// deferred.
 pub struct DeviceRegistry {
@@ -116,7 +135,9 @@ impl DeviceRegistry {
             last_heartbeat: now,
         };
 
-        let metadata = serde_json::to_value(&device).expect("DeviceObject always serializes");
+        // Never paired yet -- see `device_metadata`'s own doc comment on why every write to this
+        // node (this one and every real re-sync below) goes through the identical function.
+        let metadata = device_metadata(&device, None);
         let node_id = self
             .graph
             .put_node(monitor, token, None, "device", None, metadata)?;
@@ -124,6 +145,34 @@ impl DeviceRegistry {
 
         self.devices.lock().unwrap().insert(device_id, device);
         Ok(device_id)
+    }
+
+    /// This crate's own previously-named "re-syncing the Knowledge Graph node after
+    /// registration" gap, closed for real: re-serializes `device_id`'s current `DeviceObject` (and
+    /// its current `PairingRecord`, if any) via [`device_metadata`] and writes it back to the
+    /// exact same real node [`Self::register`] created, via `put_node`'s own real "update in
+    /// place" mode (`Some(node_id)`) -- never a second, parallel node. A silent no-op if
+    /// `device_id` was never registered (or was somehow removed), rather than a hard error --
+    /// every caller of this is itself a real, already-successful mutation
+    /// ([`Self::heartbeat`]/[`Self::tick`]/[`Self::pair`]/[`Self::revoke`]) that shouldn't be
+    /// undone just because there's no real KG mirror to update.
+    fn resync_kg_node(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        device_id: u64,
+    ) -> Result<(), DeviceError> {
+        let Some(device) = self.devices.lock().unwrap().get(&device_id).cloned() else {
+            return Ok(());
+        };
+        let pairing = self.pairings.lock().unwrap().get(&device_id).cloned();
+        let metadata = device_metadata(&device, pairing.as_ref());
+        let node_id = self.kg_node_for(device_id);
+        let new_node_id = self
+            .graph
+            .put_node(monitor, token, node_id, "device", None, metadata)?;
+        self.kg_nodes.lock().unwrap().insert(device_id, new_node_id);
+        Ok(())
     }
 
     /// The real Knowledge Graph node [`Self::register`] created for
@@ -185,6 +234,7 @@ impl DeviceRegistry {
             .lock()
             .unwrap()
             .insert(device_id, record.clone());
+        self.resync_kg_node(monitor, token, device_id)?;
         Ok(record)
     }
 
@@ -196,7 +246,7 @@ impl DeviceRegistry {
     ) -> Result<(), DeviceError> {
         self.require(monitor, token, RightsMask::WRITE)?;
         self.pairings.lock().unwrap().remove(&device_id);
-        Ok(())
+        self.resync_kg_node(monitor, token, device_id)
     }
 
     /// docs/20 §6's `device.capability.invoke` — validated against the
@@ -237,30 +287,69 @@ impl DeviceRegistry {
         Ok(serde_json::json!({"device_id": device_id, "capability": capability_name, "echo": args}))
     }
 
-    pub fn heartbeat(&self, device_id: u64, now: u64) -> Result<(), DeviceError> {
-        let mut devices = self.devices.lock().unwrap();
-        let device = devices.get_mut(&device_id).ok_or(DeviceError::NotFound)?;
-        device.last_heartbeat = now;
-        device.presence = PresenceState::Connected;
-        Ok(())
+    /// Now really re-syncs the real Knowledge Graph node [`Self::register`] created (see
+    /// [`Self::resync_kg_node`]) -- this crate's own previously-named "re-syncing the Knowledge
+    /// Graph node after registration" gap, for the one of its two hardest cases (the other being
+    /// [`Self::tick`]) that "take no `CapabilityMonitor`/`CapabilityToken` at all," per this
+    /// crate's own doc comment: a device's own physical heartbeat isn't itself a capability-
+    /// mediated action, so the caller driving it (whatever real loop calls this on the device's
+    /// behalf) now supplies the one that authorizes the resulting KG write.
+    pub fn heartbeat(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        device_id: u64,
+        now: u64,
+    ) -> Result<(), DeviceError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+        {
+            let mut devices = self.devices.lock().unwrap();
+            let device = devices.get_mut(&device_id).ok_or(DeviceError::NotFound)?;
+            device.last_heartbeat = now;
+            device.presence = PresenceState::Connected;
+        }
+        self.resync_kg_node(monitor, token, device_id)
     }
 
     /// docs/20 §5.6's transient-connectivity state machine, recomputed
     /// statelessly from elapsed time rather than incrementally — repeated
     /// calls with the same `now` are idempotent, which is the property a
-    /// caller-driven simulator clock needs.
-    pub fn tick(&self, now: u64, degraded_after_secs: u64, disconnected_after_secs: u64) {
-        let mut devices = self.devices.lock().unwrap();
-        for device in devices.values_mut() {
-            let elapsed = now.saturating_sub(device.last_heartbeat);
-            device.presence = if elapsed > disconnected_after_secs {
-                PresenceState::Disconnected
-            } else if elapsed > degraded_after_secs {
-                PresenceState::Degraded
-            } else {
-                PresenceState::Connected
-            };
+    /// caller-driven simulator clock needs. Now really re-syncs every device's real Knowledge
+    /// Graph node too (see [`Self::resync_kg_node`]) -- the harder of this crate's own two named
+    /// "no single token that would authorize writing all of them" cases: `tick` sweeps every
+    /// device at once, so the one real `token` a caller now supplies here authorizes the whole
+    /// sweep's real writes, not a per-device one. Correctness over efficiency, appropriate at
+    /// this scale (this crate's own established convention, see `hyperion-api-gateway`'s
+    /// identical choice for re-deriving Model Router candidates on every call): every device is
+    /// re-synced every tick, not just ones whose presence actually changed.
+    pub fn tick(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        now: u64,
+        degraded_after_secs: u64,
+        disconnected_after_secs: u64,
+    ) -> Result<(), DeviceError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+        let device_ids: Vec<u64> = self.devices.lock().unwrap().keys().copied().collect();
+        for device_id in device_ids {
+            {
+                let mut devices = self.devices.lock().unwrap();
+                let device = devices
+                    .get_mut(&device_id)
+                    .expect("device_id was just listed from this same map");
+                let elapsed = now.saturating_sub(device.last_heartbeat);
+                device.presence = if elapsed > disconnected_after_secs {
+                    PresenceState::Disconnected
+                } else if elapsed > degraded_after_secs {
+                    PresenceState::Degraded
+                } else {
+                    PresenceState::Connected
+                };
+            }
+            self.resync_kg_node(monitor, token, device_id)?;
         }
+        Ok(())
     }
 
     pub fn get(&self, device_id: u64) -> Option<DeviceObject> {

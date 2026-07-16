@@ -2662,3 +2662,24 @@ next step on any of these is a design pass, not code.
   router genuinely disagree, returning both real outputs rather than silently picking one; and a
   candidate pool with only one `ImplKind` present skips ensemble dispatch entirely rather than
   fabricating a partner.
+
+- **`hyperion-device`'s Knowledge Graph node re-sync, landed (2026-07-16)** (this crate's own
+  named gap: `heartbeat`/`tick`/`pair` update the in-process `DeviceObject` but never call
+  `put_node` again, so the KG node was a real, queryable registration-time snapshot, never a live
+  mirror). A new, shared `resync_kg_node` helper (and a `device_metadata` helper both it and
+  `register` now go through, so the node's metadata shape can never drift between a first write
+  and a later re-sync) closes it for all four mutators. `heartbeat`/`tick` — the two that
+  previously took no `CapabilityMonitor`/`CapabilityToken` at all, since a device's own physical
+  heartbeat isn't itself capability-mediated and `tick` sweeps every device at once with no single
+  token to authorize it — now both take one real, caller-supplied token, the same "caller supplies
+  the token a background/periodic action reuses" precedent `hyperion-federation`'s own
+  `start_lease_heartbeat` already established, rather than this registry minting its own internal
+  one. The KG node's metadata also gained a real `pairing` sibling field (the device's current
+  `PairingRecord`, or `null`) — the "grants" half of the named gap — without changing the
+  already-flattened `DeviceObject` fields any existing query relied on, so `pair`/`revoke` have
+  something real to re-sync too. Proven end to end in a new
+  `heartbeat_tick_pair_and_revoke_all_really_resync_the_kg_node` test: a real heartbeat's updated
+  `last_heartbeat`, a real tick's changed `presence`, a real pair's granted capabilities, and a
+  real revoke's cleared `pairing` all land on the exact same real node, never a second, parallel
+  one. All 18 of this crate's own pre-existing tests, and `hyperion-threat-model`'s own device
+  tests (already calling `pair`/`revoke` with a real token), pass unchanged.

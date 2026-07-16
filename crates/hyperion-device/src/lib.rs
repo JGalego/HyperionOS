@@ -36,17 +36,21 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **Re-syncing the Knowledge Graph node after registration.**
-//!   `heartbeat`/`tick`/`pair` update the in-process `DeviceObject`
-//!   (presence, `last_heartbeat`, grants) but don't call `put_node`
-//!   again — `heartbeat`/`tick` in particular take no
-//!   `CapabilityMonitor`/`CapabilityToken` at all (a device's own
-//!   physical heartbeat isn't itself a capability-mediated action, and
-//!   `tick` sweeps every device at once, with no single token that would
-//!   authorize writing all of them), so wiring a write into either would
-//!   need its own real design pass rather than a mechanical copy-paste of
-//!   `register`'s pattern. The KG node is a real, queryable registration-
-//!   time snapshot, not yet a live mirror.
+//! - ~~Re-syncing the Knowledge Graph node after registration~~ — now real:
+//!   [`registry::DeviceRegistry::heartbeat`]/[`registry::DeviceRegistry::tick`]/
+//!   [`registry::DeviceRegistry::pair`]/[`registry::DeviceRegistry::revoke`] all really call
+//!   `put_node` again (via a new, shared `resync_kg_node` helper, so every one of them writes the
+//!   identical metadata shape) — `heartbeat`/`tick`'s own missing `CapabilityMonitor`/
+//!   `CapabilityToken` is the real design decision this bullet used to name as needed: both now
+//!   take one real, caller-supplied token (`tick`'s one token authorizes its whole real
+//!   multi-device sweep, matching `hyperion-federation::start_lease_heartbeat`'s own established
+//!   "caller supplies the token a background/periodic action reuses" precedent, rather than this
+//!   registry minting its own internal one). The KG node's own metadata gained a real `pairing`
+//!   sibling field (the current `PairingRecord`, or `null`) alongside `DeviceObject`'s
+//!   already-flattened fields — the "grants" half of this gap — so `pair`/`revoke` have something
+//!   real to re-sync too, without changing the shape any existing query over `manufacturer`/
+//!   `model`/etc. already relied on. The KG node is now a real, live mirror, not just a
+//!   registration-time snapshot.
 //! - **Real discovery protocols** (mDNS/BLE/Matter/cloud-relay, §5.1) — a
 //!   device's `CapabilityManifest` is supplied directly to
 //!   [`DeviceRegistry::register`] by the caller, standing in for whatever
