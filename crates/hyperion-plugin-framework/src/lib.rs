@@ -23,8 +23,9 @@
 //! this workspace already depends on, not a second one;
 //! [`registry::PluginRegistry::register_implementation`] implements the
 //! structural-compatibility check that decides whether a colliding
-//! `capability_id` competes as one more implementation or is rejected
-//! outright.
+//! `capability_id` competes as one more implementation, or — via a real
+//! [`registry::version_variant`]-minted id — registers as a genuinely
+//! separate entry instead.
 //!
 //! Every non-`Capability` `Contribution` variant this crate implements now has a real, live
 //! registration point (all landed 2026-07-16, docs/998-roadmap.md's Resourceful pillar) — each
@@ -99,11 +100,12 @@
 //!   only — the embedding variant needs `hyperion-knowledge-graph`'s
 //!   vector index, which this crate does not depend on to stay decoupled
 //!   from a specific Knowledge Graph instance.
-//! - **`version_variant()` minting a distinct id for an incompatible
-//!   collision.** A structurally incompatible `capability_id` collision
-//!   is rejected with [`types::PluginError::CapabilityCollisionIncompatible`]
-//!   rather than automatically minted a versioned variant id — the
-//!   caller can retry under an explicitly different `capability_id`.
+//! - ~~**`version_variant()` minting a distinct id for an incompatible collision.**~~ — now real:
+//!   [`registry::PluginRegistry::register_implementation`] mints a real, deterministic
+//!   `capability_id#N` variant id for a structurally incompatible collision instead of rejecting
+//!   the whole install with [`types::PluginError::CapabilityCollisionIncompatible`] — docs/24
+//!   §5's own pseudocode, so an incompatible manifest now installs in full and competes under its
+//!   own distinct registry entry rather than failing outright.
 //! - **`TrustDepth` as a real isolation mechanism.** Still enforced here purely as a policy label
 //!   (a manifest's declared minimum compared against the caller-supplied `available_depth`) — but
 //!   the premise that this workspace has no second, deeper sandboxing primitive is now stale:

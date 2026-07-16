@@ -44,6 +44,26 @@ fn needs_sandbox_token(manifest: &PluginManifest) -> bool {
     })
 }
 
+/// docs/24 §5's `version_variant()`: a real, deterministic, collision-free `capability_id` for a
+/// structurally incompatible collision -- appends `#N` for the smallest `N >= 2` not already a
+/// key in `registry` (the original, un-suffixed id is implicitly "`#1`"). Deterministic rather
+/// than random so the same sequence of installs always assigns the same variant ids, and always
+/// terminates (`N` only ever grows) -- this can never itself fail the way the collision it
+/// replaces used to.
+fn version_variant(
+    registry: &HashMap<CapabilityId, RegistryEntry>,
+    capability_id: &str,
+) -> CapabilityId {
+    let mut n = 2u64;
+    loop {
+        let candidate = format!("{capability_id}#{n}");
+        if !registry.contains_key(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
 /// An honest check at install/update time, not a trusted claim: every `NativeBinary`-backed
 /// contribution (a `Capability` of that kind, or any `ExecutionEngine`) must really name a
 /// program that really exists and is really executable right now. Shared by
@@ -483,10 +503,17 @@ impl PluginRegistry {
 
     /// docs/24 §5's structural-compatibility check on `capability_id`
     /// collision: identical contract shape merges into the existing
-    /// `RegistryEntry` as one more competing implementation; an
-    /// incompatible one is rejected outright rather than silently
-    /// shadowing the existing contract (docs/24's `version_variant()`
-    /// minting a distinct id is deferred — see this crate's doc comment).
+    /// `RegistryEntry` as one more competing implementation; a structurally
+    /// incompatible one registers instead under a real, distinct
+    /// `version_variant()` id — docs/24 §5's own pseudocode ("the new
+    /// implementation registers as a genuinely separate `RegistryEntry`
+    /// instead of being rejected outright or silently shadowing the
+    /// existing contract"), closing this crate's own previously-named
+    /// "`version_variant()` minting a distinct id is deferred" gap. Never
+    /// fails: [`version_variant`] always finds a free id, so a manifest
+    /// with an incompatible `capability_id` still installs in full,
+    /// exactly like a compatible one — it just competes under a different
+    /// name.
     fn register_implementation(
         &self,
         plugin_id: PluginId,
@@ -502,12 +529,22 @@ impl PluginRegistry {
 
         let mut registry = self.registry.lock().unwrap();
         match registry.get_mut(&cm.capability_id) {
-            Some(entry) => {
-                if entry.contract != cm.contract {
-                    return Err(PluginError::CapabilityCollisionIncompatible);
-                }
+            Some(entry) if entry.contract == cm.contract => {
                 entry.implementations.push(descriptor.clone());
                 entry.owning_plugins.push(plugin_id);
+            }
+            Some(_) => {
+                let versioned_id = version_variant(&registry, &cm.capability_id);
+                registry.insert(
+                    versioned_id.clone(),
+                    RegistryEntry {
+                        capability_id: versioned_id,
+                        contract: cm.contract.clone(),
+                        implementations: vec![descriptor.clone()],
+                        owning_plugins: vec![plugin_id],
+                        install_state: InstallState::Active,
+                    },
+                );
             }
             None => {
                 registry.insert(

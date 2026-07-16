@@ -2477,6 +2477,23 @@ next step on any of these is a design pass, not code.
   and updating without `GRANT` rights fails with `Unauthorized`, matching `install`/`uninstall`'s
   own existing rights-gating tests.
 
+- **`hyperion-plugin-framework`'s `version_variant()`, landed (2026-07-16)** (docs/24 §5's own
+  named gap and pseudocode: a structurally incompatible `capability_id` collision used to be
+  rejected outright with `PluginError::CapabilityCollisionIncompatible`, failing the *entire*
+  install rather than minting the doc's own `version_variant()` id). A new, private
+  `registry::version_variant` helper is real and deterministic — `capability_id#N` for the
+  smallest `N >= 2` not already a registry key — and always terminates, so this path can never
+  itself fail the way the collision it replaces used to.
+  `PluginRegistry::register_implementation` now has three real outcomes on a `capability_id`
+  collision, not two: identical contract merges as one more competing implementation (unchanged);
+  incompatible contract registers under a real, distinct variant id as its own `RegistryEntry`
+  (new); no prior entry still just inserts fresh (unchanged). An incompatible manifest therefore
+  now installs *in full* — matching every other manifest's behavior — rather than aborting the
+  whole install. Proven end to end: a structurally incompatible collision installs successfully
+  and is discoverable under `document.summarize#2`, with its own real (not copied) contract, while
+  the original entry is left untouched; a second, independent incompatible collision against the
+  same base id gets its own `#3`, never colliding with the first variant.
+
 - **`hyperion-privacy`'s soft-delete grace-period expiry timer, landed (2026-07-16)** (docs/16
   §10's own named gap: "nothing in this workspace runs a background clock that turns that grace
   period into a permanent `CryptoShred` once it lapses"). `erase(SoftDelete)` already registered a

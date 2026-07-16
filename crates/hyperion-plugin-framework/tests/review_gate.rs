@@ -1,7 +1,9 @@
 //! docs/24 §5's review gate: an over-requested permission is rejected
 //! pre-consent, a tampered signature is caught, and a `capability_id`
-//! collision is either a real competing implementation or a hard
-//! rejection — never a silent shadow.
+//! collision is either a real competing implementation (structurally
+//! compatible) or a real, distinct `version_variant()` registry entry
+//! (structurally incompatible) — never a silent shadow, and never an
+//! outright install failure either.
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_crypto::Keystore;
@@ -162,7 +164,7 @@ fn a_structurally_compatible_collision_becomes_a_second_competing_implementation
 }
 
 #[test]
-fn a_structurally_incompatible_collision_is_rejected() {
+fn a_structurally_incompatible_collision_installs_under_a_real_version_variant_id() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let registry = PluginRegistry::new();
@@ -191,17 +193,75 @@ fn a_structurally_incompatible_collision_is_rejected() {
     cm.contract.outputs = vec!["summary".to_string(), "extra_field".to_string()];
     incompatible.signature = Some(sign(&incompatible, &keystore));
 
-    let result = registry.install(
-        &mut monitor,
-        &root,
-        incompatible,
-        TrustDepth::D0,
-        true,
-        1_001,
-        &keystore.verifying_key(),
+    // docs/24 §5's `version_variant()`: an incompatible collision installs in full, under a
+    // real, distinct id -- never an outright install failure.
+    registry
+        .install(
+            &mut monitor,
+            &root,
+            incompatible,
+            TrustDepth::D0,
+            true,
+            1_001,
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    let original = registry.query("document.summarize").unwrap();
+    assert_eq!(
+        original.implementations.len(),
+        1,
+        "the original entry must be untouched by an incompatible collision, not merged into it"
     );
-    assert!(matches!(
-        result,
-        Err(PluginError::CapabilityCollisionIncompatible)
-    ));
+
+    let variant = registry
+        .query("document.summarize#2")
+        .expect("an incompatible collision must register under a real, discoverable variant id");
+    assert_eq!(variant.implementations.len(), 1);
+    assert_eq!(variant.contract.outputs, vec!["summary", "extra_field"]);
+    assert_ne!(
+        variant.contract, original.contract,
+        "the variant keeps its own real, incompatible contract, not a copy of the original's"
+    );
+}
+
+#[test]
+fn a_second_incompatible_collision_gets_its_own_distinct_variant_id() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let registry = PluginRegistry::new();
+    let (_dir, keystore) = keystore();
+
+    for (plugin_id, extra_output, now) in [
+        (1, None, 1_000),
+        (2, Some("extra_field"), 1_001),
+        (3, Some("another_field"), 1_002),
+    ] {
+        let mut manifest = base_manifest();
+        manifest.plugin_id = plugin_id;
+        if let Some(extra) = extra_output {
+            let Contribution::Capability(cm) = &mut manifest.contributions[0] else {
+                unreachable!("test fixture always installs a Capability contribution")
+            };
+            cm.contract.outputs = vec!["summary".to_string(), extra.to_string()];
+        }
+        manifest.signature = Some(sign(&manifest, &keystore));
+        registry
+            .install(
+                &mut monitor,
+                &root,
+                manifest,
+                TrustDepth::D0,
+                true,
+                now,
+                &keystore.verifying_key(),
+            )
+            .unwrap();
+    }
+
+    assert!(registry.query("document.summarize#2").is_some());
+    assert!(
+        registry.query("document.summarize#3").is_some(),
+        "a second, independently-incompatible collision must not collide with the first variant"
+    );
 }
