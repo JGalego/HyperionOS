@@ -62,12 +62,17 @@
 //!   installs directly into a local `PluginRegistry`; no network
 //!   publish/submission-status-polling exists in a hosted simulator with
 //!   no real network.
-//! - **Real code signing.** `PublishSubmission.package_hash` is left at
-//!   `0` by [`publish::prepare_submission`] — this crate reuses
-//!   `hyperion_plugin_framework::signature`'s non-cryptographic-checksum
-//!   pattern only at the manifest level (via
-//!   [`publish::to_plugin_manifest`]), not as a separate package-level
-//!   signing step.
+//! - ~~**`PublishSubmission.package_hash` real content fingerprinting.**~~ — now real:
+//!   [`publish::prepare_submission`] computes a real BLAKE3 hash (via `hyperion_crypto::hash`,
+//!   truncated to this field's own `u64` width) over the submission's own canonical (Contract,
+//!   Implementation) bytes, rather than always leaving it at `0`. Distinct from
+//!   [`publish::to_plugin_manifest`]'s own real Ed25519 signature (`hyperion_plugin_framework::
+//!   sign`, itself real since M9 — not the non-cryptographic checksum this bullet originally
+//!   described, which was already stale by the time this note was updated): the signature
+//!   authenticates the *publisher*'s identity; `package_hash` fingerprints the *content* itself,
+//!   independent of who signed it or how it was scored. Real package-level code *signing* (a
+//!   caller verifying `package_hash` against a trusted registry entry before install) remains
+//!   separate, real follow-up work this bullet does not claim to close.
 //! - **`Implementation.resourceProfile`.** Not modeled — no consumer
 //!   (this crate's harness doesn't schedule real resource contention).
 //! - **A real embedding model for `embeddingDistance`.** [`harness::run_harness`]'s

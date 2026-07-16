@@ -3,11 +3,14 @@ use std::collections::HashSet;
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
 use hyperion_crypto::Keystore;
 use hyperion_plugin_framework::{
-    CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind, PluginHandle,
-    PluginManifest, PluginRegistry, SemanticContract, TrustDepth,
+    CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind, Operation,
+    PluginHandle, PluginManifest, PluginRegistry, SemanticContract, SideEffect, TrustDepth,
 };
 
-use crate::types::{Contract, Implementation, PublishSubmission, ReviewStatus, Runtime, SdkError};
+use crate::types::{
+    Contract, Implementation, LatencyClass, PublishSubmission, ReviewStatus, Runtime, SdkError,
+    TrustLevel,
+};
 
 fn sensitive(op: hyperion_plugin_framework::Operation) -> bool {
     use hyperion_plugin_framework::Operation;
@@ -85,6 +88,97 @@ pub fn to_plugin_manifest(
     manifest
 }
 
+/// The exact bytes a submission's own real content fingerprint ([`package_hash`]) is computed
+/// over — every field of `contract`/`implementation` that describes what this submission's
+/// content actually *is*, deliberately excluding fields that describe how it was reviewed
+/// (`quality_score`, `review_status`) or which don't yet vary in this crate
+/// (`Implementation.requires_consent` aside, both structs' remaining fields are already this
+/// exhaustive).
+fn canonical_submission_bytes(contract: &Contract, implementation: &Implementation) -> Vec<u8> {
+    let mut bytes = Vec::new();
+
+    bytes.extend_from_slice(contract.id.as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(&contract.version.to_le_bytes());
+    bytes.extend_from_slice(contract.summary.as_bytes());
+    bytes.push(0);
+    for input in &contract.inputs {
+        bytes.extend_from_slice(input.as_bytes());
+        bytes.push(0);
+    }
+    for output in &contract.outputs {
+        bytes.extend_from_slice(output.as_bytes());
+        bytes.push(0);
+    }
+    for side_effect in &contract.side_effects {
+        bytes.push(match side_effect {
+            SideEffect::CreatesSemanticObject => 0,
+            SideEffect::NetworkEgress => 1,
+            SideEffect::None => 2,
+        });
+    }
+    for permission in &contract.permissions_requested {
+        bytes.push(match permission.operation {
+            Operation::Read => 0,
+            Operation::Write => 1,
+            Operation::NetworkEgress => 2,
+            Operation::Execute => 3,
+        });
+        bytes.extend_from_slice(permission.scope.as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(permission.justification.as_bytes());
+        bytes.push(0);
+    }
+    bytes.push(match contract.trust_level {
+        TrustLevel::Sandboxed => 0,
+        TrustLevel::Standard => 1,
+        TrustLevel::Elevated => 2,
+    });
+
+    bytes.extend_from_slice(implementation.contract_id.as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(implementation.name.as_bytes());
+    bytes.push(0);
+    bytes.push(match implementation.runtime {
+        Runtime::LocalModel => 0,
+        Runtime::CloudApi => 1,
+        Runtime::NativeBinary => 2,
+        Runtime::ComposedCapability => 3,
+    });
+    bytes.push(match implementation.latency_class {
+        LatencyClass::Interactive => 0,
+        LatencyClass::Batch => 1,
+    });
+    bytes.push(implementation.requires_consent as u8);
+    match &implementation.native_binary {
+        Some(native_binary) => {
+            bytes.push(1);
+            bytes.extend_from_slice(native_binary.program.to_string_lossy().as_bytes());
+            bytes.push(0);
+            for arg in &native_binary.args {
+                bytes.extend_from_slice(arg.as_bytes());
+                bytes.push(0);
+            }
+        }
+        None => bytes.push(0),
+    }
+
+    bytes
+}
+
+/// A real BLAKE3 content fingerprint over `contract`/`implementation`'s own canonical bytes
+/// ([`canonical_submission_bytes`]) — distinguishes what a submission's content actually *is*,
+/// distinct from [`to_plugin_manifest`]'s own real Ed25519 signature (which authenticates the
+/// *publisher*, not the content). Truncated to this field's own `u64` width from BLAKE3's real
+/// 256-bit digest: a real collision at that width is astronomically unlikely for this crate's own
+/// purpose (a real content fingerprint for dedup/display/change-detection), never treated here as
+/// a cryptographic commitment on its own — that's what the manifest's own real signature is for.
+fn package_hash(contract: &Contract, implementation: &Implementation) -> u64 {
+    let bytes = canonical_submission_bytes(contract, implementation);
+    let hash = hyperion_crypto::hash(&bytes);
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap())
+}
+
 /// docs/25 §4's publish workflow, up to (not including) the network
 /// submission step: static permission analysis — an implementation that
 /// statically observed a permission the contract never declared fails
@@ -116,7 +210,7 @@ pub fn prepare_submission(
     };
 
     Ok(PublishSubmission {
-        package_hash: 0,
+        package_hash: package_hash(&contract, &implementation),
         contract,
         implementation,
         quality_score,

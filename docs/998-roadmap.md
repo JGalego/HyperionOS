@@ -2555,3 +2555,22 @@ next step on any of these is a design pass, not code.
   signature never bypasses the real revocation graph. All 8 of this crate's own pre-existing wire
   tests still pass unchanged, and the full workspace (every downstream crate depending on
   `hyperion-capability`) builds and tests clean.
+
+- **`hyperion-sdk`'s real `package_hash` content fingerprinting, landed (2026-07-16)** (docs/25 §4's
+  own named gap: "`PublishSubmission.package_hash` is left at `0` by `prepare_submission`"). A new
+  `package_hash(contract, implementation)` computes a real BLAKE3 hash (`hyperion_crypto::hash`,
+  already this crate's own dependency — no new one added) over a new `canonical_submission_bytes`
+  encoding of every field describing what a submission's content actually *is* (`Contract`'s
+  `id`/`version`/`summary`/`inputs`/`outputs`/`side_effects`/`permissions_requested`/`trust_level`,
+  `Implementation`'s `contract_id`/`name`/`runtime`/`latency_class`/`requires_consent`/
+  `native_binary`), truncated to the field's own `u64` width from BLAKE3's real 256-bit digest.
+  Distinct from `to_plugin_manifest`'s own real Ed25519 signature (real since M9, not the
+  non-cryptographic checksum this bullet's own prior text described — that text was already stale):
+  the signature authenticates the *publisher*; `package_hash` fingerprints the *content*, unaffected
+  by `quality_score` or which permissions were statically observed on a given build. Proven end to
+  end in a new `tests/package_hash.rs` (7 tests): the hash is no longer the old hardcoded `0`;
+  identical content really fingerprints identically and deterministically; a different contract id,
+  implementation name, native-binary descriptor, or side-effects/permissions set each really
+  changes the hash; and re-scoring the same content (a different `quality_score`) or a different
+  statically-observed-permissions list leaves the content fingerprint unchanged. All 19 of this
+  crate's own pre-existing tests still pass unchanged.
