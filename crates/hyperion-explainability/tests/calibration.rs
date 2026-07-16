@@ -44,8 +44,11 @@ fn record_completed_action(
 
 #[test]
 fn no_records_at_all_for_a_pair_gives_no_score() {
-    let (_monitor, _root, store) = setup();
-    assert!(store.calibration_score(42, "document.draft").is_none());
+    let (monitor, root, store) = setup();
+    assert!(store
+        .calibration_score(&monitor, &root, 42, "document.draft")
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -70,7 +73,10 @@ fn a_real_agent_that_is_always_right_scores_a_perfect_zero() {
         ControlState::RolledBack,
     );
 
-    let score = store.calibration_score(42, "document.draft").unwrap();
+    let score = store
+        .calibration_score(&monitor, &root, 42, "document.draft")
+        .unwrap()
+        .unwrap();
     assert_eq!(score.brier_score, 0.0);
     assert_eq!(score.sample_count, 2);
     assert!(!score.alert);
@@ -91,7 +97,10 @@ fn a_real_agent_confidently_wrong_repeatedly_triggers_a_real_alert() {
         );
     }
 
-    let score = store.calibration_score(42, "document.draft").unwrap();
+    let score = store
+        .calibration_score(&monitor, &root, 42, "document.draft")
+        .unwrap()
+        .unwrap();
     assert_eq!(score.sample_count, 6);
     assert!(score.brier_score > 0.25);
     assert!(
@@ -124,7 +133,10 @@ fn a_still_in_flight_action_does_not_count_toward_calibration_yet() {
     // Never reaches Completed/RolledBack.
 
     assert!(
-        store.calibration_score(42, "document.draft").is_none(),
+        store
+            .calibration_score(&monitor, &root, 42, "document.draft")
+            .unwrap()
+            .is_none(),
         "an action with no real terminal outcome yet must not be scored"
     );
 }
@@ -151,9 +163,15 @@ fn different_capabilities_for_the_same_agent_are_scored_independently() {
         ControlState::RolledBack,
     );
 
-    let draft_score = store.calibration_score(42, "document.draft").unwrap();
+    let draft_score = store
+        .calibration_score(&monitor, &root, 42, "document.draft")
+        .unwrap()
+        .unwrap();
     assert_eq!(draft_score.brier_score, 0.0);
 
-    let search_score = store.calibration_score(42, "web.search").unwrap();
+    let search_score = store
+        .calibration_score(&monitor, &root, 42, "web.search")
+        .unwrap()
+        .unwrap();
     assert!(search_score.brier_score > draft_score.brier_score);
 }

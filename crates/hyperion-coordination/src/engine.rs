@@ -349,9 +349,17 @@ impl CoordinationSession {
     }
 
     /// docs/18's "queryable Explanation Record" surface for an
-    /// allocation's Capability dispatch — see [`Self::allocate`].
-    pub fn explanation(&self, id: ExplanationId) -> Option<ExplanationRecord> {
-        self.explanations.get(id)
+    /// allocation's Capability dispatch — see [`Self::allocate`]. Capability-checked and
+    /// Trust-Boundary-filtered (2026-07-16), threading straight through to
+    /// `hyperion_explainability::ExplanationStore::get`'s own real gating — this thin wrapper
+    /// previously re-exposed the same ungated hole one layer up.
+    pub fn explanation(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        id: ExplanationId,
+    ) -> Result<Option<ExplanationRecord>, CoordError> {
+        Ok(self.explanations.get(monitor, token, id)?)
     }
 
     fn require(
@@ -1022,7 +1030,7 @@ impl CoordinationSession {
             .get(&task_id)
             .copied();
         let is_interrupted = explanation_id
-            .and_then(|id| self.explanations.get(id))
+            .and_then(|id| self.explanations.get(monitor, token, id).ok().flatten())
             .is_some_and(|record| record.control_state == ControlState::Interrupted);
         if plan.nodes[idx].status != TaskStatus::Claimed || !is_interrupted {
             return Err(CoordError::TaskNotInterrupted);
@@ -1344,7 +1352,11 @@ mod resume_task_tests {
             "resuming must genuinely re-open the task for the next real allocate() tick"
         );
         assert_eq!(
-            session.explanation(explanation_id).unwrap().control_state,
+            session
+                .explanation(&monitor, &token, explanation_id)
+                .unwrap()
+                .unwrap()
+                .control_state,
             ControlState::Executing,
             "resuming must really transition the record, not just the task status"
         );

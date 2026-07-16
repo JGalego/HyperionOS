@@ -35,7 +35,9 @@ fn resolve_why_finds_a_record_by_action_id_alone() {
         )
         .unwrap();
 
-    let view = resolve_why(&store, 42, Depth::Headline).unwrap();
+    let view = resolve_why(&store, &monitor, &root, 42, Depth::Headline)
+        .unwrap()
+        .unwrap();
     assert!(view.headline.contains("web.research"));
     assert!(view.headline.contains("60%"));
     assert!(
@@ -52,14 +54,18 @@ fn full_depth_includes_the_complete_record() {
         .unwrap();
     let _ = id;
 
-    let view = resolve_why(&store, 42, Depth::Full).unwrap();
+    let view = resolve_why(&store, &monitor, &root, 42, Depth::Full)
+        .unwrap()
+        .unwrap();
     assert!(view.full.is_some());
 }
 
 #[test]
 fn an_unknown_action_id_resolves_to_nothing() {
-    let (_monitor, _root, store) = setup();
-    assert!(resolve_why(&store, 999, Depth::Headline).is_none());
+    let (monitor, root, store) = setup();
+    assert!(resolve_why(&store, &monitor, &root, 999, Depth::Headline)
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -75,11 +81,13 @@ fn a_multi_agent_answer_resolves_root_first_then_expands_to_contributing_parents
         .link_parent(&monitor, &root, coordinator, worker)
         .unwrap();
 
-    let root_view = resolve_why(&store, 1, Depth::Full).unwrap();
+    let root_view = resolve_why(&store, &monitor, &root, 1, Depth::Full)
+        .unwrap()
+        .unwrap();
     assert_eq!(root_view.parents.len(), 1);
     assert!(root_view.parents[0].headline.contains("document.draft"));
 
-    let worker_record = store.get(worker).unwrap();
+    let worker_record = store.get(&monitor, &root, worker).unwrap().unwrap();
     assert_eq!(worker_record.child_records, vec![coordinator]);
 }
 
@@ -96,7 +104,7 @@ fn trace_intent_returns_every_action_recorded_under_one_intent() {
         .begin(&monitor, &root, 3, 99, 1, "unrelated.intent", vec![], 1_020)
         .unwrap();
 
-    let trace = store.trace_intent(7);
+    let trace = store.trace_intent(&monitor, &root, 7).unwrap();
     let ids: Vec<_> = trace.iter().map(|r| r.id).collect();
     assert!(ids.contains(&a) && ids.contains(&b) && !ids.contains(&c));
 }

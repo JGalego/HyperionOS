@@ -92,6 +92,29 @@
 //!   privacy` dependency, not built here) — `privacy_class` is recorded
 //!   on a record for a future consumer to act on, not enforced by this
 //!   crate.
+//!
+//! ~~Every write here (`begin`/`append_step`/`set_confidence`/.../`transition`) was
+//! capability-gated; every real read (`get`/`trace_intent`/`incomplete`/`calibration_score`,
+//! and this crate's own `resolve_why` — its literal `explain.query` implementation) took no
+//! `monitor`/`token` at all~~ (2026-07-17) — now real: docs/18 §8's own "access to an
+//! `explain.query` result is gated by the same capability grant that gated the underlying
+//! data — a user... cannot use the explanation channel as a side door to read data they were
+//! never granted access to" is enforced for real. Every read requires `RightsMask::READ` and
+//! filters by [`types::ExplanationRecord::trust_boundary_span`] — a record outside the
+//! caller's own Trust Boundary is omitted/`None`, never an error that would reveal it exists.
+//! [`store::ExplanationStore::begin`] now always seeds `trust_boundary_span` with the real,
+//! live `token.origin()` (previously every real caller passed a dead, hardcoded `vec![]`, so
+//! the field existed but nothing ever populated or read it back) — a caller's own explicit
+//! span (docs/18 §5's multi-agent merge, where more than one boundary genuinely contributed)
+//! is preserved and simply extended if it doesn't already include the boundary actually
+//! opening the record. `hyperion-coordination::CoordinationSession::explanation`/
+//! `hyperion-federation::FederationHub::explanation`/`trace_intent`/
+//! `hyperion-intent::IntentEngine::explanation`/`trace_intent` — thin wrappers over this
+//! crate's own store — all threaded the same capability check through, since each previously
+//! re-exposed the identical ungated hole one layer up. This closes docs/18 §13's own explicit
+//! call for "privacy regression tests... asserting `explain.query` never returns detail the
+//! caller lacks a capability grant for," which did not exist until now (see
+//! `tests/explain_query_capability_and_boundary.rs`).
 
 mod calibration;
 mod confidence;

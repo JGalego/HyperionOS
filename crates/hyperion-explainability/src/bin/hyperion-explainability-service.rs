@@ -72,7 +72,14 @@ fn main() {
         .transition(&monitor, &local_token, record_id, ControlState::Completed)
         .expect("transition under this process's own valid local token");
 
-    write_state(&state_path, &claim, &store, record_id);
+    write_state(
+        &state_path,
+        &claim,
+        &monitor,
+        &local_token,
+        &store,
+        record_id,
+    );
 
     // A real, long-running supervised service, not a one-shot: idle until hyperion-supervisor
     // kills and (per M5's exit criterion) respawns this under a fresh grant.
@@ -81,11 +88,22 @@ fn main() {
     }
 }
 
-fn write_state(path: &str, claim: &WireToken, store: &ExplanationStore, record_id: u64) {
+fn write_state(
+    path: &str,
+    claim: &WireToken,
+    monitor: &CapabilityMonitor,
+    token: &hyperion_capability::CapabilityToken,
+    store: &ExplanationStore,
+    record_id: u64,
+) {
     let record = store
-        .get(record_id)
+        .get(monitor, token, record_id)
+        .expect("this process's own valid local token always authorizes its own read")
         .expect("the record this same process just began must still be readable");
-    let still_incomplete = store.incomplete().len();
+    let still_incomplete = store
+        .incomplete(monitor, token)
+        .expect("this process's own valid local token always authorizes its own read")
+        .len();
     let mut f = std::fs::File::create(path).expect("create the real state file inside fs_scope");
     writeln!(f, "pid={}", std::process::id()).unwrap();
     writeln!(f, "spawn_token_id={}", claim.token_id).unwrap();

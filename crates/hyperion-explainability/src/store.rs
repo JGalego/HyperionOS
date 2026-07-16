@@ -63,6 +63,15 @@ impl ExplanationStore {
             .map_err(|_| ExplainabilityError::Unauthorized)
     }
 
+    /// docs/18 §8's own "access to an `explain.query` result is gated by the same capability
+    /// grant that gated the underlying data" needs a real per-record Trust Boundary to check a
+    /// reader's token against — [`ExplanationRecord::trust_boundary_span`] existed for this, but
+    /// every real caller passed it as a dead, hardcoded `vec![]`, since nothing ever read it
+    /// back (see this crate's own doc comment). `trust_boundary_span` is now always seeded with
+    /// this real, live `token.origin().0` (2026-07-16) — a caller's own explicit span (docs/18
+    /// §5's multi-agent merge, where more than one boundary genuinely contributed) is preserved
+    /// and simply extended if it doesn't already include the boundary actually opening this
+    /// record.
     #[allow(clippy::too_many_arguments)]
     pub fn begin(
         &self,
@@ -77,6 +86,11 @@ impl ExplanationStore {
     ) -> Result<ExplanationId, ExplainabilityError> {
         self.require(monitor, token, RightsMask::WRITE)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let caller_boundary = token.origin().0;
+        let mut trust_boundary_span = trust_boundary_span;
+        if !trust_boundary_span.contains(&caller_boundary) {
+            trust_boundary_span.push(caller_boundary);
+        }
         self.records.lock().unwrap().insert(
             id,
             ExplanationRecord {
@@ -198,29 +212,69 @@ impl ExplanationStore {
         self.with_record_mut(id, |record| record.control_state = state)
     }
 
-    pub fn get(&self, id: ExplanationId) -> Option<ExplanationRecord> {
-        self.records.lock().unwrap().get(&id).cloned()
+    /// docs/18 §8's own "access to an `explain.query` result is gated by the same capability
+    /// grant that gated the underlying data — a user... cannot use the explanation channel as a
+    /// side door to read data they were never granted access to," real for the first time
+    /// (2026-07-16): every read here, not just every write, now checks `RightsMask::READ` and
+    /// filters by [`ExplanationRecord::trust_boundary_span`] — a record whose span doesn't
+    /// include the caller's own `token.origin()` is `None`/omitted, never an error that would
+    /// reveal it exists under a boundary the caller can't see.
+    pub fn get(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        id: ExplanationId,
+    ) -> Result<Option<ExplanationRecord>, ExplainabilityError> {
+        self.require(monitor, token, RightsMask::READ)?;
+        let caller_boundary = token.origin().0;
+        Ok(self
+            .records
+            .lock()
+            .unwrap()
+            .get(&id)
+            .filter(|r| r.trust_boundary_span.contains(&caller_boundary))
+            .cloned())
     }
 
-    fn get_by_action(&self, action_id: ActionId) -> Option<ExplanationRecord> {
-        self.records
+    fn get_by_action(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        action_id: ActionId,
+    ) -> Result<Option<ExplanationRecord>, ExplainabilityError> {
+        self.require(monitor, token, RightsMask::READ)?;
+        let caller_boundary = token.origin().0;
+        Ok(self
+            .records
             .lock()
             .unwrap()
             .values()
-            .find(|r| r.action_id == action_id)
-            .cloned()
+            .find(|r| r.action_id == action_id && r.trust_boundary_span.contains(&caller_boundary))
+            .cloned())
     }
 
     /// docs/18 §6's `explain.trace(intent_id) -> ExplanationGraph` —
-    /// every action recorded under one Intent.
-    pub fn trace_intent(&self, intent_id: u64) -> Vec<ExplanationRecord> {
-        self.records
+    /// every action recorded under one Intent. Trust-Boundary-filtered (2026-07-16) the same way
+    /// [`Self::get`] now is.
+    pub fn trace_intent(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        intent_id: u64,
+    ) -> Result<Vec<ExplanationRecord>, ExplainabilityError> {
+        self.require(monitor, token, RightsMask::READ)?;
+        let caller_boundary = token.origin().0;
+        Ok(self
+            .records
             .lock()
             .unwrap()
             .values()
-            .filter(|r| r.triggering_intent_id == intent_id)
+            .filter(|r| {
+                r.triggering_intent_id == intent_id
+                    && r.trust_boundary_span.contains(&caller_boundary)
+            })
             .cloned()
-            .collect()
+            .collect())
     }
 
     /// docs/18 §9's completeness invariant: "no effect survives without a
@@ -228,40 +282,67 @@ impl ExplanationStore {
     /// `control_state` never reached a terminal state — the fault-
     /// injection assertion docs/18 §13 describes, exposed here as a
     /// direct query rather than a background checker this crate doesn't
-    /// run.
-    pub fn incomplete(&self) -> Vec<ExplanationRecord> {
-        self.records
+    /// run. Trust-Boundary-filtered (2026-07-16) the same way [`Self::get`] now is.
+    pub fn incomplete(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+    ) -> Result<Vec<ExplanationRecord>, ExplainabilityError> {
+        self.require(monitor, token, RightsMask::READ)?;
+        let caller_boundary = token.origin().0;
+        Ok(self
+            .records
             .lock()
             .unwrap()
             .values()
             .filter(|r| {
-                !matches!(
-                    r.control_state,
-                    ControlState::Completed | ControlState::RolledBack
-                )
+                r.trust_boundary_span.contains(&caller_boundary)
+                    && !matches!(
+                        r.control_state,
+                        ControlState::Completed | ControlState::RolledBack
+                    )
             })
             .cloned()
-            .collect()
+            .collect())
     }
 
     /// docs/18 §10/§13's "rolling Brier score per Agent/Capability" — see [`crate::calibration`]'s
     /// own doc comment for the real scoring algorithm and alert threshold. Computed over every
     /// real record this store currently holds for `(agent_id, capability_ref)`; `None` if there
     /// are none yet with both a real `confidence` and a real terminal outcome to score.
+    /// Trust-Boundary-filtered (2026-07-16) the same way [`Self::get`] now is: only the caller's
+    /// own visible records ever feed the score, per docs/18 §8's same "same capability grant"
+    /// gate.
     pub fn calibration_score(
         &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
         agent_id: u64,
         capability_ref: &str,
-    ) -> Option<CalibrationScore> {
-        let records: Vec<ExplanationRecord> =
-            self.records.lock().unwrap().values().cloned().collect();
-        crate::calibration::calibration_score(&records, agent_id, capability_ref)
+    ) -> Result<Option<CalibrationScore>, ExplainabilityError> {
+        self.require(monitor, token, RightsMask::READ)?;
+        let caller_boundary = token.origin().0;
+        let records: Vec<ExplanationRecord> = self
+            .records
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|r| r.trust_boundary_span.contains(&caller_boundary))
+            .cloned()
+            .collect();
+        Ok(crate::calibration::calibration_score(
+            &records,
+            agent_id,
+            capability_ref,
+        ))
     }
 }
 
 pub(crate) fn resolve_by_action(
     store: &ExplanationStore,
+    monitor: &CapabilityMonitor,
+    token: &CapabilityToken,
     action_id: ActionId,
-) -> Option<ExplanationRecord> {
-    store.get_by_action(action_id)
+) -> Result<Option<ExplanationRecord>, ExplainabilityError> {
+    store.get_by_action(monitor, token, action_id)
 }

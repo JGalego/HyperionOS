@@ -251,18 +251,32 @@ impl FederationHub {
     }
 
     /// docs/18's "queryable Explanation Record" surface for this hub's
-    /// own dispatches — see [`Self::dispatch_offload`]/[`Self::invoke_agent`].
-    pub fn explanation(&self, id: ExplanationId) -> Option<ExplanationRecord> {
-        self.explanations.get(id)
+    /// own dispatches — see [`Self::dispatch_offload`]/[`Self::invoke_agent`]. Capability-checked
+    /// and Trust-Boundary-filtered (2026-07-16), threading straight through to
+    /// `hyperion_explainability::ExplanationStore::get`'s own real gating — this thin wrapper
+    /// previously re-exposed the same ungated hole one layer up.
+    pub fn explanation(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        id: ExplanationId,
+    ) -> Result<Option<ExplanationRecord>, FederationError> {
+        Ok(self.explanations.get(monitor, token, id)?)
     }
 
     /// Every record this hub has opened under `intent_id` —
     /// [`Self::dispatch_offload`]/[`Self::invoke_agent`] both take a real,
     /// caller-supplied `triggering_intent_id` now, so this is a genuine
     /// correlation whenever the caller passes one from a real
-    /// `hyperion_intent::IntentEngine::submit`, not a hardcoded sentinel.
-    pub fn trace_intent(&self, intent_id: u64) -> Vec<ExplanationRecord> {
-        self.explanations.trace_intent(intent_id)
+    /// `hyperion_intent::IntentEngine::submit`, not a hardcoded sentinel. Capability-checked and
+    /// Trust-Boundary-filtered (2026-07-16), the same way [`Self::explanation`] now is.
+    pub fn trace_intent(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        intent_id: u64,
+    ) -> Result<Vec<ExplanationRecord>, FederationError> {
+        Ok(self.explanations.trace_intent(monitor, token, intent_id)?)
     }
 
     fn require(

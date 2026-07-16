@@ -98,7 +98,7 @@ fn decomposition_opens_a_real_explanation_record_correlated_by_the_real_intent_i
         other => panic!("expected Submitted, got {other:?}"),
     };
 
-    let records = engine.trace_intent(root.0);
+    let records = engine.trace_intent(&monitor, &token, root.0).unwrap();
     assert_eq!(
         records.len(),
         1,
@@ -131,7 +131,7 @@ fn decomposition_opens_a_real_explanation_record_correlated_by_the_real_intent_i
     }
 
     // This engine's very first Explanation Record, minted with id 1.
-    let by_id = engine.explanation(1).unwrap();
+    let by_id = engine.explanation(&monitor, &token, 1).unwrap().unwrap();
     assert_eq!(
         by_id.triggering_intent_id, root.0,
         "the record's triggering_intent_id must be the real root Intent id, not a sentinel"

@@ -90,7 +90,7 @@ fn without_a_registry_an_unrecognized_utterance_falls_back_to_generic_goal() {
     let HandleOutcome::Submitted(root) = outcome else {
         panic!("expected Submitted");
     };
-    let graph_nodes = engine.trace_intent(root.0);
+    let graph_nodes = engine.trace_intent(&monitor, &token, root.0).unwrap();
     // No explanation record means it never decomposed -- the generic_goal fallback path.
     assert!(graph_nodes.is_empty());
 }
@@ -108,7 +108,7 @@ fn a_plugin_contributed_workflow_really_decomposes_a_matching_utterance() {
         panic!("expected Submitted");
     };
 
-    let records = engine.trace_intent(root.0);
+    let records = engine.trace_intent(&monitor, &token, root.0).unwrap();
     assert_eq!(
         records.len(),
         1,

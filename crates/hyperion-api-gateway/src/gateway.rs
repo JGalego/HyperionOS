@@ -956,7 +956,8 @@ mod tests {
 
         let record = gateway
             .explainability
-            .get(signal.explanation_id)
+            .get(&monitor, &token, signal.explanation_id)
+            .unwrap()
             .expect("a real Explanation Record must exist for this signal");
         assert_eq!(record.control_state, ControlState::Completed);
         assert!(

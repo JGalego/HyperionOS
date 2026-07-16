@@ -446,7 +446,10 @@ fn each_allocation_produces_a_real_queryable_explanation_record() {
     // Tick 1: market_research succeeds.
     let records = coordination.allocate(&monitor, &token, session).unwrap();
     assert_eq!(records.len(), 1);
-    let record = coordination.explanation(records[0].explanation_id).unwrap();
+    let record = coordination
+        .explanation(&monitor, &token, records[0].explanation_id)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         record.control_state,
         hyperion_explainability::ControlState::Completed
@@ -468,7 +471,8 @@ fn each_allocation_produces_a_real_queryable_explanation_record() {
         .find(|r| r.task_id == business_model)
         .unwrap();
     let record = coordination
-        .explanation(failed_record.explanation_id)
+        .explanation(&monitor, &token, failed_record.explanation_id)
+        .unwrap()
         .unwrap();
     assert_eq!(
         record.control_state,
@@ -742,7 +746,8 @@ fn amend_task_marks_the_tasks_most_recent_explanation_record_as_modified() {
     let explanation_id = record.explanation_id;
     assert_eq!(
         coordination
-            .explanation(explanation_id)
+            .explanation(&monitor, &token, explanation_id)
+            .unwrap()
             .unwrap()
             .control_state,
         ControlState::Completed,
@@ -761,7 +766,8 @@ fn amend_task_marks_the_tasks_most_recent_explanation_record_as_modified() {
 
     assert_eq!(
         coordination
-            .explanation(explanation_id)
+            .explanation(&monitor, &token, explanation_id)
+            .unwrap()
             .unwrap()
             .control_state,
         ControlState::Modified,

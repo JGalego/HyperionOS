@@ -106,7 +106,7 @@ fn an_explanation_record_is_embedded_verbatim_as_the_payload() {
     let id = store
         .begin(&monitor, &root, 1, 7, 42, "document.draft", vec![], 1_000)
         .unwrap();
-    let record = store.get(id).unwrap();
+    let record = store.get(&monitor, &root, id).unwrap().unwrap();
 
     let entry = ledger
         .append(

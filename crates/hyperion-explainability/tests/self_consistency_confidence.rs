@@ -93,8 +93,10 @@ fn a_real_self_consistency_score_really_reaches_the_explanation_record() {
         .set_confidence(&monitor, &root, id, score, vec![])
         .unwrap();
 
-    let view = hyperion_explainability::resolve_why(&store, action_id, Depth::Full)
-        .expect("the record must really exist");
+    let view =
+        hyperion_explainability::resolve_why(&store, &monitor, &root, action_id, Depth::Full)
+            .unwrap()
+            .expect("the record must really exist");
     let recorded = view
         .full
         .expect("Depth::Full must include the full record")

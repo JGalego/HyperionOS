@@ -76,7 +76,8 @@ fn two_genuinely_independent_owners_share_one_store_with_no_action_id_collision(
     let coordination_records = coordination.allocate(&monitor, &token, session).unwrap();
     assert_eq!(coordination_records.len(), 1);
     let coordination_action_id = shared_store
-        .get(coordination_records[0].explanation_id)
+        .get(&monitor, &token, coordination_records[0].explanation_id)
+        .unwrap()
         .unwrap()
         .action_id;
 
@@ -121,7 +122,7 @@ fn two_genuinely_independent_owners_share_one_store_with_no_action_id_collision(
 
     // Both owners' real records are findable through the one shared store, correlated by the
     // same real Intent id.
-    let all_records_for_intent = shared_store.trace_intent(root.0);
+    let all_records_for_intent = shared_store.trace_intent(&monitor, &token, root.0).unwrap();
     assert_eq!(
         all_records_for_intent.len(),
         2,

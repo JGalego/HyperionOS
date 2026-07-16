@@ -3418,3 +3418,50 @@ next step on any of these is a design pass, not code.
   pre-existing `hyperion-privacy` tests pass unchanged (updated only for the new `Result` return
   type, no behavior change for same-boundary callers). No other in-tree caller of
   `expire_lapsed_soft_deletes` exists outside this crate's own tests.
+
+- **`hyperion-explainability`'s `explain.query` capability + Trust-Boundary gate, landed
+  (2026-07-17)** — the same "invariant enforced inconsistently within one crate" pattern
+  gaps 43/44/45 established, found in a fourth crate this round, and the widest-blast-radius
+  instance yet: docs/18 §8 states verbatim "access to an `explain.query` result is gated by the
+  same capability grant that gated the underlying data — a user... cannot use the explanation
+  channel as a side door to read data they were never granted access to," and §13 explicitly
+  calls for a test "asserting `explain.query` never returns detail the caller lacks a capability
+  grant for." Every *write* in this crate (`begin`/`append_step`/`set_confidence`/`transition`/
+  etc.) already gated on `RightsMask::WRITE`; every real *read* — `get`/`trace_intent`/
+  `incomplete`/`calibration_score`, and `resolve_why` (this crate's own literal `explain.query`
+  implementation) — took no `monitor`/`token` at all. `ExplanationRecord.trust_boundary_span`
+  existed for exactly this gate, but every real caller passed it as a dead, hardcoded `vec![]`,
+  since nothing ever read it back.
+
+  `ExplanationStore::begin` now always seeds `trust_boundary_span` with the real, live
+  `token.origin()` — a caller's own explicit span (docs/18 §5's multi-agent merge, where more
+  than one boundary genuinely contributed) is preserved and simply extended if it doesn't
+  already include the boundary actually opening the record. Every read now requires
+  `RightsMask::READ` and filters by `trust_boundary_span`: a record outside the caller's own
+  Trust Boundary is omitted/`None`, never an error that would reveal it exists. Three thin
+  wrapper methods that re-exposed the identical ungated hole one layer up —
+  `hyperion-coordination::CoordinationSession::explanation`,
+  `hyperion-federation::FederationHub::explanation`/`trace_intent`,
+  `hyperion-intent::IntentEngine::explanation`/`trace_intent` — now thread the same real
+  capability check straight through to the store.
+
+  This return-type change (`Option<T>`/`Vec<T>` → `Result<Option<T>, ExplainabilityError>`/
+  `Result<Vec<T>, ExplainabilityError>`, matching `hyperion_observability::AuditLedger::query`'s
+  own established convention) rippled mechanically across every real call site: internal call
+  sites in `hyperion-coordination::engine` (`resume_task`, its own inline tests) and
+  `hyperion-api-gateway::gateway` (`check_skill_delegation_signal`'s own inline test); the
+  `hyperion-explainability-service` supervised-process binary; and test files in
+  `hyperion-explainability`, `hyperion-coordination`, `hyperion-federation`, `hyperion-intent`,
+  and `hyperion-observability` (`audit_ledger.rs`'s own `ExplanationRecord`-embedding test).
+  Every real production caller already operated within one Trust Boundary per call path, so
+  none of this changed real behavior — confirmed by the full pre-existing suite passing
+  unchanged after the mechanical update.
+
+  Proven with 7 new tests in a new `tests/explain_query_capability_and_boundary.rs`: `get`
+  requires real `READ` rights; `get`/`trace_intent`/`incomplete`/`calibration_score`/
+  `resolve_why` each never return/expand a different Trust Boundary's own record, while the
+  originating boundary's own token still sees it; and `resolve_why`'s `Depth::Full` walk never
+  expands into a parent record linked from a different boundary (a legitimate docs/18 §5
+  multi-agent structure `link_parent` still allows creating — the read-time filter is what
+  correctly limits what any one caller can actually walk/see, not the link itself). All
+  pre-existing tests across all five touched crates pass unchanged.

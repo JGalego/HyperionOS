@@ -273,7 +273,10 @@ fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation
         .unwrap();
 
     assert!(response.outputs.get("results").is_some());
-    let record = explainability.get(response.explanation_id).unwrap();
+    let record = explainability
+        .get(&monitor, &root, response.explanation_id)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         record.control_state,
         hyperion_explainability::ControlState::Completed
@@ -923,7 +926,10 @@ fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as
         )
         .unwrap();
 
-    let record = explainability.get(response.explanation_id).unwrap();
+    let record = explainability
+        .get(&monitor, &root, response.explanation_id)
+        .unwrap()
+        .unwrap();
     assert!(
         record.undo_ref.is_some(),
         "a RequireBackupFirst action's Explanation Record must carry a real recovery-point undo ref"
@@ -1043,7 +1049,10 @@ fn the_routing_decision_produces_a_real_confidence_score_and_a_real_alternative(
         )
         .unwrap();
 
-    let record = explainability.get(response.explanation_id).unwrap();
+    let record = explainability
+        .get(&monitor, &root, response.explanation_id)
+        .unwrap()
+        .unwrap();
     let confidence = record
         .confidence
         .expect("the real routing decision must produce a confidence score");
@@ -1196,7 +1205,10 @@ fn an_ensemble_agreement_between_two_stub_dispatched_candidates_boosts_confidenc
         "the verifying implementation must be genuinely distinct from the primary"
     );
 
-    let record = explainability.get(response.explanation_id).unwrap();
+    let record = explainability
+        .get(&monitor, &root, response.explanation_id)
+        .unwrap()
+        .unwrap();
     let confidence = record
         .confidence
         .expect("ensemble agreement must leave a real, updated confidence on the record");

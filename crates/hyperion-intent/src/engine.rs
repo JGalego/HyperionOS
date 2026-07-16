@@ -216,17 +216,31 @@ impl IntentEngine {
     }
 
     /// docs/18's "queryable Explanation Record" surface for this engine's
-    /// own decomposition dispatches — see [`Self::handle_utterance`].
-    pub fn explanation(&self, id: ExplanationId) -> Option<ExplanationRecord> {
-        self.explanations.get(id)
+    /// own decomposition dispatches — see [`Self::handle_utterance`]. Capability-checked and
+    /// Trust-Boundary-filtered (2026-07-16), threading straight through to
+    /// `hyperion_explainability::ExplanationStore::get`'s own real gating — this thin wrapper
+    /// previously re-exposed the same ungated hole one layer up.
+    pub fn explanation(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        id: ExplanationId,
+    ) -> Result<Option<ExplanationRecord>, IntentError> {
+        Ok(self.explanations.get(monitor, token, id)?)
     }
 
     /// Every record this engine has opened for real Intent `intent_id` —
     /// unlike `hyperion-coordination`/`hyperion-federation`'s own stores,
     /// this engine mints the real Intent id itself, so this is a real
-    /// correlation, not a sentinel.
-    pub fn trace_intent(&self, intent_id: u64) -> Vec<ExplanationRecord> {
-        self.explanations.trace_intent(intent_id)
+    /// correlation, not a sentinel. Capability-checked and Trust-Boundary-filtered (2026-07-16),
+    /// the same way [`Self::explanation`] now is.
+    pub fn trace_intent(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        intent_id: u64,
+    ) -> Result<Vec<ExplanationRecord>, IntentError> {
+        Ok(self.explanations.trace_intent(monitor, token, intent_id)?)
     }
 
     /// The real `hyperion-memory` turn buffer for `session_id`, if this

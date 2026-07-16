@@ -1,5 +1,7 @@
+use hyperion_capability::{CapabilityMonitor, CapabilityToken};
+
 use crate::store::{resolve_by_action, ExplanationStore};
-use crate::types::{ActionId, Depth, ExplanationRecord, ExplanationView};
+use crate::types::{ActionId, Depth, ExplainabilityError, ExplanationRecord, ExplanationView};
 
 fn headline_for(record: &ExplanationRecord) -> String {
     let confidence = record
@@ -23,27 +25,40 @@ fn headline_for(record: &ExplanationRecord) -> String {
 /// walks `parent_records` depth-first, matching docs/18 §5's multi-agent
 /// merge resolution order (root first, expand on request). Real natural-
 /// language generation is deferred — see this crate's doc comment; this
-/// is a deterministic template, not a model call.
+/// is a deterministic template, not a model call. Capability-checked and
+/// Trust-Boundary-filtered (2026-07-16): this crate's own literal `explain.query`
+/// implementation previously took no `monitor`/`token` at all, directly contradicting docs/18
+/// §8's "access to an `explain.query` result is gated by the same capability grant that gated
+/// the underlying data" and §13's explicit call for a test proving it. `resolve_by_action`/
+/// `Self::get`'s own real gating (`ExplanationStore::get`) is reused here rather than a second
+/// check invented in this module — a record (or a parent record, when walking `Depth::Full`)
+/// outside the caller's own Trust Boundary is silently excluded, never an error.
 pub fn resolve_why(
     store: &ExplanationStore,
+    monitor: &CapabilityMonitor,
+    token: &CapabilityToken,
     action_id: ActionId,
     depth: Depth,
-) -> Option<ExplanationView> {
-    let record = resolve_by_action(store, action_id)?;
+) -> Result<Option<ExplanationView>, ExplainabilityError> {
+    let Some(record) = resolve_by_action(store, monitor, token, action_id)? else {
+        return Ok(None);
+    };
     let headline = headline_for(&record);
 
     let mut parents = Vec::new();
     if depth == Depth::Full {
         for parent_id in &record.parent_records {
-            if let Some(parent_record) = store.get(*parent_id) {
-                if let Some(view) = resolve_why(store, parent_record.action_id, Depth::Full) {
+            if let Some(parent_record) = store.get(monitor, token, *parent_id)? {
+                if let Some(view) =
+                    resolve_why(store, monitor, token, parent_record.action_id, Depth::Full)?
+                {
                     parents.push(view);
                 }
             }
         }
     }
 
-    Some(ExplanationView {
+    Ok(Some(ExplanationView {
         headline,
         full: if depth == Depth::Full {
             Some(record)
@@ -51,5 +66,5 @@ pub fn resolve_why(
             None
         },
         parents,
-    })
+    }))
 }

@@ -116,7 +116,10 @@ fn a_taste_or_empathy_task_gets_a_real_advisory_reasoning_step_a_mechanical_one_
     // Tick 1: only market_research (Mechanical) is ready.
     let records = coordination.allocate(&monitor, &token, session).unwrap();
     assert_eq!(records.len(), 1);
-    let mechanical_record = coordination.explanation(records[0].explanation_id).unwrap();
+    let mechanical_record = coordination
+        .explanation(&monitor, &token, records[0].explanation_id)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         mechanical_record.reasoning_chain.len(),
         1,
@@ -133,7 +136,8 @@ fn a_taste_or_empathy_task_gets_a_real_advisory_reasoning_step_a_mechanical_one_
         .find(|r| r.task_id == branding_task_id)
         .expect("branding must have been dispatched this tick");
     let explanation = coordination
-        .explanation(branding_record.explanation_id)
+        .explanation(&monitor, &token, branding_record.explanation_id)
+        .unwrap()
         .unwrap();
     assert_eq!(
         explanation.reasoning_chain.len(),
@@ -155,7 +159,8 @@ fn a_taste_or_empathy_task_gets_a_real_advisory_reasoning_step_a_mechanical_one_
         .find(|r| r.task_id == business_model_task_id)
         .expect("business_model must have been dispatched this tick");
     let explanation = coordination
-        .explanation(business_model_record.explanation_id)
+        .explanation(&monitor, &token, business_model_record.explanation_id)
+        .unwrap()
         .unwrap();
     assert_eq!(
         explanation.reasoning_chain.len(),

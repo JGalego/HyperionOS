@@ -109,7 +109,7 @@ fn dispatch_offload_produces_a_real_completed_explanation_record() {
     )
     .unwrap();
 
-    let records = hub.trace_intent(55);
+    let records = hub.trace_intent(&monitor, &root, 55).unwrap();
     assert_eq!(
         records.len(),
         1,

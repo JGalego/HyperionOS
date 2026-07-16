@@ -68,7 +68,7 @@ fn a_completed_action_has_a_full_reasoning_chain_and_confidence() {
         .transition(&monitor, &root, id, ControlState::Completed)
         .unwrap();
 
-    let record = store.get(id).unwrap();
+    let record = store.get(&monitor, &root, id).unwrap().unwrap();
     assert_eq!(record.reasoning_chain.len(), 1);
     assert_eq!(record.evidence.len(), 1);
     assert_eq!(record.confidence.unwrap().value, 0.85);
@@ -87,7 +87,7 @@ fn an_action_never_closed_is_flagged_by_the_completeness_invariant() {
         .unwrap();
     // Crashed before reaching Completed/RolledBack.
 
-    let incomplete = store.incomplete();
+    let incomplete = store.incomplete(&monitor, &root).unwrap();
     assert_eq!(incomplete.len(), 1);
     assert_eq!(incomplete[0].id, id);
 }
@@ -102,7 +102,7 @@ fn a_completed_action_is_not_flagged_incomplete() {
         .transition(&monitor, &root, id, ControlState::Completed)
         .unwrap();
 
-    assert!(store.incomplete().is_empty());
+    assert!(store.incomplete(&monitor, &root).unwrap().is_empty());
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn a_rolled_back_action_is_terminal_and_not_flagged_incomplete() {
         .transition(&monitor, &root, id, ControlState::RolledBack)
         .unwrap();
 
-    assert!(store.incomplete().is_empty());
+    assert!(store.incomplete(&monitor, &root).unwrap().is_empty());
 }
 
 #[test]
@@ -126,6 +126,6 @@ fn attaching_an_undo_ref_carries_the_upstream_risk_engines_decision_verbatim() {
         .unwrap();
     store.attach_undo_ref(&monitor, &root, id, 99).unwrap();
 
-    let record = store.get(id).unwrap();
+    let record = store.get(&monitor, &root, id).unwrap().unwrap();
     assert_eq!(record.undo_ref, Some(99));
 }
