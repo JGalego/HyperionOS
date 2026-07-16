@@ -3,7 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use crate::types::{
-    LogEvent, LogRetentionPolicy, MetricRollup, MetricSample, SpanStatus, TraceId, TraceSpan,
+    LogEvent, LogRetentionPolicy, MetricRollup, MetricSample, SpanId, SpanStatus, TraceId,
+    TraceSpan,
 };
 
 /// docs/34 §3's lossy/sampled/best-effort telemetry path — deliberately
@@ -18,10 +19,14 @@ pub struct TelemetryCollector {
     metrics: Mutex<Vec<MetricSample>>,
     spans: Mutex<Vec<TraceSpan>>,
     logs: Mutex<Vec<LogEvent>>,
-    next_span_id: AtomicU64,
+    next_span_sequence: AtomicU64,
     /// docs/34 §5's "compacted to percentile rollups" -- what
     /// [`Self::compact_metrics`] produces and [`Self::metric_rollups_named`] reads back.
     rollups: Mutex<Vec<MetricRollup>>,
+    /// This collector's own real device identity -- namespaces every [`SpanId`] it mints so two
+    /// collectors built with distinct `device_id`s can never collide, see [`SpanId`]'s own doc
+    /// comment. `0` for a collector built via [`Self::new`], which has no known device identity.
+    device_id: u64,
 }
 
 impl Default for TelemetryCollector {
@@ -32,12 +37,22 @@ impl Default for TelemetryCollector {
 
 impl TelemetryCollector {
     pub fn new() -> Self {
+        Self::new_with_device_id(0)
+    }
+
+    /// As [`Self::new`], but every [`SpanId`] this collector mints carries `device_id` as its
+    /// namespace -- the real fix for this crate's own previously-named "globally-unique
+    /// cross-device span identity" gap. A real production caller with a real device identity
+    /// (e.g. `hyperion_federation::FederationHub::join_device`) uses this instead of [`Self::new`]
+    /// so [`Self::merge_remote_trace`] can never produce two spans sharing a `span_id`.
+    pub fn new_with_device_id(device_id: u64) -> Self {
         TelemetryCollector {
             metrics: Mutex::new(Vec::new()),
             spans: Mutex::new(Vec::new()),
             logs: Mutex::new(Vec::new()),
-            next_span_id: AtomicU64::new(1),
+            next_span_sequence: AtomicU64::new(1),
             rollups: Mutex::new(Vec::new()),
+            device_id,
         }
     }
 
@@ -59,10 +74,13 @@ impl TelemetryCollector {
         &self,
         trace_id: TraceId,
         name: &str,
-        parent_span_id: Option<u64>,
+        parent_span_id: Option<SpanId>,
         start: u64,
-    ) -> u64 {
-        let span_id = self.next_span_id.fetch_add(1, Ordering::Relaxed);
+    ) -> SpanId {
+        let span_id = SpanId {
+            device_id: self.device_id,
+            sequence: self.next_span_sequence.fetch_add(1, Ordering::Relaxed),
+        };
         self.spans.lock().unwrap().push(TraceSpan {
             trace_id,
             span_id,
@@ -76,7 +94,7 @@ impl TelemetryCollector {
         span_id
     }
 
-    pub fn end_span(&self, span_id: u64, end: u64, status: SpanStatus) {
+    pub fn end_span(&self, span_id: SpanId, end: u64, status: SpanStatus) {
         if let Some(span) = self
             .spans
             .lock()
@@ -124,12 +142,12 @@ impl TelemetryCollector {
     /// tree docs/34 §2 describes ("`trace_id` minted at Intent creation,
     /// threaded through every Agent/Capability call... one Intent = one
     /// reconstructable trace tree"), not just this one device's local
-    /// slice of it. A best-effort append, not a CRDT merge: `span_id` is
-    /// only unique *within* the collector that minted it, so a merged
-    /// trace can contain two spans sharing a `span_id` if they
-    /// originated on different devices — giving every span a real,
-    /// globally-unique identity across devices is a further, separate
-    /// refinement this doesn't attempt. Calling this twice with the same
+    /// slice of it. Still a best-effort append, not a CRDT merge (no
+    /// deduplication, no conflict resolution) — but a genuinely different span
+    /// concern is now closed: [`SpanId`] namespaces every span by the minting
+    /// collector's own `device_id` (see [`TelemetryCollector::new_with_device_id`]), so two
+    /// collectors built with distinct real device identities can never produce a colliding
+    /// `span_id`, even after merging. Calling this twice with the same
     /// remote data duplicates entries; a caller merges each remote batch
     /// once.
     pub fn merge_remote_trace(&self, trace_id: TraceId, remote: &TelemetryCollector) {

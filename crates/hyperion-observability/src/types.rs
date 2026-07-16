@@ -4,7 +4,20 @@ use hyperion_explainability::ExplanationRecord;
 use hyperion_model_router::Rationale;
 
 pub type TraceId = u64;
-pub type SpanId = u64;
+
+/// A span identity that's genuinely unique across every [`crate::telemetry::TelemetryCollector`]
+/// a workspace ever constructs, not just within the one that minted it -- pairs the minting
+/// collector's own `device_id` (0 for a collector built via
+/// [`crate::telemetry::TelemetryCollector::new`], which has no known device identity) with a
+/// per-collector monotonic sequence number. Two collectors minting spans under distinct real
+/// `device_id`s can never produce a colliding `SpanId`, closing this crate's own previously-named
+/// "globally-unique cross-device span identity" gap for any caller that constructs its
+/// collectors via [`crate::telemetry::TelemetryCollector::new_with_device_id`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SpanId {
+    pub device_id: u64,
+    pub sequence: u64,
+}
 
 /// docs/34 §1's `MetricSample`.
 #[derive(Debug, Clone)]

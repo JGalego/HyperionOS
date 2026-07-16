@@ -70,6 +70,42 @@ fn merge_remote_trace_reconstructs_the_whole_cross_device_trace_tree() {
 }
 
 #[test]
+fn two_collectors_built_with_distinct_device_ids_never_mint_a_colliding_span_id() {
+    let device_a = TelemetryCollector::new_with_device_id(1);
+    let device_b = TelemetryCollector::new_with_device_id(2);
+    let trace_id = 99;
+
+    // Both collectors mint their first-ever span at the same local sequence number -- only a
+    // real per-device namespace (not just an independent per-process counter) can keep these
+    // from colliding.
+    let span_a = device_a.start_span(trace_id, "on_device_a", None, 1_000);
+    let span_b = device_b.start_span(trace_id, "on_device_b", None, 1_000);
+    assert_ne!(
+        span_a, span_b,
+        "two collectors with distinct real device_ids must never mint the same SpanId"
+    );
+    assert_eq!(span_a.device_id, 1);
+    assert_eq!(span_b.device_id, 2);
+
+    device_a.merge_remote_trace(trace_id, &device_b);
+    let merged = device_a.spans_for_trace(trace_id);
+    assert_eq!(merged.len(), 2);
+    let ids: std::collections::HashSet<_> = merged.iter().map(|s| s.span_id).collect();
+    assert_eq!(
+        ids.len(),
+        2,
+        "merging two distinct devices' spans must never collapse them into a shared identity"
+    );
+}
+
+#[test]
+fn a_collector_built_via_new_defaults_to_device_id_zero() {
+    let collector = TelemetryCollector::new();
+    let span = collector.start_span(1, "root", None, 1_000);
+    assert_eq!(span.device_id, 0);
+}
+
+#[test]
 fn metrics_are_queryable_by_name() {
     let collector = TelemetryCollector::new();
     collector.record_metric(MetricSample {

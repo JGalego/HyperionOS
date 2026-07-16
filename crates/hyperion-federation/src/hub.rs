@@ -315,10 +315,10 @@ impl FederationHub {
             .lock()
             .unwrap()
             .insert(device_id, trust_tier);
-        self.telemetry
-            .lock()
-            .unwrap()
-            .insert(device_id, Arc::new(TelemetryCollector::new()));
+        self.telemetry.lock().unwrap().insert(
+            device_id,
+            Arc::new(TelemetryCollector::new_with_device_id(device_id)),
+        );
         Ok(())
     }
 

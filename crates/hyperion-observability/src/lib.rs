@@ -80,15 +80,16 @@
 //!   background scheduled chain verification.**
 //!   [`ledger::AuditLedger::verify_chain`] is on-demand only, not run on
 //!   a background schedule.
-//! - **A globally-unique cross-device span identity.**
-//!   [`telemetry::TelemetryCollector::merge_remote_trace`] is now really
-//!   invoked from `hyperion-federation`'s `FederationHub::migrate` (see
-//!   this crate's "Real:" section above), but it remains a best-effort
-//!   append, not a CRDT merge: a span id is only unique *within* the
-//!   collector that minted it, so a merged trace can contain two spans
-//!   sharing a `span_id` if they originated on different devices — giving
-//!   every span a real, globally-unique identity across devices is a
-//!   further, separate refinement this doesn't attempt.
+//! - ~~A globally-unique cross-device span identity~~ — now real: [`types::SpanId`] pairs the
+//!   minting collector's own `device_id` with a per-collector monotonic sequence number, and
+//!   [`telemetry::TelemetryCollector::new_with_device_id`] is the real constructor a caller with
+//!   a real device identity uses instead of [`telemetry::TelemetryCollector::new`] (which stays
+//!   `device_id: 0`, unchanged for every existing caller). `hyperion-federation`'s
+//!   `FederationHub::join_device` — the one real production call site
+//!   [`telemetry::TelemetryCollector::merge_remote_trace`] feeds — now does exactly that, so two
+//!   devices' collectors can never mint a colliding `span_id`, even after merging. Still a
+//!   best-effort append, not a full CRDT merge (no deduplication, no conflict resolution) — this
+//!   closes only the identity-collision half of that gap.
 
 mod aggregate;
 mod ledger;
@@ -101,5 +102,5 @@ pub use telemetry::{derivative, ewma, TelemetryCollector};
 pub use types::{
     AggregateReport, AuditAction, AuditLogEntry, AuditPayload, ConsentCategory, ConsentScope,
     LogEvent, LogLevel, LogRetentionPolicy, MetricRollup, MetricSample, ObservabilityError,
-    PrincipalRef, RedactionClass, SpanStatus, TraceId, TraceSpan, VerificationReport,
+    PrincipalRef, RedactionClass, SpanId, SpanStatus, TraceId, TraceSpan, VerificationReport,
 };

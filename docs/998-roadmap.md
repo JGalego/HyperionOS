@@ -2224,6 +2224,18 @@ mean here):
   metric produce two separate rollup windows; an expired log is really gone while a fresh one
   survives the same pass.
 
+- **`hyperion-observability`'s globally-unique cross-device span identity, landed (2026-07-16)**
+  (this crate's own previously-named gap: `TelemetryCollector::merge_remote_trace` was real, but a
+  span id was only unique *within* the collector that minted it, so a merged cross-device trace
+  could contain two spans sharing a `span_id`). `SpanId` is now a real struct pairing the minting
+  collector's own `device_id` with a per-collector monotonic sequence number, and
+  `TelemetryCollector::new_with_device_id` is the real constructor a caller with a real device
+  identity uses instead of `TelemetryCollector::new` (which stays `device_id: 0`, unchanged for
+  every existing caller). `hyperion-federation`'s `FederationHub::join_device` — the one real
+  production call site `merge_remote_trace` is actually invoked from (via `FederationHub::migrate`)
+  — now does exactly that. Proven end to end: two collectors built with distinct real `device_id`s
+  never mint a colliding `SpanId`, even after merging their spans into one trace.
+
 - **`hyperion-knowledge-graph`'s inferred-edge decay, landed (2026-07-16)** (docs/09 §5.2's own
   previously-named gap: "neither kind of inferred edge decays yet (weight is reset to a fixed
   value each pass, not accumulated or aged)"). `EdgeRecord` gains a real `last_confirmed_at`
