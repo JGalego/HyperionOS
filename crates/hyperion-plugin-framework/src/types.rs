@@ -263,9 +263,26 @@ pub struct MemoryProviderContribution {
     pub capability_id: CapabilityId,
 }
 
-/// docs/24 §4's `Contribution`, narrowed to the seven variants this
-/// workspace has an owning subsystem for — see this crate's doc comment
-/// on the remaining variant's deferral. `Agent` closes
+/// A plugin-contributed execution engine: a real, reusable launcher program other Capability
+/// implementations can run their own script/program through, instead of each one shipping a
+/// whole standalone native binary — docs/24's own "execution engines register runtimes usable by
+/// Capability implementations" gap. `launcher` is validated the exact same honest way a
+/// `Capability`'s own `NativeBinaryDescriptor` is (`crate::registry::validate_native_binary`,
+/// checked at install time, not trusted): it must really exist and really be executable.
+/// `hyperion_sdk::resolve_via_engine` is the real consumer — it turns a caller's own script path
+/// into a concrete `NativeBinaryDescriptor` by prepending this launcher, so a capability
+/// published "via" an engine ends up installed and invoked through the exact same
+/// `ImplementationKind::NativeBinary` path a hand-written native binary already uses, never a
+/// second, parallel execution mechanism.
+#[derive(Debug, Clone)]
+pub struct ExecutionEngineContribution {
+    pub engine_id: String,
+    pub launcher: NativeBinaryDescriptor,
+}
+
+/// docs/24 §4's `Contribution` — every variant this crate implements now has a real owning
+/// subsystem; see this crate's own doc comment for when each gained one, and for why `Model`
+/// (also named in docs/24's enum) was deliberately never added as a variant here. `Agent` closes
 /// docs/998-roadmap.md's own "`hyperion-coordination::catalog::default_manifests` is a
 /// hardcoded, static built-in list, not a live registry a plugin's `AgentManifest` could
 /// register into" gap: `crate::registry::PluginRegistry::agent_contributions` is that live
@@ -278,7 +295,9 @@ pub struct MemoryProviderContribution {
 /// `AutomationWorkflow` closes `hyperion-intent`'s own hardcoded `TEMPLATES` gap via
 /// `crate::registry::PluginRegistry::automation_workflow_contributions`. `MemoryProvider` closes
 /// `hyperion-memory`'s own "no external memory source registry" gap via
-/// `crate::registry::PluginRegistry::memory_provider_contributions`.
+/// `crate::registry::PluginRegistry::memory_provider_contributions`. `ExecutionEngine` closes
+/// docs/24's own "execution engines register runtimes usable by Capability implementations" gap
+/// via `crate::registry::PluginRegistry::execution_engine` and `hyperion_sdk::resolve_via_engine`.
 #[derive(Debug, Clone)]
 pub enum Contribution {
     Capability(CapabilityManifest),
@@ -288,6 +307,7 @@ pub enum Contribution {
     UiComponent(UiComponentContribution),
     AutomationWorkflow(AutomationWorkflowContribution),
     MemoryProvider(MemoryProviderContribution),
+    ExecutionEngine(ExecutionEngineContribution),
 }
 
 /// docs/24 §4's `PluginManifest`. `signature` (docs/998-roadmap.md M9) is a real Ed25519

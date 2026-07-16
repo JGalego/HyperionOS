@@ -165,6 +165,8 @@ pub enum SdkError {
     UndeclaredPermissionObserved,
     #[error("this submission was rejected and cannot be published")]
     SubmissionRejected,
+    #[error("no installed, non-quarantined plugin ever contributed the execution engine '{0}'")]
+    UnknownExecutionEngine(String),
     #[error("plugin framework error: {0}")]
     Plugin(#[from] hyperion_plugin_framework::PluginError),
 }

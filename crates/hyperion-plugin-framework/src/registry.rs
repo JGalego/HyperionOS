@@ -8,10 +8,10 @@ use hyperion_crypto::VerifyingKey;
 use crate::review::validate_manifest;
 use crate::types::{
     AgentContribution, AutomationWorkflowContribution, CapabilityId, CapabilityManifest,
-    Contribution, HardwareSupportContribution, ImplementationDescriptor, ImplementationKind,
-    InstallState, KnowledgeProviderContribution, MemoryProviderContribution, PluginError,
-    PluginHandle, PluginId, PluginManifest, QuarantineReason, RegistryEntry, TrustDepth,
-    UiComponentContribution,
+    Contribution, ExecutionEngineContribution, HardwareSupportContribution,
+    ImplementationDescriptor, ImplementationKind, InstallState, KnowledgeProviderContribution,
+    MemoryProviderContribution, PluginError, PluginHandle, PluginId, PluginManifest,
+    QuarantineReason, RegistryEntry, TrustDepth, UiComponentContribution,
 };
 
 fn rights_for(op: crate::types::Operation) -> RightsMask {
@@ -93,11 +93,16 @@ pub struct PluginRegistry {
     /// [`Self::agent_contributions`]/[`Self::hardware_support`]/[`Self::knowledge_providers`]/
     /// [`Self::ui_components`]/[`Self::automation_workflows`].
     memory_providers: Mutex<HashMap<PluginId, Vec<MemoryProviderContribution>>>,
+    /// Real registration point for `Contribution::ExecutionEngine` -- the "runtimes usable by
+    /// Capability implementations" registry docs/24 names. Same shape and same reasoning as
+    /// [`Self::agent_contributions`]/[`Self::hardware_support`]/[`Self::knowledge_providers`]/
+    /// [`Self::ui_components`]/[`Self::automation_workflows`]/[`Self::memory_providers`].
+    execution_engines: Mutex<HashMap<PluginId, Vec<ExecutionEngineContribution>>>,
     /// Plugin-level quarantine, tracked separately from `registry`'s own per-`CapabilityId`
     /// `InstallState` -- an `Agent`-only, `HardwareSupport`-only, `KnowledgeProvider`-only,
-    /// `UiComponent`-only, `AutomationWorkflow`-only, or `MemoryProvider`-only plugin owns no
-    /// `RegistryEntry` for that mechanism to touch, so [`Self::quarantine`] needs a real place
-    /// to hide its contributions too.
+    /// `UiComponent`-only, `AutomationWorkflow`-only, `MemoryProvider`-only, or
+    /// `ExecutionEngine`-only plugin owns no `RegistryEntry` for that mechanism to touch, so
+    /// [`Self::quarantine`] needs a real place to hide its contributions too.
     quarantined_plugins: Mutex<HashSet<PluginId>>,
     next_plugin_id: AtomicU64,
     next_boundary_ordinal: AtomicU64,
@@ -123,6 +128,7 @@ impl PluginRegistry {
             ui_components: Mutex::new(HashMap::new()),
             automation_workflows: Mutex::new(HashMap::new()),
             memory_providers: Mutex::new(HashMap::new()),
+            execution_engines: Mutex::new(HashMap::new()),
             quarantined_plugins: Mutex::new(HashSet::new()),
             next_plugin_id: AtomicU64::new(1),
             next_boundary_ordinal: AtomicU64::new(1),
@@ -169,13 +175,28 @@ impl PluginRegistry {
             | Contribution::KnowledgeProvider(_)
             | Contribution::UiComponent(_)
             | Contribution::AutomationWorkflow(_)
-            | Contribution::MemoryProvider(_) => false,
+            | Contribution::MemoryProvider(_)
+            | Contribution::ExecutionEngine(_) => false,
         });
         for contribution in &manifest.contributions {
-            if let Contribution::Capability(cm) = contribution {
-                if cm.implementation_kind == ImplementationKind::NativeBinary {
-                    validate_native_binary(cm.native_binary.as_ref())?;
+            match contribution {
+                Contribution::Capability(cm) => {
+                    if cm.implementation_kind == ImplementationKind::NativeBinary {
+                        validate_native_binary(cm.native_binary.as_ref())?;
+                    }
                 }
+                // Same honest "must really exist and really be executable now" check a
+                // Capability's own `NativeBinaryDescriptor` gets -- an engine that can never
+                // actually launch anything must not install as if it could.
+                Contribution::ExecutionEngine(ee) => {
+                    validate_native_binary(Some(&ee.launcher))?;
+                }
+                Contribution::Agent(_)
+                | Contribution::HardwareSupport(_)
+                | Contribution::KnowledgeProvider(_)
+                | Contribution::UiComponent(_)
+                | Contribution::AutomationWorkflow(_)
+                | Contribution::MemoryProvider(_) => {}
             }
         }
 
@@ -256,6 +277,14 @@ impl PluginRegistry {
                         .entry(plugin_id)
                         .or_default()
                         .push(mp.clone());
+                }
+                Contribution::ExecutionEngine(ee) => {
+                    self.execution_engines
+                        .lock()
+                        .unwrap()
+                        .entry(plugin_id)
+                        .or_default()
+                        .push(ee.clone());
                 }
             }
         }
@@ -353,6 +382,7 @@ impl PluginRegistry {
         self.ui_components.lock().unwrap().remove(&plugin_id);
         self.automation_workflows.lock().unwrap().remove(&plugin_id);
         self.memory_providers.lock().unwrap().remove(&plugin_id);
+        self.execution_engines.lock().unwrap().remove(&plugin_id);
         self.quarantined_plugins.lock().unwrap().remove(&plugin_id);
         Ok(())
     }
@@ -476,6 +506,23 @@ impl PluginRegistry {
             .filter(|(plugin_id, _)| !quarantined.contains(*plugin_id))
             .flat_map(|(_, contributions)| contributions.iter().cloned())
             .collect()
+    }
+
+    /// The real "runtimes usable by Capability implementations" registration point docs/24
+    /// names as an `ExecutionEngine` contribution's job. `hyperion_sdk::resolve_via_engine` is
+    /// the real caller: it looks an installed, non-quarantined engine up by `engine_id` and
+    /// turns a caller's own script into a concrete, runnable `NativeBinaryDescriptor` by
+    /// prepending this engine's own real launcher. `None` if no installed, non-quarantined
+    /// plugin ever contributed this `engine_id`.
+    pub fn execution_engine(&self, engine_id: &str) -> Option<ExecutionEngineContribution> {
+        let quarantined = self.quarantined_plugins.lock().unwrap();
+        self.execution_engines
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(plugin_id, _)| !quarantined.contains(*plugin_id))
+            .flat_map(|(_, contributions)| contributions.iter().cloned())
+            .find(|ee| ee.engine_id == engine_id)
     }
 
     /// docs/24 §6's `registry_query`, narrowed to exact `capability_id`

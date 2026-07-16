@@ -24,37 +24,44 @@
 //! [`registry::PluginRegistry::register_implementation`] implements the
 //! structural-compatibility check that decides whether a colliding
 //! `capability_id` competes as one more implementation or is rejected
-//! outright. [`registry::PluginRegistry::agent_contributions`]
-//! (2026-07-16) is the real, live registration point for
-//! `Contribution::Agent` — install/uninstall/quarantine all treat it exactly like a
-//! `Capability` contribution (minted no separate tokens of its own; an `Agent` contribution can
-//! only ever justify `Read`/`Execute` permissions, never `Write`/`NetworkEgress` — see
-//! [`review::contract_requires`]'s sibling check in `review.rs`).
+//! outright.
+//!
+//! Every non-`Capability` `Contribution` variant this crate implements now has a real, live
+//! registration point (all landed 2026-07-16, docs/998-roadmap.md's Resourceful pillar) — each
+//! `Read`-only (or `Read`/`Execute` where the contribution's own existence implies dispatch),
+//! and each producing the exact struct a hand-authored equivalent already would, never a second,
+//! parallel dispatch/compilation path:
+//!
+//! - `Agent`: [`registry::PluginRegistry::agent_contributions`] — a plugin's specialization now
+//!   really competes for task allocation alongside
+//!   `hyperion-coordination::catalog::default_manifests`'s built-in roster.
+//! - `HardwareSupport`: [`registry::PluginRegistry::hardware_support_contributions`] — a plugin
+//!   teaches Hyperion the expected capability manifest for a known `(manufacturer, model)`,
+//!   without weakening `hyperion_device::DeviceRegistry::register`'s own real signature check at
+//!   all.
+//! - `KnowledgeProvider`: [`registry::PluginRegistry::knowledge_provider_contributions`] — a real
+//!   (topic -> capability_id) lookup `hyperion-knowledge-graph` had no equivalent of.
+//! - `UiComponent`: [`registry::PluginRegistry::ui_component_contributions`] — a real registry
+//!   `hyperion-workspace` had no equivalent of for a `CapabilityUiContract`.
+//! - `AutomationWorkflow`: [`registry::PluginRegistry::automation_workflow_contributions`] — a
+//!   plugin's goal template now really competes for a real utterance match alongside
+//!   `hyperion-intent`'s own hardcoded, crate-private `TEMPLATES`.
+//! - `MemoryProvider`: [`registry::PluginRegistry::memory_provider_contributions`] — a real
+//!   `(tier, entity_key) -> capability_id` lookup `hyperion-memory` had no equivalent of, the
+//!   same honest, never-bypass-dispatch shape `KnowledgeProvider` already established.
+//! - `ExecutionEngine`: [`registry::PluginRegistry::execution_engine`] — a real, reusable
+//!   launcher other Capability implementations can run their own script through
+//!   (`hyperion_sdk::resolve_via_engine` turns a caller's script into a concrete
+//!   `NativeBinaryDescriptor` by prepending it), instead of each one shipping a whole standalone
+//!   native binary. The launcher itself is validated the exact same honest way a `Capability`'s
+//!   own `NativeBinaryDescriptor` already is (must really exist, must really be executable).
+//!
+//! `install`/`uninstall`/`quarantine` all treat every one of these exactly like a `Capability`
+//! contribution (minting no separate tokens of their own beyond `ExecutionEngine`'s sandbox-free
+//! validation check).
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **One of `Contribution`'s remaining two non-`Capability` variants** (`ExecutionEngine`) —
-//!   has no owning subsystem in this workspace with a real registration point to call yet (an
-//!   execution-engine registry usable by other Capability implementations). Six variants now
-//!   have one, each `Read`-only and each producing the exact struct a hand-authored equivalent
-//!   already would — never a second, parallel dispatch/compilation path:
-//!   - `Agent` (2026-07-16): [`registry::PluginRegistry::agent_contributions`] — a plugin's
-//!     specialization now really competes for task allocation alongside
-//!     `hyperion-coordination::catalog::default_manifests`'s built-in roster.
-//!   - `HardwareSupport` (2026-07-16): [`registry::PluginRegistry::hardware_support_contributions`] —
-//!     a plugin teaches Hyperion the expected capability manifest for a known
-//!     `(manufacturer, model)`, without weakening `hyperion_device::DeviceRegistry::register`'s
-//!     own real signature check at all.
-//!   - `KnowledgeProvider` (2026-07-16): [`registry::PluginRegistry::knowledge_provider_contributions`] —
-//!     a real (topic -> capability_id) lookup `hyperion-knowledge-graph` had no equivalent of.
-//!   - `UiComponent` (2026-07-16): [`registry::PluginRegistry::ui_component_contributions`] — a
-//!     real registry `hyperion-workspace` had no equivalent of for a `CapabilityUiContract`.
-//!   - `AutomationWorkflow` (2026-07-16): [`registry::PluginRegistry::automation_workflow_contributions`] —
-//!     a plugin's goal template now really competes for a real utterance match alongside
-//!     `hyperion-intent`'s own hardcoded, crate-private `TEMPLATES`.
-//!   - `MemoryProvider` (2026-07-16): [`registry::PluginRegistry::memory_provider_contributions`] —
-//!     a real `(tier, entity_key) -> capability_id` lookup `hyperion-memory` had no equivalent
-//!     of, the same honest, never-bypass-dispatch shape `KnowledgeProvider` already established.
 //! - **`Model` is not actually a ninth gap**, on inspection: a "this implementation is backed by a
 //!   model" contribution is already exactly what `Contribution::Capability`'s
 //!   `CapabilityManifest.implementation_kind` (`LocalSmallModel`/
@@ -112,10 +119,10 @@ pub use registry::PluginRegistry;
 pub use review::{sign, validate_manifest};
 pub use types::{
     AgentContribution, AutomationWorkflowContribution, CapabilityGrantRequest, CapabilityId,
-    CapabilityManifest, Contribution, HardwareCapabilityEntry, HardwareDeviceType,
-    HardwareDirection, HardwareSafetyClass, HardwareSupportContribution, ImplementationDescriptor,
-    ImplementationKind, InstallState, KnowledgeProviderContribution, MemoryProviderContribution,
-    MemoryTierKind, NativeBinaryDescriptor, Operation, PluginError, PluginHandle, PluginId,
-    PluginManifest, QuarantineReason, RegistryEntry, SemanticContract, SideEffect, TrustDepth,
-    UiComponentContribution, UiRegionAffinity, WorkflowLeaf,
+    CapabilityManifest, Contribution, ExecutionEngineContribution, HardwareCapabilityEntry,
+    HardwareDeviceType, HardwareDirection, HardwareSafetyClass, HardwareSupportContribution,
+    ImplementationDescriptor, ImplementationKind, InstallState, KnowledgeProviderContribution,
+    MemoryProviderContribution, MemoryTierKind, NativeBinaryDescriptor, Operation, PluginError,
+    PluginHandle, PluginId, PluginManifest, QuarantineReason, RegistryEntry, SemanticContract,
+    SideEffect, TrustDepth, UiComponentContribution, UiRegionAffinity, WorkflowLeaf,
 };

@@ -51,6 +51,10 @@ fn canonical_bytes(manifest_without_signature: &PluginManifest) -> Vec<u8> {
                 bytes.extend_from_slice(mp.entity_key.as_bytes());
                 bytes.extend_from_slice(mp.capability_id.as_bytes());
             }
+            Contribution::ExecutionEngine(ee) => {
+                bytes.extend_from_slice(ee.engine_id.as_bytes());
+                bytes.extend_from_slice(ee.launcher.program.to_string_lossy().as_bytes());
+            }
         }
     }
     bytes
@@ -138,6 +142,14 @@ pub fn validate_manifest(
             // lookup entry -- the capability it points at is a separate, separately-justified
             // `Capability` contribution. This variant alone can only ever justify `Read`.
             Contribution::MemoryProvider(_) => matches!(request.operation, Operation::Read),
+            // An `ExecutionEngine` contribution's own launcher really executes whatever script a
+            // caller later resolves through it -- the same "must be executable to be dispatched"
+            // reasoning `Agent` already gets -- but it never writes data or reaches the network
+            // on its own; any capability that ends up running through it is its own separate,
+            // separately-justified `Capability` contribution.
+            Contribution::ExecutionEngine(_) => {
+                matches!(request.operation, Operation::Read | Operation::Execute)
+            }
         });
         if !justified {
             return Err(PluginError::PermissionOverreach(request.operation));

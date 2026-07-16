@@ -1905,8 +1905,24 @@ mean here):
   bare `MemoryProvider` contribution can only ever justify `Read`. Proven end to end: exact
   `(tier, entity_key)` lookup, multiple providers for the same pair, and uninstall/quarantine
   really removing it.
-- **The one remaining `Contribution` variant** (`ExecutionEngine`) has no owning subsystem with a
-  real registration point yet; see `hyperion-plugin-framework`'s own doc comment.
+- **`Contribution::ExecutionEngine`, landed (2026-07-16) — the last of the eight variants.**
+  `PluginRegistry::execution_engine()` is the real "runtimes usable by Capability
+  implementations" registration point docs/24 describes: a plugin's launcher is validated the
+  exact same honest way a `Capability`'s own `NativeBinaryDescriptor` already is (must really
+  exist, must really be executable), then stored and served like every other contribution here.
+  `hyperion_sdk::resolve_via_engine` is the real consumer: it turns a caller's own script path
+  into a concrete `NativeBinaryDescriptor` by prepending the engine's launcher, so a capability
+  published "via" an engine installs and runs through the exact same
+  `ImplementationKind::NativeBinary` path a hand-written native binary already uses — no second,
+  parallel execution mechanism. A bare `ExecutionEngine` contribution can only ever justify
+  `Read`/`Execute`. Proven end to end: a real musl companion binary really receives the real
+  script path threaded all the way through resolution → publish → sandboxed invocation, and
+  really echoes it back in its real output; an unknown engine ID fails honestly at resolution,
+  before any capability is ever published against it.
+
+  Every `Contribution` variant docs/24 names now has a real owning subsystem (`Model` remains
+  deliberately not a distinct variant — see `hyperion-plugin-framework`'s own doc comment on why
+  it was never a real ninth gap).
 
 ### Social — connect with other Hyperion instances
 

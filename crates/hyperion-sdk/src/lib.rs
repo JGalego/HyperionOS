@@ -38,7 +38,12 @@
 //! `hyperion_plugin_framework::NativeBinaryDescriptor`, installable
 //! through the exact same [`publish::publish`] path (and therefore the
 //! exact same sandboxed execution path) as a hand-written `NativeBinary`
-//! implementation.
+//! implementation. [`execution_engine::resolve_via_engine`] closes docs/24's own "execution
+//! engines register runtimes usable by Capability implementations" gap: a plugin's own
+//! `hyperion_plugin_framework::Contribution::ExecutionEngine` supplies a reusable launcher, and
+//! this turns a caller's own script into a concrete `NativeBinaryDescriptor` by prepending that
+//! launcher — installed and invoked through the exact same `ImplementationKind::NativeBinary`
+//! path, never a second, parallel execution mechanism.
 //!
 //! Deliberately deferred, and why:
 //!
@@ -71,11 +76,13 @@
 //!   uses in this workspace.
 
 mod codegen;
+mod execution_engine;
 mod harness;
 mod publish;
 mod types;
 
 pub use codegen::{review_and_build, CodegenRejection, GeneratedSource};
+pub use execution_engine::resolve_via_engine;
 pub use harness::{run_harness, CapabilityImplementation};
 pub use publish::{prepare_submission, publish, to_plugin_manifest};
 pub use types::{
