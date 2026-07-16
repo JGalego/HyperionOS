@@ -218,6 +218,9 @@ impl MemoryEngine {
     ) -> Result<NodeId, MemoryError> {
         let turns: Vec<&str> = working.turns().collect();
         let summary = self.distill(monitor, token, &turns);
+        // docs/08 §5.2's own named "model-estimated salience" gap, real for the first time:
+        // `I(r) = max(explicit_flag, model_estimated_salience)`.
+        let importance = importance.max(self.estimate_salience(monitor, token, &turns));
         self.remember(
             monitor,
             token,
@@ -258,6 +261,47 @@ impl MemoryEngine {
             }
         }
         turns.join(" | ")
+    }
+
+    /// docs/08 §5.2's own previously-named "model-estimated salience" gap: `I(r) =
+    /// max(explicit_flag, model_estimated_salience)`, real for the first time. A real,
+    /// model-generated numeric estimate when [`Self::new_with_ai_runtime`] wired an `ai_runtime`;
+    /// `explicit_flag` alone -- never a fabricated number -- when no `ai_runtime` is wired, this
+    /// `token` isn't authorized for real inference, nothing is resident locally for
+    /// `ModelClass::Slm`, or the model's own response can't be parsed as a real number, matching
+    /// [`Self::distill`]'s own graceful-degradation contract exactly. The caller
+    /// ([`Self::distill_working_memory`]) takes `max(explicit_flag, this)` itself, per docs/08's
+    /// own literal formula -- this returns the raw estimate alone, not the combined value.
+    fn estimate_salience(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        turns: &[&str],
+    ) -> f32 {
+        let Some(ai_runtime) = &self.ai_runtime else {
+            return 0.0;
+        };
+        let request = InferenceRequest {
+            prompt: format!(
+                "Rate how important the following conversation is to remember later, on a scale \
+                 from 0.0 (trivial) to 1.0 (critical). Respond with only the number:\n{}",
+                turns.join("\n")
+            ),
+        };
+        let contract = CapabilityContract {
+            latency_budget_ms: DISTILL_LATENCY_BUDGET_MS,
+            always_on: false,
+        };
+        let Ok(result) = ai_runtime.infer(monitor, token, ModelClass::Slm, &contract, &request)
+        else {
+            return 0.0;
+        };
+        result
+            .text
+            .trim()
+            .parse::<f32>()
+            .map(|estimated| estimated.clamp(0.0, 1.0))
+            .unwrap_or(0.0)
     }
 
     /// `memory.query` — docs/08 §6.

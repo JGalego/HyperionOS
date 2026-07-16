@@ -8,12 +8,32 @@
 use std::sync::Arc;
 
 use hyperion_ai_runtime::{
-    sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
+    sign, CancellationToken, InferenceBackend, InferenceRequest, LocalAiRuntime, MockBackend,
+    ModelClass, ModelDescriptor, Precision, QuantizedVariant,
 };
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_crypto::Keystore;
 use hyperion_knowledge_graph::KnowledgeGraph;
 use hyperion_memory::{MemoryEngine, MemoryFilter, MemoryTier, WorkingMemory};
+
+/// A real `InferenceBackend` that always answers with a fixed, real, parseable numeric rating --
+/// standing in for a real model that actually followed the "respond with only the number"
+/// instruction, so `estimate_salience`'s own real parse-and-clamp path is genuinely exercised
+/// (`MockBackend`'s own echo never parses as a number).
+struct NumericRatingBackend {
+    rating: f32,
+}
+
+impl InferenceBackend for NumericRatingBackend {
+    fn generate(
+        &self,
+        _model_id: u64,
+        _request: &InferenceRequest,
+        _cancel: &CancellationToken,
+    ) -> String {
+        self.rating.to_string()
+    }
+}
 
 fn setup() -> (
     tempfile::TempDir,
@@ -160,4 +180,116 @@ fn a_distilled_record_really_persists_as_a_real_episodic_knowledge_graph_node() 
         .unwrap();
     assert_eq!(record.importance, 0.7);
     assert!(record.pinned);
+}
+
+/// docs/08 §5.2's own named "model-estimated salience" gap: `I(r) = max(explicit_flag,
+/// model_estimated_salience)`, real for the first time. A real model rating higher than the
+/// caller's own explicit flag must win.
+#[test]
+fn a_real_model_estimated_salience_higher_than_the_explicit_flag_wins() {
+    let (_dir, monitor, token, graph) = setup();
+    let key_dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&key_dir.path().join("device.key")).unwrap();
+    let ai_runtime = Arc::new(LocalAiRuntime::new(
+        Box::new(NumericRatingBackend { rating: 0.9 }),
+        8_000,
+    ));
+    ai_runtime
+        .register_model(
+            registered_slm_descriptor(&keystore),
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    let engine = MemoryEngine::new_with_ai_runtime(graph.clone(), ai_runtime);
+    let working = working_memory_with_turns();
+
+    let id = engine
+        .distill_working_memory(&monitor, &token, &working, 0.2, false)
+        .unwrap();
+
+    let record = engine
+        .query(&monitor, &token, &MemoryFilter::default())
+        .unwrap()
+        .into_iter()
+        .find(|r| r.id == id)
+        .unwrap();
+    assert_eq!(
+        record.importance, 0.9,
+        "a real model-estimated salience (0.9) higher than the explicit flag (0.2) must win, \
+         per docs/08 §5.2's own I(r) = max(explicit_flag, model_estimated_salience)"
+    );
+    assert_eq!(
+        record.decay_score, 0.9,
+        "the winning importance must really flow into decay_score too"
+    );
+}
+
+/// The explicit flag must still win when it's the higher of the two -- `max`, never a blind
+/// override by whatever the model says.
+#[test]
+fn the_explicit_flag_wins_when_higher_than_the_real_model_estimate() {
+    let (_dir, monitor, token, graph) = setup();
+    let key_dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&key_dir.path().join("device.key")).unwrap();
+    let ai_runtime = Arc::new(LocalAiRuntime::new(
+        Box::new(NumericRatingBackend { rating: 0.1 }),
+        8_000,
+    ));
+    ai_runtime
+        .register_model(
+            registered_slm_descriptor(&keystore),
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    let engine = MemoryEngine::new_with_ai_runtime(graph.clone(), ai_runtime);
+    let working = working_memory_with_turns();
+
+    let id = engine
+        .distill_working_memory(&monitor, &token, &working, 0.8, false)
+        .unwrap();
+
+    let record = engine
+        .query(&monitor, &token, &MemoryFilter::default())
+        .unwrap()
+        .into_iter()
+        .find(|r| r.id == id)
+        .unwrap();
+    assert_eq!(record.importance, 0.8);
+}
+
+/// A real model response that can't be parsed as a number must never fabricate a value --
+/// `MockBackend`'s own real echo (never a bare number) is exactly this real, honest case.
+#[test]
+fn an_unparseable_model_response_never_fabricates_a_salience_value() {
+    let (_dir, monitor, token, graph) = setup();
+    let key_dir = tempfile::tempdir().unwrap();
+    let keystore = Keystore::open_or_create(&key_dir.path().join("device.key")).unwrap();
+    let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+    ai_runtime
+        .register_model(
+            registered_slm_descriptor(&keystore),
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    let engine = MemoryEngine::new_with_ai_runtime(graph.clone(), ai_runtime);
+    let working = working_memory_with_turns();
+
+    let id = engine
+        .distill_working_memory(&monitor, &token, &working, 0.4, false)
+        .unwrap();
+
+    let record = engine
+        .query(&monitor, &token, &MemoryFilter::default())
+        .unwrap()
+        .into_iter()
+        .find(|r| r.id == id)
+        .unwrap();
+    assert_eq!(
+        record.importance, 0.4,
+        "an unparseable model response must fall back to the explicit flag alone, never a \
+         fabricated number"
+    );
 }

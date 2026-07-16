@@ -3126,3 +3126,23 @@ next step on any of these is a design pass, not code.
   touched. Still not a byte-level deletion from the WAL's history, and still no real
   encryption-at-rest to shred — both remain honestly out of scope, unchanged from before. All
   pre-existing `hyperion-privacy` tests pass unchanged.
+
+- **`hyperion-memory`'s model-estimated salience, landed (2026-07-16)** (this crate's own named
+  gap: docs/08 §5.2's `I(r) = max(explicit_flag, model_estimated_salience)` — "`I(r)` here is
+  still just the caller-supplied `importance` flag"). A new private `estimate_salience` prompts
+  the same wired `ai_runtime` `distill` already uses for a numeric 0.0-1.0 rating and parses the
+  response's own text with `str::parse::<f32>`, clamping to range on success — falling back to
+  `0.0` (a neutral, no-effect value under `max`, never a fabricated number) when no `ai_runtime`
+  is wired, this token isn't authorized, nothing is resident for `ModelClass::Slm`, or the
+  response can't be parsed as a real number, matching `distill`'s own graceful-degradation
+  contract exactly. `distill_working_memory` — the one real call site with both a real
+  `ai_runtime` and a caller-supplied `importance` — now takes `importance.max(estimate_salience(...))`
+  per docs/08's own literal formula before persisting, so a real model's own higher-confidence
+  rating genuinely reaches `MemoryRecord.importance`/`decay_score`, not just the caller's flag.
+  Proven with 3 new tests using a real `NumericRatingBackend` test double (a real
+  `InferenceBackend` that answers with a fixed, real, parseable number — `MockBackend`'s own echo
+  never parses as one): a real model estimate higher than the explicit flag wins; the explicit
+  flag wins when it's the higher of the two; and an unparseable model response (`MockBackend`'s
+  own real echo) never fabricates a value, falling back to the explicit flag alone. All 4
+  pre-existing `hyperion-memory` `distillation` tests, plus the rest of the crate's suite, pass
+  unchanged.

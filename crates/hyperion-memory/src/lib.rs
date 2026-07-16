@@ -20,10 +20,15 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **Model-estimated salience** (docs/08 §5.2's `I(r) = max(explicit_flag,
-//!   model_estimated_salience)`) — needs a real model to produce a real, structured numeric
-//!   estimate (not just free-text summarization, which [`engine::MemoryEngine::distill_working_memory`]
-//!   now does); `I(r)` here is still just the caller-supplied `importance` flag.
+//! - ~~**Model-estimated salience**~~ (docs/08 §5.2's `I(r) = max(explicit_flag,
+//!   model_estimated_salience)`) — now real: a real, model-generated numeric rating (0.0-1.0),
+//!   parsed from the same wired `ai_runtime`'s own text response, when
+//!   [`engine::MemoryEngine::new_with_ai_runtime`] is used — falling back to `0.0` (never a
+//!   fabricated number) when no `ai_runtime` is wired, this token isn't authorized, nothing is
+//!   resident for `ModelClass::Slm`, or the response can't be parsed as a number, so `max` always
+//!   degrades to the caller's own `explicit_flag` alone. [`engine::MemoryEngine::distill_working_memory`]
+//!   is the real caller: it takes the real `max(explicit_flag, model_estimated_salience)` per
+//!   docs/08's own literal formula before persisting `importance`/`decay_score`.
 //! - **Embedding-similarity clustering for extraction** (§5.4's "cluster
 //!   recent unconsolidated episodes by shared entities and embedding
 //!   similarity") — this crate groups by an explicit, caller-supplied
