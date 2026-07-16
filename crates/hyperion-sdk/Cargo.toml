@@ -9,6 +9,7 @@ repository.workspace = true
 hyperion-capability = { workspace = true }
 hyperion-crypto = { workspace = true }
 hyperion-plugin-framework = { workspace = true }
+hyperion-scheduler = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 

@@ -33,6 +33,7 @@ fn manifest_with_web_search(keystore: &Keystore) -> PluginManifest {
             version: 1,
             native_binary: None,
             privacy_tier: PrivacyTier::Local,
+            resource_profile: None,
         })],
         requested_permissions: vec![CapabilityGrantRequest {
             operation: Operation::NetworkEgress,

@@ -58,6 +58,11 @@ fn to_capability_manifest(
         } else {
             PrivacyTier::Local
         },
+        // `Implementation.resource_profile`'s first real behavioral consumer --
+        // `hyperion-agent-runtime::AgentRuntime::prepare_invoke` reads this straight through the
+        // bridged `ImplementationDescriptor` to admit a real, capability-declared reservation
+        // through the Scheduler instead of one fixed request for every capability.
+        resource_profile: implementation.resource_profile,
     }
 }
 

@@ -44,6 +44,7 @@ fn implementation() -> Implementation {
         latency_class: LatencyClass::Interactive,
         requires_consent: false,
         native_binary: None,
+        resource_profile: None,
     }
 }
 
@@ -230,6 +231,7 @@ fn a_native_binary_submission_installs_as_a_real_runnable_capability() {
             program: uppercase_tool_bin(),
             args: vec![],
         }),
+        resource_profile: None,
     };
 
     let submission = prepare_submission(contract, new_tool, 0.5, vec![]).unwrap();

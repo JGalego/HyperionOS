@@ -29,6 +29,7 @@ fn implementation() -> Implementation {
         latency_class: LatencyClass::Interactive,
         requires_consent: false,
         native_binary: None,
+        resource_profile: None,
     }
 }
 

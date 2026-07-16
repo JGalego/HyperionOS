@@ -47,6 +47,7 @@ fn manifest_with(capability_id: &str, keystore: &Keystore) -> PluginManifest {
             version: 1,
             native_binary: None,
             privacy_tier: PrivacyTier::Local,
+            resource_profile: None,
         })],
         requested_permissions: vec![CapabilityGrantRequest {
             operation: Operation::Read,

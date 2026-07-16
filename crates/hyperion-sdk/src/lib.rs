@@ -79,8 +79,13 @@
 //!   independent of who signed it or how it was scored. Real package-level code *signing* (a
 //!   caller verifying `package_hash` against a trusted registry entry before install) remains
 //!   separate, real follow-up work this bullet does not claim to close.
-//! - **`Implementation.resourceProfile`.** Not modeled — no consumer
-//!   (this crate's harness doesn't schedule real resource contention).
+//! - ~~**`Implementation.resourceProfile`.** Not modeled — no consumer~~ — now real:
+//!   [`types::Implementation`] carries an optional `hyperion_scheduler::ResourceVector`, threaded
+//!   through [`publish::to_capability_manifest`] into `hyperion-plugin-framework`'s own
+//!   `CapabilityManifest`/`ImplementationDescriptor`. `hyperion-agent-runtime::AgentRuntime::
+//!   prepare_invoke` is the real consumer: it looks a capability's installed implementation up
+//!   and submits its declared reservation to the real Scheduler admission algorithm, falling back
+//!   to the same fixed request as before when no implementation declares one.
 //! - **A real embedding model for `embeddingDistance`.** [`harness::run_harness`]'s
 //!   content-distance check is a token-overlap heuristic, the same
 //!   documented downgrade `hyperion-netstack`'s entity resolution already

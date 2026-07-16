@@ -581,6 +581,27 @@ impl AgentRuntime {
             GrantDecision::Granted => {}
         }
 
+        // A publisher's own real, declared `Implementation.resource_profile` -- carried through
+        // `hyperion-sdk::to_capability_manifest` and `PluginRegistry::register_implementation` --
+        // is a genuine per-capability admission request here instead of the same fixed,
+        // one-token-per-second stand-in for every capability regardless of what it actually
+        // needs. Falls back to that same fixed request when no installed implementation declares
+        // one, exactly as before.
+        let request = self
+            .plugins
+            .as_ref()
+            .and_then(|plugins| plugins.query(capability_ref))
+            .and_then(|entry| {
+                entry
+                    .implementations
+                    .iter()
+                    .find_map(|i| i.resource_profile)
+            })
+            .unwrap_or(ResourceVector {
+                inference_tokens_per_sec: 1,
+                ..Default::default()
+            });
+
         let task_id = TaskId(self.next_task_id.fetch_add(1, Ordering::Relaxed));
         let ticket = self
             .scheduler
@@ -595,10 +616,7 @@ impl AgentRuntime {
                     class: SchedClass::InteractiveAgent,
                     deadline: None,
                     priority_weight: 1.0,
-                    request: ResourceVector {
-                        inference_tokens_per_sec: 1,
-                        ..Default::default()
-                    },
+                    request,
                     cap_token: token.clone(),
                 },
             )

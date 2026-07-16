@@ -646,6 +646,7 @@ impl PluginRegistry {
             version: cm.version,
             native_binary: cm.native_binary.clone(),
             privacy_tier: cm.privacy_tier,
+            resource_profile: cm.resource_profile,
         };
 
         let mut registry = self.registry.lock().unwrap();

@@ -14,6 +14,7 @@ hyperion-crypto = { workspace = true }
 # by docs/998-roadmap.md's Slice 1) -- see `registry::invoke_native_binary`. Its own `spawn`/
 # `SpawnedBoundary` are `#[cfg(target_os = "linux")]`-internal to that crate; this crate's own
 # call sites mirror the same gating rather than assuming Linux everywhere.
+hyperion-scheduler = { workspace = true }
 hyperion-trust-boundary = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

@@ -40,6 +40,7 @@ fn manifest(
             version: 1,
             native_binary: None,
             privacy_tier: PrivacyTier::Local,
+            resource_profile: None,
         })],
         requested_permissions: permissions,
         min_trust_depth: TrustDepth::D1,

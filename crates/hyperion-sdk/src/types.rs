@@ -1,4 +1,5 @@
 use hyperion_plugin_framework::{NativeBinaryDescriptor, Operation, SideEffect};
+use hyperion_scheduler::ResourceVector;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrustLevel {
@@ -55,8 +56,7 @@ pub struct Contract {
     pub trust_level: TrustLevel,
 }
 
-/// docs/25 §2's `Implementation` — the "how." `resource_profile` is
-/// deferred (see this crate's doc comment); `runtime: NativeBinary` is
+/// docs/25 §2's `Implementation` — the "how." `runtime: NativeBinary` is
 /// the realistic mapping for an in-process Rust
 /// [`crate::harness::CapabilityImplementation`] in this hosted simulator.
 #[derive(Debug, Clone)]
@@ -76,6 +76,13 @@ pub struct Implementation {
     /// linted before this descriptor is ever produced, so a brand-new tool and a hand-installed
     /// one both flow through this same field and the same downstream execution path.
     pub native_binary: Option<NativeBinaryDescriptor>,
+    /// docs/25 §2's `Implementation.resourceProfile` -- previously named as "deferred, no
+    /// consumer" in this crate's own doc comment. `None` (every existing caller's default,
+    /// unchanged behavior) is honest absence, not zero cost --
+    /// `hyperion-agent-runtime::AgentRuntime::prepare_invoke` (the real consumer) falls back to
+    /// its own existing fixed admission request when a capability declares none, exactly as it
+    /// always has.
+    pub resource_profile: Option<ResourceVector>,
 }
 
 /// docs/25 §3's `MockContextBundle` — deliberately *not* wired to the

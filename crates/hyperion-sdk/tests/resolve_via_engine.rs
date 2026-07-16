@@ -135,6 +135,7 @@ fn a_capability_resolved_via_an_engine_really_runs_and_receives_the_real_script_
         latency_class: LatencyClass::Interactive,
         requires_consent: false,
         native_binary: Some(descriptor),
+        resource_profile: None,
     };
     let submission = hyperion_sdk::prepare_submission(contract, implementation, 0.9, vec![])
         .expect("no undeclared permissions were observed");

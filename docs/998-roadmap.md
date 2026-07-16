@@ -2868,3 +2868,25 @@ next step on any of these is a design pass, not code.
   one, real `None` for the two that don't) plus all 3 existing `scheduler_fit.rs` integration
   tests continuing to pass with the closure parameter gone. All 13 of this crate's own
   pre-existing tests pass unchanged.
+
+- **`hyperion-sdk`'s `Implementation.resourceProfile`, landed (2026-07-16)** (this crate's own
+  named gap: "Not modeled — no consumer"). `types::Implementation` gains a real, optional
+  `hyperion_scheduler::ResourceVector` field, mirroring the exact `privacy_tier` pattern above:
+  `publish::to_capability_manifest` threads it into a new, identically-named
+  `hyperion-plugin-framework::CapabilityManifest`/`ImplementationDescriptor` field, carried through
+  `register_implementation` unchanged. `hyperion-agent-runtime::AgentRuntime::prepare_invoke` is
+  the real consumer: it now looks the invoked `capability_ref` up in the installed
+  `PluginRegistry` and submits that implementation's own declared reservation to the real
+  Scheduler admission algorithm, instead of the same fixed one-token-per-second stand-in for every
+  capability regardless of what it actually needs — falling back to that same fixed request when
+  no installed implementation declares a profile. Every pre-existing `CapabilityManifest`/
+  `Implementation` construction site across the workspace (`hyperion-sdk`'s own 3 test files, plus
+  the same ~10 `CapabilityManifest` sites the `privacy_tier` bullet above touched) was updated to
+  declare the new field explicitly, defaulting to `None` — the exact behavior every existing caller
+  already had. Proven end to end in two new `hyperion-agent-runtime` integration tests: a
+  capability declaring a reservation larger than the runtime's own ledger capacity is genuinely
+  denied (`InvokeOutcome::QuotaExceeded`) by the real Scheduler — something the old hardcoded
+  request could never trigger — while a capability with no declared profile still admits under the
+  same fixed default as before. All pre-existing tests across `hyperion-sdk`,
+  `hyperion-plugin-framework`, `hyperion-api-gateway`, `hyperion-scalability`, and
+  `hyperion-agent-runtime` pass unchanged.

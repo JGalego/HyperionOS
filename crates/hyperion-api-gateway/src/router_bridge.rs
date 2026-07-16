@@ -216,6 +216,7 @@ mod tests {
             version: 1,
             native_binary: None,
             privacy_tier,
+            resource_profile: None,
         }
     }
 

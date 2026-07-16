@@ -80,6 +80,7 @@ fn manifest_with_native_binary(keystore: &Keystore, program: std::path::PathBuf)
                 args: vec![],
             }),
             privacy_tier: PrivacyTier::Local,
+            resource_profile: None,
         })],
         requested_permissions: vec![CapabilityGrantRequest {
             operation: Operation::Execute,

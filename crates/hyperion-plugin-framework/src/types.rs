@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use hyperion_capability::TrustBoundaryId;
+use hyperion_scheduler::ResourceVector;
 
 pub type PluginId = u64;
 pub type CapabilityId = String;
@@ -118,6 +119,13 @@ pub struct CapabilityManifest {
     /// conservative choice for an implementation that never leaves the device; `ConsentedCloud`
     /// is real, informed consent that this implementation may leave it.
     pub privacy_tier: PrivacyTier,
+    /// docs/25 §2's `Implementation.resourceProfile` — a publisher's own real, declared resource
+    /// reservation for this implementation, previously named as "not modeled — no consumer" in
+    /// `hyperion-sdk`'s own doc comment. `None` (every existing manifest's default, unchanged) is
+    /// honest absence, not zero cost — `hyperion-agent-runtime::AgentRuntime::prepare_invoke` (the
+    /// real consumer) falls back to its own existing fixed request when a capability declares
+    /// none, exactly as it always has.
+    pub resource_profile: Option<ResourceVector>,
 }
 
 /// A plugin-contributed agent specialization's own manifest fields — mirrors
@@ -381,6 +389,10 @@ pub struct ImplementationDescriptor {
     /// `hyperion-api-gateway::router_bridge::to_router_descriptor` is the real caller that reads
     /// this instead of hardcoding every bridged candidate as `Local`.
     pub privacy_tier: PrivacyTier,
+    /// Carried straight over from the installing [`CapabilityManifest::resource_profile`] --
+    /// `hyperion-agent-runtime::AgentRuntime::prepare_invoke` is the real caller that reads this
+    /// as a real Scheduler admission request instead of one fixed request for every capability.
+    pub resource_profile: Option<ResourceVector>,
 }
 
 /// docs/24 §4's `RegistryEntry`, with `contract` added (not in the doc's
