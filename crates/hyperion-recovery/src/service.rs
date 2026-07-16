@@ -142,10 +142,39 @@ impl RecoveryService {
         note: &str,
         now: u64,
     ) -> ActionId {
+        self.record_action_started_with_scope(
+            recovery_point_before,
+            objects_touched,
+            agent_run_id,
+            None,
+            None,
+            note,
+            now,
+        )
+    }
+
+    /// As [`Self::record_action_started`], additionally tagging the real `UndoScope::Session`/
+    /// `UndoScope::Goal` keys this action can later be undone by — docs/33 §4's own named gap,
+    /// closed for a real caller that has them: `hyperion_coordination::CoordinationSession`, via
+    /// `Self::with_recovery`, tags every real task dispatch's `ActionRecord` with its own real
+    /// `SharedPlan.session_id`/`root_intent`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_action_started_with_scope(
+        &self,
+        recovery_point_before: RecoveryPointId,
+        objects_touched: Vec<NodeId>,
+        agent_run_id: Option<u64>,
+        session_id: Option<u64>,
+        goal_id: Option<NodeId>,
+        note: &str,
+        now: u64,
+    ) -> ActionId {
         let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
         self.actions.lock().unwrap().push(ActionRecord {
             action_id,
             agent_run_id,
+            session_id,
+            goal_id,
             recovery_point_before,
             objects_touched,
             status: ActionStatus::InFlight,
@@ -405,6 +434,8 @@ impl RecoveryService {
         match scope {
             UndoScope::SingleAction(id) => record.action_id == id,
             UndoScope::AgentRun(run_id) => record.agent_run_id == Some(run_id),
+            UndoScope::Session(session_id) => record.session_id == Some(session_id),
+            UndoScope::Goal(goal_id) => record.goal_id == Some(goal_id),
             UndoScope::Global(point_id) => record.recovery_point_before == point_id,
         }
     }

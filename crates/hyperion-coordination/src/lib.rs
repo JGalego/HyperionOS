@@ -115,6 +115,18 @@
 //! `TasteOrEmpathy` task — advisory only, per CLAUDE.md's User Control principle: this never
 //! changes dispatch, routing, or eligibility, only names a reason a human-facing surface might
 //! choose to ask for more direct involvement regardless of reversibility.
+//!
+//! Real (2026-07-16): `hyperion-recovery`'s own previously-named "`UndoScope::Session`/
+//! `UndoScope::Goal`" gap — "neither concept has a first-class id anywhere in this workspace" was
+//! false the moment `SharedPlan.session_id`/`root_intent` existed; what was missing was a real
+//! caller tagging an `ActionRecord` with them. [`engine::CoordinationSession::with_recovery`]
+//! is that real, optional caller: every real task dispatch [`engine::CoordinationSession::allocate`]
+//! completes now opens a real, best-effort `hyperion_recovery::RecoveryService` recovery point +
+//! `ActionRecord` around the real `"task_result"` node it creates, tagged with this session's own
+//! real `session_id`/`root_intent` — undoable later via `UndoScope::Session`/`UndoScope::Goal`.
+//! See that method's own doc comment for the honest scope boundary (a fresh node, so this
+//! specific action's own undo can't restore it — the real value is crash-recovery journaling and
+//! session/goal-scoped bookkeeping).
 
 mod catalog;
 mod engine;

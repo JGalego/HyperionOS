@@ -66,19 +66,21 @@
 //!   pre-action snapshot restored verbatim, not a separately-declared
 //!   symbolic operation. Simpler, and sufficient for every mitigation
 //!   this crate's tests exercise.
-//! - **`UndoScope::Session`/`UndoScope::Goal`.** The premise that neither
-//!   concept has a first-class id anywhere in this workspace is now
-//!   false: `hyperion_coordination::types::SharedPlan` has both
-//!   `session_id: u64` and `root_intent: NodeId` today. Still not added,
-//!   though: `hyperion-coordination` has no dependency on this crate at
-//!   all yet, so making this real needs a genuine new `allocate()` ->
-//!   `RecoveryService` call site tagging each dispatched task's action
-//!   record with its session/goal — comparable in size to this
-//!   workspace's own past `allocate()` -> `hyperion-explainability`
-//!   bridge, and deserving the same dedicated pass, not a bolted-on enum
-//!   variant with no real caller to populate it. `SingleAction`/
-//!   `AgentRun`/`Global` cover every scope this crate's actual callers
-//!   name today.
+//! - ~~`UndoScope::Session`/`UndoScope::Goal`~~ (2026-07-16) — now real, closing this crate's own
+//!   named gap: `hyperion_coordination::types::SharedPlan` had a real `session_id: u64` and
+//!   `root_intent: NodeId` before this crate had a way to key on them.
+//!   [`service::RecoveryService::record_action_started_with_scope`] tags an `ActionRecord` with
+//!   both (`record_action_started` still tags neither, for every caller with no session/goal
+//!   concept of its own); `hyperion-coordination::CoordinationSession::with_recovery` is the real,
+//!   optional caller (`Option<Arc<...>>`, this workspace's own established shape) — every real
+//!   task dispatch its `allocate()` completes now opens a real, best-effort recovery point +
+//!   `ActionRecord` around the real `"task_result"` node it creates, tagged with that session's
+//!   own real `session_id`/`root_intent`. Honest scope: `"task_result"` is always a *fresh* node,
+//!   so this specific action's own undo can't restore it (the "un-creating a freshly created
+//!   object" limitation named below already applies) — the real value landed here is genuine
+//!   crash-recovery journaling and session/goal-scoped bookkeeping, proven end to end in both
+//!   crates' own test suites (`hyperion-recovery`'s `tests/undo_scope_session_goal.rs`;
+//!   `hyperion-coordination`'s `tests/recovery_bridge.rs`).
 //! - **Retention classes, compaction, and pinning enforcement beyond a
 //!   boolean flag.** [`service::RecoveryService::pin`]/`unpin` exist;
 //!   nothing yet reads that flag to protect a point from eviction, since

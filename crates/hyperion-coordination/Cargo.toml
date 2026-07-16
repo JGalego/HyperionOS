@@ -11,6 +11,11 @@ hyperion-capability = { workspace = true }
 hyperion-explainability = { workspace = true }
 hyperion-intent = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
+# Real, optional (Option<Arc<...>>, the same optional-backend shape this workspace already uses
+# elsewhere) session/goal-scoped undo bridge -- see `Self::with_recovery`'s own doc comment. Closes
+# `hyperion-recovery`'s own previously-named "UndoScope::Session/Goal" gap: this crate's own
+# `SharedPlan.session_id`/`root_intent` are the real ids that gap named as missing.
+hyperion-recovery = { workspace = true }
 # Real, live registration point for `Contribution::Agent` -- `catalog::best_fit_manifest_with_plugins`
 # merges `PluginRegistry::agent_contributions` into this crate's own built-in roster.
 hyperion-plugin-framework = { workspace = true }

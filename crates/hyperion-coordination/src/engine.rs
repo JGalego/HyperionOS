@@ -257,6 +257,11 @@ pub struct CoordinationSession {
     /// docs/998-roadmap.md's own named "workspace-wide, shared Explanation
     /// Record store" gap, closed for a caller that wants it.
     explanations: Arc<ExplanationStore>,
+    /// docs/998-roadmap.md's own named "`UndoScope::Session`/`UndoScope::Goal`" gap: real, but
+    /// optional (the same `Option<Arc<...>>` shape this workspace already uses for every other
+    /// optional real backend) — see [`Self::with_recovery`]'s own doc comment for what wiring one
+    /// in actually does.
+    recovery: Option<Arc<hyperion_recovery::RecoveryService>>,
 }
 
 impl CoordinationSession {
@@ -286,7 +291,31 @@ impl CoordinationSession {
             next_session_id: AtomicU64::new(1),
             next_conflict_id: AtomicU64::new(1),
             explanations,
+            recovery: None,
         }
+    }
+
+    /// Opts this session into docs/33 §4's `UndoScope::Session`/`UndoScope::Goal` — closes
+    /// `hyperion-recovery`'s own previously-named gap: "neither concept has a first-class id
+    /// anywhere in this workspace" was false the moment `SharedPlan.session_id`/`root_intent`
+    /// existed; what was still missing was a real caller tagging an `ActionRecord` with them.
+    /// Once wired, every real task dispatch [`Self::allocate`] completes opens a real,
+    /// best-effort recovery point + `ActionRecord` (via
+    /// `RecoveryService::record_action_started_with_scope`) around the real `"task_result"` node
+    /// it creates, tagged with this session's own real `session_id` and `root_intent` — undoable
+    /// later via `RecoveryService::undo(UndoScope::Session(session_id))` or
+    /// `UndoScope::Goal(root_intent)`. Honest scope: `"task_result"` is always a *fresh* KG node
+    /// (`put_node`'s `existing_id: None`), and this crate's own `hyperion-recovery` dependency
+    /// already documents that a recovery point over a not-yet-created object "cannot undo its
+    /// creation" — the real, valuable part here is the crash-recovery journaling and the real
+    /// session/goal-scoped bookkeeping this now provides, not restoring a deleted result.
+    /// Deliberately optional and consuming (`self -> Self`, chained after [`Self::new`]/
+    /// [`Self::new_with_shared_explanations`]) rather than a new constructor parameter, matching
+    /// this workspace's `Option<Arc<...>>` optional-backend convention without multiplying
+    /// constructors for every independent optional dependency.
+    pub fn with_recovery(mut self, recovery: Arc<hyperion_recovery::RecoveryService>) -> Self {
+        self.recovery = Some(recovery);
+        self
     }
 
     /// docs/18's "queryable Explanation Record" surface for an
@@ -756,6 +785,33 @@ impl CoordinationSession {
                             "capability_dispatch",
                             None,
                         );
+                        // docs/998-roadmap.md's own named "UndoScope::Session/Goal" gap, closed
+                        // for a real caller -- see `Self::with_recovery`'s own doc comment for
+                        // the honest scope boundary (a fresh node, so undo can't restore it; the
+                        // real value is crash-recovery journaling and session/goal-scoped
+                        // bookkeeping). Best-effort, like the graph write above: never fails this
+                        // dispatch over a recovery-service hiccup.
+                        if let Some(recovery) = &self.recovery {
+                            let now_ts = now();
+                            if let Ok(point_id) = recovery.recovery_point_create(
+                                monitor,
+                                token,
+                                hyperion_recovery::Trigger::Automatic,
+                                &[],
+                                now_ts,
+                            ) {
+                                let action_id = recovery.record_action_started_with_scope(
+                                    point_id,
+                                    vec![result_node],
+                                    None,
+                                    Some(session_id),
+                                    Some(plan.root_intent),
+                                    "task dispatch produced a real result",
+                                    now_ts,
+                                );
+                                let _ = recovery.record_action_committed(action_id);
+                            }
+                        }
                     }
                     Self::bump_partition_version(plan, d.task_id);
                     (ControlState::Completed, TaskStatus::Done)

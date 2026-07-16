@@ -53,6 +53,13 @@ pub enum ActionStatus {
 pub struct ActionRecord {
     pub action_id: ActionId,
     pub agent_run_id: Option<u64>,
+    /// docs/33 §4's `UndoScope::Session` key — real once a caller has a real session id to tag
+    /// with (see [`UndoScope::Session`]'s own doc comment for the first real one,
+    /// `hyperion-coordination`'s own `SharedPlan.session_id`). `None` for every action recorded
+    /// by a caller with no session concept of its own.
+    pub session_id: Option<u64>,
+    /// docs/33 §4's `UndoScope::Goal` key — see [`UndoScope::Goal`]'s own doc comment.
+    pub goal_id: Option<NodeId>,
     pub recovery_point_before: RecoveryPointId,
     pub objects_touched: Vec<NodeId>,
     pub status: ActionStatus,
@@ -60,14 +67,22 @@ pub struct ActionRecord {
     pub note: String,
 }
 
-/// docs/33 §4's `UndoScope`, narrowed to the three variants this
-/// workspace can key on today — `Session`/`Goal` need first-class
-/// session/goal ids this workspace doesn't have yet (`hyperion-
-/// coordination`'s `SharedPlan` has no single "goal id" of its own).
+/// docs/33 §4's `UndoScope`. `Session`/`Goal` were previously narrowed away — "neither concept
+/// has a first-class id anywhere in this workspace" — but that premise is now false:
+/// `hyperion_coordination::types::SharedPlan` has both a real `session_id: u64` and a real
+/// `root_intent: NodeId` (the goal). [`crate::service::RecoveryService::record_action_started_with_scope`]
+/// is the real, tagged counterpart to [`crate::service::RecoveryService::record_action_started`]
+/// (which still tags neither, for every caller with no session/goal concept of its own) — see
+/// that method's own doc comment for the one real caller today
+/// (`hyperion_coordination::CoordinationSession`, via `Self::with_recovery`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UndoScope {
     SingleAction(ActionId),
     AgentRun(u64),
+    /// Every action recorded under this real `hyperion-coordination` session id.
+    Session(u64),
+    /// Every action recorded under this real root Intent (goal) id.
+    Goal(NodeId),
     /// Every action recorded against this recovery point, not just one.
     Global(RecoveryPointId),
 }

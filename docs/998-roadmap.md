@@ -2181,6 +2181,24 @@ mean here):
   doesn't need); naturally racing that scenario end-to-end remains a real, separate addition, not
   attempted here.
 
+- **`UndoScope::Session`/`UndoScope::Goal`, landed (2026-07-16)** (docs/33 §4's own item,
+  `hyperion-recovery`'s previously-named gap: "neither concept has a first-class id anywhere in
+  this workspace" — false the moment `hyperion_coordination::types::SharedPlan.session_id`/
+  `root_intent` existed). `RecoveryService::record_action_started_with_scope` is the real, tagged
+  counterpart to `record_action_started` (which still tags neither, for every caller with no
+  session/goal concept); `CoordinationSession::with_recovery` is the real, optional
+  (`Option<Arc<...>>`) caller — every real task dispatch `allocate()` completes now opens a real,
+  best-effort recovery point + `ActionRecord` around the real `"task_result"` node it creates,
+  tagged with that session's own real `session_id`/`root_intent`. Every existing constructor and
+  call site is unchanged (`with_recovery` is opt-in, chained after construction). Honest scope
+  boundary: `"task_result"` is always a *fresh* KG node, so this specific action's own undo can't
+  restore it (this crate's own pre-existing "un-creating a freshly created object" limitation) —
+  the real value landed here is genuine crash-recovery journaling and session/goal-scoped
+  bookkeeping. Proven end to end in both crates: `hyperion-recovery`'s own
+  `UndoScope::Session`/`UndoScope::Goal` correctly scope to only the tagged actions (an untagged
+  action never matches either); `hyperion-coordination`'s real dispatch tags a real `ActionRecord`
+  with its own real session/goal ids, recorded `Committed`, not left dangling `InFlight`.
+
 ## Backlog
 
 Product-level work that's real, named, and intentionally not yet scheduled — distinct from this

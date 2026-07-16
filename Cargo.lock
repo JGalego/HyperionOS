@@ -2920,6 +2920,7 @@ dependencies = [
  "hyperion-ipc",
  "hyperion-knowledge-graph",
  "hyperion-plugin-framework",
+ "hyperion-recovery",
  "hyperion-storage",
  "serde",
  "serde_json",
