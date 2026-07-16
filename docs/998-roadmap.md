@@ -2005,10 +2005,18 @@ mean here):
   real client reads `hyperion://graph`'s real live content over a real connection, an unknown URI
   is a real honest JSON-RPC error, and the identity check really fires the same way it does for
   `tools/call`.
+- **A2A `GetTask`/`ListTasks`, landed the same pass (2026-07-16).** A real, in-process,
+  insertion-ordered `TaskStore` keeps every completed `SendMessage` `Task`; `GetTask <id>` really
+  re-fetches one (a real caller that lost its own copy, or wants to check on it later, doesn't
+  have to have kept it), `ListTasks` really lists every one completed so far, in order. Streaming/
+  push notifications remain out of scope — there's still nothing to *stream*, since every real
+  dispatch still completes synchronously before `SendMessage` returns; a task store is a real
+  history, not a queue of work in flight. Proven end to end: a completed task's id really
+  round-trips through `GetTask`; an unknown id is a real, honest JSON-RPC error; `ListTasks`
+  really returns every completed task in the order they finished.
 - **The rest of each real spec.** MCP: prompts, notifications, the SSE-streaming half of
-  "Streamable HTTP," stdio transport. A2A: `GetTask`/`ListTasks`/streaming/push notifications
-  (no real task store exists here — every dispatch completes synchronously before `SendMessage`
-  returns, so there's nothing to poll).
+  "Streamable HTTP," stdio transport. A2A: streaming/push notifications themselves (see above for
+  why a task store alone doesn't need them yet).
 - **A2A, gossip, or any custom/invented protocol.** Worth exactly when a real, concrete need
   outgrows what MCP already covers — not before.
 - **Real network transport for federation** (`hyperion-federation`'s own deferred list: heartbeat

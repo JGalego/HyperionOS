@@ -1,12 +1,12 @@
 //! `/a2a-server`: a real A2A (Agent2Agent) server, exposing a real, live [`ConsoleSession`] as an
-//! Agent Card + one real JSON-RPC method (docs/998-roadmap.md's Social pillar). Deliberately a
+//! Agent Card + real JSON-RPC methods (docs/998-roadmap.md's Social pillar). Deliberately a
 //! narrow, honest subset of the real spec (<https://a2a-protocol.org>): the Agent Card is served
-//! at the real, spec-defined well-known path (`/.well-known/agent-card.json`), and only
-//! `SendMessage` is implemented (the spec's own "send a message and get a reply" minimal flow --
-//! `returnImmediately: false`, one synchronous `Task` back, `TASK_STATE_COMPLETED` since this
-//! session never streams). `GetTask`/`ListTasks`/streaming/push notifications are not
-//! implemented -- there's no real task store here, since every real dispatch through
-//! [`ConsoleSession::handle_utterance`] already completes synchronously before this returns.
+//! at the real, spec-defined well-known path (`/.well-known/agent-card.json`); `SendMessage` (the
+//! spec's own "send a message and get a reply" minimal flow -- `returnImmediately: false`, one
+//! synchronous `Task` back, `TASK_STATE_COMPLETED` since this session never streams) and
+//! `GetTask`/`ListTasks` are implemented; streaming/push notifications are not -- there's nothing
+//! to stream, since every real dispatch through [`ConsoleSession::handle_utterance`] already
+//! completes synchronously before `SendMessage` returns.
 //!
 //! **Real identity (docs/998-roadmap.md's Social pillar, "identity" half):** the Agent Card now
 //! carries this session's own real, hex-encoded Ed25519 [`ConsoleSession::verifying_key`], and
@@ -15,6 +15,11 @@
 //! genuinely holds the matching private key) and checks the key against a real, persisted
 //! [`hyperion_console::peer_trust::PeerTrustStore`] (proving it's the *same* key this caller has
 //! always seen for this peer) before ever showing the reply text.
+//!
+//! **Real task store:** every `SendMessage`'s completed `Task` is really kept in [`TaskStore`],
+//! a real, in-process, insertion-ordered record this server's `GetTask`/`ListTasks` really query
+//! -- a real caller that lost its own copy of a completed Task (or wants a history of what this
+//! session has completed) can really re-fetch it, not just the one `SendMessage` reply itself.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -27,6 +32,38 @@ use crate::http_server::{self, RunningServer};
 
 static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
+/// A real, in-process, insertion-ordered record of every `Task` this server has ever completed --
+/// see this module's own doc comment. Linear-scan `get` is fine at this scale (a single console
+/// session's own real task history, not a production task queue).
+#[derive(Default)]
+struct TaskStore {
+    tasks: Mutex<Vec<(String, Value)>>,
+}
+
+impl TaskStore {
+    fn insert(&self, id: String, task: Value) {
+        self.tasks.lock().unwrap().push((id, task));
+    }
+
+    fn get(&self, id: &str) -> Option<Value> {
+        self.tasks
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(task_id, _)| task_id == id)
+            .map(|(_, task)| task.clone())
+    }
+
+    fn list(&self) -> Vec<Value> {
+        self.tasks
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, task)| task.clone())
+            .collect()
+    }
+}
+
 /// Starts the real server in a real background thread; returns immediately with a handle the
 /// caller can read the real bound address from (or [`RunningServer::stop`], used by this module's
 /// own tests).
@@ -35,13 +72,18 @@ pub fn spawn_server(
     port: u16,
 ) -> std::io::Result<RunningServer> {
     let verifying_key_hex = encode_hex(&session.lock().unwrap().verifying_key().to_bytes());
+    let task_store = Arc::new(TaskStore::default());
     http_server::spawn(port, move |method, path, body| match (method, path) {
         ("GET", "/.well-known/agent-card.json") => (
             200,
             "application/json",
             agent_card(&verifying_key_hex).to_string(),
         ),
-        ("POST", _) => (200, "application/json", handle_request(&session, body)),
+        ("POST", _) => (
+            200,
+            "application/json",
+            handle_request(&session, &task_store, body),
+        ),
         _ => (
             404,
             "application/json",
@@ -74,7 +116,11 @@ fn agent_card(verifying_key_hex: &str) -> Value {
     })
 }
 
-fn handle_request(session: &Arc<Mutex<ConsoleSession>>, body: &str) -> String {
+fn handle_request(
+    session: &Arc<Mutex<ConsoleSession>>,
+    task_store: &TaskStore,
+    body: &str,
+) -> String {
     let request: Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(e) => return error_response(Value::Null, -32700, &format!("parse error: {e}")),
@@ -104,25 +150,36 @@ fn handle_request(session: &Arc<Mutex<ConsoleSession>>, body: &str) -> String {
             };
 
             let task_id = format!("task-{}", NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
-            success_response(
-                id,
-                json!({
-                    "id": task_id,
-                    "contextId": task_id,
-                    "status": {
-                        "state": "TASK_STATE_COMPLETED",
-                        "message": {
-                            "messageId": format!("{task_id}-reply"),
-                            "role": "ROLE_AGENT",
-                            "parts": [{"text": reply}],
-                        },
-                        "timestamp": rfc3339_utc(unix_seconds_now()),
+            let task = json!({
+                "id": task_id,
+                "contextId": task_id,
+                "status": {
+                    "state": "TASK_STATE_COMPLETED",
+                    "message": {
+                        "messageId": format!("{task_id}-reply"),
+                        "role": "ROLE_AGENT",
+                        "parts": [{"text": reply}],
                     },
-                    // Not part of the real A2A spec -- see this module's own doc comment.
-                    "signature": signature_hex,
-                }),
-            )
+                    "timestamp": rfc3339_utc(unix_seconds_now()),
+                },
+                // Not part of the real A2A spec -- see this module's own doc comment.
+                "signature": signature_hex,
+            });
+            task_store.insert(task_id, task.clone());
+            success_response(id, task)
         }
+        "GetTask" => {
+            let task_id = request
+                .get("params")
+                .and_then(|p| p.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            match task_store.get(task_id) {
+                Some(task) => success_response(id, task),
+                None => error_response(id, -32001, &format!("no such task: {task_id:?}")),
+            }
+        }
+        "ListTasks" => success_response(id, json!({"tasks": task_store.list()})),
         other => error_response(id, -32601, &format!("method not found: {other}")),
     }
 }
