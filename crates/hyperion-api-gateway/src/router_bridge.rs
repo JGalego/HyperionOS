@@ -6,7 +6,7 @@ use hyperion_model_router::{
 };
 use hyperion_plugin_framework::{
     ImplementationDescriptor as PluginImplementationDescriptor,
-    ImplementationKind as PluginImplKind,
+    ImplementationKind as PluginImplKind, PrivacyTier as PluginPrivacyTier,
 };
 use hyperion_security::InterventionLevel;
 
@@ -30,6 +30,18 @@ fn to_router_kind(kind: PluginImplKind) -> RouterImplKind {
     }
 }
 
+/// The same kind of narrow adapter as [`to_router_kind`], for
+/// `hyperion-plugin-framework::PrivacyTier` -- this crate's own previously-named "no
+/// per-implementation privacy tier from the Plugin Framework manifest" gap, closed for real: a
+/// publisher's own declared tier now genuinely reaches the Model Router's real privacy gate,
+/// instead of every bridged candidate being hardcoded `Local`.
+fn to_router_privacy_tier(tier: PluginPrivacyTier) -> RouterPrivacyTier {
+    match tier {
+        PluginPrivacyTier::Local => RouterPrivacyTier::Local,
+        PluginPrivacyTier::ConsentedCloud => RouterPrivacyTier::ConsentedCloud,
+    }
+}
+
 /// `plugin_id` doubles as the router's `ImplId` — both are already plain
 /// `u64` identities naming "one specific implementation," so no new
 /// identity space is minted for the bridge.
@@ -45,20 +57,20 @@ pub(crate) fn to_router_descriptor(
         capability_id: capability_id.to_string(),
         kind: to_router_kind(descriptor.implementation_kind),
         // `hyperion-plugin-framework::ImplementationDescriptor` has no `ModelClass`-equivalent
-        // field at all (just `plugin_id`/`implementation_kind`/`quality_score`/`version`), so
-        // even a plugin manifest declaring `ImplementationKind::LocalSmallModel` bridges here
-        // with no real model class to run — M8's real `ai_runtime.infer()` wiring in
+        // field at all (just `plugin_id`/`implementation_kind`/`quality_score`/`version`/
+        // `privacy_tier`), so even a plugin manifest declaring `ImplementationKind::LocalSmallModel`
+        // bridges here with no real model class to run — M8's real `ai_runtime.infer()` wiring in
         // `ApiGateway::dispatch_one` only ever fires for a candidate with `Some(class)`, so a
         // plugin-bridged local-model candidate still falls back to the stub dispatch today.
         // Giving the Plugin Framework's own manifest a real `ModelClass` field is a separate,
-        // larger change to that crate's manifest/signature shape, not attempted here — the same
-        // scoping this function's own `privacy_tier` gap below already documents.
+        // larger change to that crate's manifest/signature shape, not attempted here.
         model_class: None,
-        // docs/16's real per-implementation privacy tier isn't carried by
-        // `hyperion-plugin-framework`'s manifest yet — every bridged
-        // candidate is treated as `Local` until that's wired, a real gap
-        // this crate's doc comment calls out rather than hides.
-        privacy_tier: RouterPrivacyTier::Local,
+        // ~~docs/16's real per-implementation privacy tier isn't carried by
+        // `hyperion-plugin-framework`'s manifest yet~~ — now real: a publisher's own declared
+        // `CapabilityManifest::privacy_tier` reaches here via `descriptor.privacy_tier`, so a
+        // manifest genuinely requiring consent bridges as a real `ConsentedCloud` candidate,
+        // gated by the Model Router's real privacy gate — not every candidate hardcoded `Local`.
+        privacy_tier: to_router_privacy_tier(descriptor.privacy_tier),
         cost_model: CostModel::Free,
         quality_profile,
         declared_latency_ms: 200,
@@ -189,4 +201,31 @@ pub(crate) fn to_confidence_and_alternatives(
     );
 
     (confidence, alternatives)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyperion_plugin_framework::ImplementationKind as PluginImplKindDirect;
+
+    fn descriptor(privacy_tier: PluginPrivacyTier) -> PluginImplementationDescriptor {
+        PluginImplementationDescriptor {
+            plugin_id: 1,
+            implementation_kind: PluginImplKindDirect::CloudApi,
+            quality_score: 0.8,
+            version: 1,
+            native_binary: None,
+            privacy_tier,
+        }
+    }
+
+    #[test]
+    fn a_manifests_real_declared_privacy_tier_really_reaches_the_bridged_descriptor() {
+        let local = to_router_descriptor(&descriptor(PluginPrivacyTier::Local), "web.search");
+        assert_eq!(local.privacy_tier, RouterPrivacyTier::Local);
+
+        let cloud =
+            to_router_descriptor(&descriptor(PluginPrivacyTier::ConsentedCloud), "web.search");
+        assert_eq!(cloud.privacy_tier, RouterPrivacyTier::ConsentedCloud);
+    }
 }

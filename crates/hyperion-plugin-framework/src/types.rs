@@ -74,6 +74,20 @@ pub struct SemanticContract {
     pub side_effects: Vec<SideEffect>,
 }
 
+/// A narrowed stand-in for docs/16's real privacy-tier taxonomy — the same simplification
+/// `hyperion-model-router`'s own `PrivacyTier` (and `hyperion-federation`'s own copy) already
+/// makes for its unrelated gate. Deliberately this crate's own local copy, not a dependency on
+/// `hyperion-model-router`'s: that crate's own doc comment explicitly doesn't want a dependency
+/// on the Plugin Framework, and this crate has no reason to know the Model Router's scoring shape
+/// either — `hyperion-api-gateway::router_bridge` (which already depends on both) is the real
+/// adapter that maps this to `hyperion_model_router::PrivacyTier`, the same seam that crate's own
+/// doc comment already established for `ImplKind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrivacyTier {
+    Local,
+    ConsentedCloud,
+}
+
 /// docs/24 §4's `CapabilityManifest`. `quality_score` stands in for the
 /// doc's `quality_hooks: BenchmarkHarnessRef` — a real benchmark harness
 /// doesn't exist in this workspace, so a publisher declares this value
@@ -96,6 +110,14 @@ pub struct CapabilityManifest {
     /// this `None`, or whose `program` doesn't really exist and isn't really executable -- an
     /// honest check at install time, not a trusted claim.
     pub native_binary: Option<NativeBinaryDescriptor>,
+    /// A publisher's own real, declared privacy tier for this implementation —
+    /// `hyperion-api-gateway::router_bridge::to_router_descriptor`'s own previously-named "no
+    /// per-implementation privacy tier from the Plugin Framework manifest" gap, closed for real:
+    /// every bridged candidate used to be hardcoded `Local` regardless of what a publisher
+    /// actually declared. `Local` (every existing manifest's default meaning, unchanged) is the
+    /// conservative choice for an implementation that never leaves the device; `ConsentedCloud`
+    /// is real, informed consent that this implementation may leave it.
+    pub privacy_tier: PrivacyTier,
 }
 
 /// A plugin-contributed agent specialization's own manifest fields — mirrors
@@ -355,6 +377,10 @@ pub struct ImplementationDescriptor {
     /// Carried straight over from the installing [`CapabilityManifest`]'s own field -- see there
     /// for why. [`crate::registry::PluginRegistry::invoke_native_binary`] is the real caller.
     pub native_binary: Option<NativeBinaryDescriptor>,
+    /// Carried straight over from the installing [`CapabilityManifest::privacy_tier`] --
+    /// `hyperion-api-gateway::router_bridge::to_router_descriptor` is the real caller that reads
+    /// this instead of hardcoding every bridged candidate as `Local`.
+    pub privacy_tier: PrivacyTier,
 }
 
 /// docs/24 §4's `RegistryEntry`, with `contract` added (not in the doc's

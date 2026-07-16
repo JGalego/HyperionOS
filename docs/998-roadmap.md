@@ -2824,3 +2824,26 @@ next step on any of these is a design pass, not code.
   crate-agnostic by the first two services, per this crate's own "don't redo the same wrapping
   thirty times with no new engineering insight" scoping discipline. All pre-existing tests in
   `hyperion-privacy` and `hyperion-supervisor` pass unchanged.
+
+- **Per-implementation privacy tier from the Plugin Framework manifest, landed (2026-07-16)**
+  (`hyperion-api-gateway`'s own named gap: `router_bridge::to_router_descriptor` hardcoded every
+  bridged candidate as `PrivacyTier::Local`, since `hyperion-plugin-framework::CapabilityManifest`
+  carried no privacy-tier field at all). `CapabilityManifest`/`ImplementationDescriptor` both gain
+  a real `privacy_tier: PrivacyTier` field — a narrowed local copy of docs/16's taxonomy, the same
+  simplification `hyperion-model-router`'s own `PrivacyTier` already makes, deliberately not a
+  dependency on that crate (matching the existing `ImplKind` adapter precedent). A publisher's
+  real, declared tier now flows: `CapabilityManifest` → `register_implementation`'s
+  `ImplementationDescriptor` → a new `router_bridge::to_router_privacy_tier` adapter →
+  `hyperion-model-router`'s real `privacy_fit` scoring — instead of every candidate being
+  indistinguishably `Local`. `hyperion-sdk::publish::to_plugin_manifest` is the real first
+  populator: `Implementation.requires_consent` (previously folded only into `package_hash`'s
+  canonical bytes, never acted on) now maps straight to `ConsentedCloud`/`Local`, giving that
+  field its first real behavioral consumer. 25 pre-existing `CapabilityManifest` construction
+  sites across 8 test files (plus one production site in `hyperion-sdk`) were updated to declare
+  `privacy_tier` explicitly, all defaulting to `Local` — the exact behavior every existing caller
+  already had. Proven end to end: a new `router_bridge` unit test confirms the adapter itself;
+  a new `hyperion-api-gateway` integration test installs two otherwise-identical candidates
+  differing only in declared privacy tier and confirms the `Local` one now genuinely outscores
+  the `ConsentedCloud` one and wins real candidate selection — not just carries a different label.
+  All pre-existing tests across `hyperion-plugin-framework`, `hyperion-api-gateway`,
+  `hyperion-sdk`, `hyperion-scalability`, and `hyperion-agent-runtime` pass unchanged.

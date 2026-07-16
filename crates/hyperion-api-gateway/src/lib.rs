@@ -121,10 +121,13 @@
 //!   that `hyperion-model-router`'s already-shipped privacy gate not be
 //!   rewired onto its `ConsentLedger` as an incidental side effect of
 //!   unrelated work.
-//! - **Per-implementation privacy tier from the Plugin Framework
-//!   manifest.** [`router_bridge::to_router_descriptor`] hardcodes every
-//!   bridged candidate as `PrivacyTier::Local` — `hyperion-plugin-framework`'s
-//!   `CapabilityManifest` doesn't carry a privacy tier yet.
+//! - ~~Per-implementation privacy tier from the Plugin Framework manifest~~ (2026-07-16) — now
+//!   real: `hyperion_plugin_framework::CapabilityManifest`/`ImplementationDescriptor` both gained
+//!   a real `privacy_tier` field, and [`router_bridge::to_router_descriptor`] reads
+//!   `descriptor.privacy_tier` via a new `to_router_privacy_tier` adapter instead of hardcoding
+//!   `PrivacyTier::Local` for every bridged candidate. `hyperion-sdk`'s own publish pipeline is
+//!   the real first populator: `Implementation.requires_consent` (previously folded only into
+//!   `package_hash`'s canonical bytes, never acted on) now maps straight to `ConsentedCloud`.
 //! - **Real per-Capability dispatch.** `invoke_capability` calls
 //!   `hyperion_agent_runtime::dispatch_stub_capability` — the same stub
 //!   dispatch first-party Capabilities have used since Phase 4 — rather

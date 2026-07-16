@@ -16,8 +16,8 @@ use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_crypto::Keystore;
 use hyperion_plugin_framework::{
     sign, CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind,
-    NativeBinaryDescriptor, Operation, PluginManifest, PluginRegistry, SemanticContract,
-    SideEffect, TrustDepth,
+    NativeBinaryDescriptor, Operation, PluginManifest, PluginRegistry, PrivacyTier,
+    SemanticContract, SideEffect, TrustDepth,
 };
 use serde_json::json;
 
@@ -84,6 +84,7 @@ fn invoke_dispatches_an_unrecognized_capability_to_a_real_installed_plugin() {
                 program: uppercase_tool_bin(),
                 args: vec![],
             }),
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![CapabilityGrantRequest {
             operation: Operation::Execute,

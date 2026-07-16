@@ -43,7 +43,13 @@
 //! `hyperion_plugin_framework::Contribution::ExecutionEngine` supplies a reusable launcher, and
 //! this turns a caller's own script into a concrete `NativeBinaryDescriptor` by prepending that
 //! launcher — installed and invoked through the exact same `ImplementationKind::NativeBinary`
-//! path, never a second, parallel execution mechanism.
+//! path, never a second, parallel execution mechanism. [`publish::to_plugin_manifest`] (2026-07-16)
+//! also gives `types::Implementation::requires_consent` its first real behavioral consumer —
+//! previously folded only into `package_hash`'s own canonical bytes, never acted on — mapping it
+//! straight to `hyperion_plugin_framework::CapabilityManifest::privacy_tier`'s real
+//! `ConsentedCloud`/`Local` split, closing `hyperion-api-gateway`'s own previously-named
+//! "no per-implementation privacy tier from the Plugin Framework manifest" gap for a submission
+//! that genuinely requires it.
 //!
 //! Deliberately deferred, and why:
 //!

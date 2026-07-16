@@ -9,8 +9,8 @@ use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_crypto::Keystore;
 use hyperion_plugin_framework::{
     sign, validate_manifest, CapabilityGrantRequest, CapabilityManifest, Contribution,
-    ImplementationKind, Operation, PluginError, PluginManifest, PluginRegistry, SemanticContract,
-    SideEffect, TrustDepth,
+    ImplementationKind, Operation, PluginError, PluginManifest, PluginRegistry, PrivacyTier,
+    SemanticContract, SideEffect, TrustDepth,
 };
 
 fn keystore() -> (tempfile::TempDir, Keystore) {
@@ -36,6 +36,7 @@ fn base_manifest() -> PluginManifest {
             quality_score: 0.5,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,

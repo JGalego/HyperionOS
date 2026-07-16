@@ -8,7 +8,7 @@ use hyperion_crypto::Keystore;
 use hyperion_observability::{AuditAction, AuditLedger, AuditPayload, PrincipalRef};
 use hyperion_plugin_framework::{
     sign, CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind, Operation,
-    PluginManifest, PluginRegistry, SemanticContract, TrustDepth,
+    PluginManifest, PluginRegistry, PrivacyTier, SemanticContract, TrustDepth,
 };
 use hyperion_scalability::{
     apply_and_explain, DegradationOutcome, DegradationPlan, ScalabilityError, Substitution,
@@ -37,6 +37,7 @@ fn manifest_with(capability_id: &str, keystore: &Keystore) -> PluginManifest {
             quality_score: 0.5,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![CapabilityGrantRequest {
             operation: Operation::Read,

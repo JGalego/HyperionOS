@@ -122,6 +122,14 @@
 //!   exists anywhere in this workspace yet. Wiring `TrustDepth` onto `hyperion-trust-boundary` for
 //!   real needs that out-of-process execution model built first — a real, separate feature, not a
 //!   dependency swap in this crate.
+//!
+//! [`types::CapabilityManifest::privacy_tier`]/[`types::ImplementationDescriptor::privacy_tier`]
+//! (2026-07-16) close `hyperion-api-gateway`'s own previously-named "no per-implementation privacy
+//! tier from the Plugin Framework manifest" gap: a publisher's own real, declared tier (a narrowed
+//! local copy of docs/16's taxonomy, the same simplification `hyperion-model-router`'s own
+//! `PrivacyTier` already makes) now flows from a manifest through `register_implementation` into
+//! the registry entry that crate's `router_bridge::to_router_descriptor` reads, instead of every
+//! bridged candidate being hardcoded `Local`.
 
 mod registry;
 mod review;
@@ -135,6 +143,7 @@ pub use types::{
     HardwareDeviceType, HardwareDirection, HardwareSafetyClass, HardwareSupportContribution,
     ImplementationDescriptor, ImplementationKind, InstallState, KnowledgeProviderContribution,
     MemoryProviderContribution, MemoryTierKind, NativeBinaryDescriptor, Operation, PluginError,
-    PluginHandle, PluginId, PluginManifest, QuarantineReason, RegistryEntry, SemanticContract,
-    SideEffect, TrustDepth, UiComponentContribution, UiRegionAffinity, WorkflowLeaf,
+    PluginHandle, PluginId, PluginManifest, PrivacyTier, QuarantineReason, RegistryEntry,
+    SemanticContract, SideEffect, TrustDepth, UiComponentContribution, UiRegionAffinity,
+    WorkflowLeaf,
 };

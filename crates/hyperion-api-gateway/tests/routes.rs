@@ -21,7 +21,7 @@ use hyperion_memory::MemoryEngine;
 use hyperion_model_router::ModelRouter;
 use hyperion_plugin_framework::{
     sign, CapabilityManifest, Contribution, ImplementationKind, PluginManifest, PluginRegistry,
-    SemanticContract, SideEffect, TrustDepth,
+    PrivacyTier, SemanticContract, SideEffect, TrustDepth,
 };
 
 fn keystore() -> (tempfile::TempDir, Keystore) {
@@ -237,6 +237,7 @@ fn invoke_capability_dispatches_through_the_real_stub_and_records_an_explanation
             quality_score: 0.9,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
@@ -319,6 +320,7 @@ fn invoke_capability_appends_a_real_model_routing_audit_entry() {
             quality_score: 0.9,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
@@ -414,6 +416,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
             quality_score: 0.7,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
@@ -444,6 +447,7 @@ fn the_real_model_router_prefers_a_healthy_candidate_over_a_higher_quality_one_w
             quality_score: 0.6,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
@@ -531,6 +535,7 @@ fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
             quality_score: 0.3,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
@@ -560,6 +565,7 @@ fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
             quality_score: 0.9,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
@@ -658,6 +664,7 @@ fn a_risky_action_is_rejected_without_confirmation() {
             quality_score: 0.9,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
@@ -738,6 +745,7 @@ fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as
             quality_score: 0.9,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
@@ -825,6 +833,7 @@ fn the_routing_decision_produces_a_real_confidence_score_and_a_real_alternative(
             quality_score: 0.3,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
@@ -854,6 +863,7 @@ fn the_routing_decision_produces_a_real_confidence_score_and_a_real_alternative(
             quality_score: 0.9,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
@@ -960,6 +970,7 @@ fn an_ensemble_agreement_between_two_stub_dispatched_candidates_boosts_confidenc
             quality_score: 0.9,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
@@ -989,6 +1000,7 @@ fn an_ensemble_agreement_between_two_stub_dispatched_candidates_boosts_confidenc
             quality_score: 0.5,
             version: 1,
             native_binary: None,
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![],
         min_trust_depth: TrustDepth::D0,
@@ -1045,6 +1057,123 @@ fn an_ensemble_agreement_between_two_stub_dispatched_candidates_boosts_confidenc
         confidence.method,
         hyperion_explainability::ConfidenceMethod::Ensemble,
         "an ensemble-corroborated confidence must be tagged as such, not as a bare heuristic"
+    );
+}
+
+#[test]
+fn a_manifests_real_declared_privacy_tier_genuinely_affects_which_candidate_wins() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let context = Arc::new(ContextEngine::new(graph.clone()));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
+    let memory = Arc::new(MemoryEngine::new(graph.clone()));
+    let registry = Arc::new(PluginRegistry::new());
+    let (_key_dir, keystore) = keystore();
+    let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry.clone(),
+        explainability,
+        router,
+        context,
+        ai_runtime,
+    );
+    gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
+
+    let contract = SemanticContract {
+        inputs: vec!["query".to_string()],
+        outputs: vec!["results".to_string()],
+        side_effects: vec![SideEffect::NetworkEgress],
+    };
+
+    // Two otherwise-identical candidates (same kind, same quality) -- only their real, declared
+    // privacy tier differs.
+    let mut cloud = PluginManifest {
+        plugin_id: 1,
+        publisher: "acme-plugins".to_string(),
+        signature: None,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract: contract.clone(),
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.7,
+            version: 1,
+            native_binary: None,
+            privacy_tier: hyperion_plugin_framework::PrivacyTier::ConsentedCloud,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    cloud.signature = Some(sign(&cloud, &keystore));
+    registry
+        .install(
+            &mut monitor,
+            &root,
+            cloud,
+            TrustDepth::D2,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    let mut local = PluginManifest {
+        plugin_id: 2,
+        publisher: "globex-plugins".to_string(),
+        signature: None,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract,
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.7,
+            version: 1,
+            native_binary: None,
+            privacy_tier: hyperion_plugin_framework::PrivacyTier::Local,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    local.signature = Some(sign(&local, &keystore));
+    registry
+        .install(
+            &mut monitor,
+            &root,
+            local,
+            TrustDepth::D2,
+            true,
+            1_001,
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    let response = gateway
+        .invoke_capability(
+            &monitor,
+            &root,
+            InvokeRequest {
+                contract_id: "web.search".to_string(),
+                inputs: serde_json::json!({"query": "hyperion os"}),
+                agent_id: 1,
+                intent_id: 1,
+                risk: RiskHints::default(),
+                confirmed: false,
+            },
+            1_002,
+        )
+        .unwrap();
+
+    assert_eq!(
+        response.implementation_used, 2,
+        "an otherwise-identical Local candidate must genuinely outscore a ConsentedCloud one, \
+         now that the manifest's own real, declared privacy tier reaches the Model Router's real \
+         privacy_fit scoring instead of every bridged candidate being hardcoded Local"
     );
 }
 
@@ -1151,6 +1280,7 @@ fn invoke_capability_dispatches_to_a_real_installed_native_binary_plugin() {
                 program: uppercase_tool_bin(),
                 args: vec![],
             }),
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![CapabilityGrantRequest {
             operation: Operation::Execute,

@@ -13,7 +13,7 @@ use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_crypto::Keystore;
 use hyperion_plugin_framework::{
     sign, CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind,
-    NativeBinaryDescriptor, Operation, PluginError, PluginManifest, PluginRegistry,
+    NativeBinaryDescriptor, Operation, PluginError, PluginManifest, PluginRegistry, PrivacyTier,
     SemanticContract, SideEffect, TrustDepth,
 };
 use serde_json::json;
@@ -79,6 +79,7 @@ fn manifest_with_native_binary(keystore: &Keystore, program: std::path::PathBuf)
                 program,
                 args: vec![],
             }),
+            privacy_tier: PrivacyTier::Local,
         })],
         requested_permissions: vec![CapabilityGrantRequest {
             operation: Operation::Execute,

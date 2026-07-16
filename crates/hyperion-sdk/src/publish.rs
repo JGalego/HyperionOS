@@ -4,7 +4,8 @@ use hyperion_capability::{CapabilityMonitor, CapabilityToken};
 use hyperion_crypto::Keystore;
 use hyperion_plugin_framework::{
     CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind, Operation,
-    PluginHandle, PluginManifest, PluginRegistry, SemanticContract, SideEffect, TrustDepth,
+    PluginHandle, PluginManifest, PluginRegistry, PrivacyTier, SemanticContract, SideEffect,
+    TrustDepth,
 };
 
 use crate::types::{
@@ -45,6 +46,18 @@ fn to_capability_manifest(
         // existing, executable program installs as a genuinely *runnable* capability -- not just
         // a labeled placeholder -- the moment it's published.
         native_binary: implementation.native_binary.clone(),
+        // `Implementation.requires_consent`'s first real behavioral consumer -- previously folded
+        // only into `package_hash`'s canonical bytes, never anything a real caller acted on.
+        // `hyperion-api-gateway::router_bridge::to_router_descriptor`'s own previously-named "no
+        // per-implementation privacy tier from the Plugin Framework manifest" gap reads this real
+        // field straight through, so a submission that genuinely requires consent bridges as a
+        // real `ConsentedCloud` candidate, gated by the Model Router's real privacy gate --
+        // instead of every implementation looking indistinguishably `Local`.
+        privacy_tier: if implementation.requires_consent {
+            PrivacyTier::ConsentedCloud
+        } else {
+            PrivacyTier::Local
+        },
     }
 }
 
