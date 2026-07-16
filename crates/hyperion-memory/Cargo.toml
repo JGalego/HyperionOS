@@ -8,6 +8,8 @@ repository.workspace = true
 [dependencies]
 hyperion-capability = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
+# Real, live external memory-source registry -- see `providers::capability_for`.
+hyperion-plugin-framework = { workspace = true }
 hyperion-scheduler = { workspace = true }
 hyperion-storage = { workspace = true }
 serde = { workspace = true }
@@ -15,5 +17,6 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+hyperion-crypto = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }

@@ -33,12 +33,11 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **Two of `Contribution`'s remaining three non-`Capability` variants** (`ExecutionEngine`,
-//!   `MemoryProvider`) — neither has an owning subsystem in this workspace with a real
-//!   registration point to call yet (a memory-provider registry, an execution-engine registry).
-//!   Five variants now have one, each `Read`-only and each producing the exact struct a
-//!   hand-authored equivalent already would — never a second, parallel dispatch/compilation
-//!   path:
+//! - **One of `Contribution`'s remaining two non-`Capability` variants** (`ExecutionEngine`) —
+//!   has no owning subsystem in this workspace with a real registration point to call yet (an
+//!   execution-engine registry usable by other Capability implementations). Six variants now
+//!   have one, each `Read`-only and each producing the exact struct a hand-authored equivalent
+//!   already would — never a second, parallel dispatch/compilation path:
 //!   - `Agent` (2026-07-16): [`registry::PluginRegistry::agent_contributions`] — a plugin's
 //!     specialization now really competes for task allocation alongside
 //!     `hyperion-coordination::catalog::default_manifests`'s built-in roster.
@@ -53,6 +52,9 @@
 //!   - `AutomationWorkflow` (2026-07-16): [`registry::PluginRegistry::automation_workflow_contributions`] —
 //!     a plugin's goal template now really competes for a real utterance match alongside
 //!     `hyperion-intent`'s own hardcoded, crate-private `TEMPLATES`.
+//!   - `MemoryProvider` (2026-07-16): [`registry::PluginRegistry::memory_provider_contributions`] —
+//!     a real `(tier, entity_key) -> capability_id` lookup `hyperion-memory` had no equivalent
+//!     of, the same honest, never-bypass-dispatch shape `KnowledgeProvider` already established.
 //! - **`Model` is not actually a ninth gap**, on inspection: a "this implementation is backed by a
 //!   model" contribution is already exactly what `Contribution::Capability`'s
 //!   `CapabilityManifest.implementation_kind` (`LocalSmallModel`/
@@ -112,8 +114,8 @@ pub use types::{
     AgentContribution, AutomationWorkflowContribution, CapabilityGrantRequest, CapabilityId,
     CapabilityManifest, Contribution, HardwareCapabilityEntry, HardwareDeviceType,
     HardwareDirection, HardwareSafetyClass, HardwareSupportContribution, ImplementationDescriptor,
-    ImplementationKind, InstallState, KnowledgeProviderContribution, NativeBinaryDescriptor,
-    Operation, PluginError, PluginHandle, PluginId, PluginManifest, QuarantineReason,
-    RegistryEntry, SemanticContract, SideEffect, TrustDepth, UiComponentContribution,
-    UiRegionAffinity, WorkflowLeaf,
+    ImplementationKind, InstallState, KnowledgeProviderContribution, MemoryProviderContribution,
+    MemoryTierKind, NativeBinaryDescriptor, Operation, PluginError, PluginHandle, PluginId,
+    PluginManifest, QuarantineReason, RegistryEntry, SemanticContract, SideEffect, TrustDepth,
+    UiComponentContribution, UiRegionAffinity, WorkflowLeaf,
 };

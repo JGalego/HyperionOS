@@ -46,6 +46,11 @@ fn canonical_bytes(manifest_without_signature: &PluginManifest) -> Vec<u8> {
                     bytes.extend_from_slice(keyword.as_bytes());
                 }
             }
+            Contribution::MemoryProvider(mp) => {
+                bytes.extend_from_slice(&[mp.tier as u8]);
+                bytes.extend_from_slice(mp.entity_key.as_bytes());
+                bytes.extend_from_slice(mp.capability_id.as_bytes());
+            }
         }
     }
     bytes
@@ -129,6 +134,10 @@ pub fn validate_manifest(
             // each leaf's predicate maps to its own separately-installed, separately-justified
             // Capability. This variant alone can only ever justify `Read`.
             Contribution::AutomationWorkflow(_) => matches!(request.operation, Operation::Read),
+            // A `MemoryProvider` contribution is just a (tier, entity_key) -> capability_id
+            // lookup entry -- the capability it points at is a separate, separately-justified
+            // `Capability` contribution. This variant alone can only ever justify `Read`.
+            Contribution::MemoryProvider(_) => matches!(request.operation, Operation::Read),
         });
         if !justified {
             return Err(PluginError::PermissionOverreach(request.operation));

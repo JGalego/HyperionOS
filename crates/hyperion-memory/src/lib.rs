@@ -51,11 +51,21 @@
 //!   uses the same coarse READ/WRITE rights check every other crate in this
 //!   workspace uses; sensitivity-tiered access is Phase 8's job
 //!   ([15 — Security Architecture](../15-security-architecture.md)).
+//!
+//! Real (2026-07-16, docs/998-roadmap.md's Resourceful pillar): [`providers::capability_for`]/
+//! [`providers::capabilities_for`] are the real `(tier, entity_key) -> capability_id` registry
+//! docs/24's own "memory providers register storage backends into [08 — Memory Engine]" gap
+//! named as missing — a plugin's `hyperion_plugin_framework::Contribution::MemoryProvider`
+//! declares which capability can supply facts about an entity this crate has no local record of,
+//! the same honest, never-bypass-dispatch shape `hyperion-knowledge-graph`'s own
+//! `KnowledgeProvider` lookup already established.
 
 mod decay;
 mod engine;
+mod providers;
 mod types;
 
 pub use decay::{decay_score, THETA_ARCHIVE, THETA_PROMOTE};
 pub use engine::{ErasureReceipt, ExtractionReceipt, MemoryEngine, MemoryError, MemoryFilter};
+pub use providers::{capabilities_for, capability_for};
 pub use types::{MemoryRecord, MemoryTier, WorkingMemory};

@@ -237,9 +237,35 @@ pub struct AutomationWorkflowContribution {
     pub leaves: Vec<WorkflowLeaf>,
 }
 
-/// docs/24 §4's `Contribution`, narrowed to the six variants this
+/// Mirrors `hyperion_memory::MemoryTier` without this crate depending on that crate (the
+/// dependency runs the other way: `hyperion-memory` depends on this crate for its own real
+/// registration point, not the reverse — see [`MemoryProviderContribution`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryTierKind {
+    Episodic,
+    Semantic,
+    Procedural,
+    LongTerm,
+}
+
+/// A plugin-contributed external memory source: which `(tier, entity_key)` pair it can supply
+/// facts about, and which already-installed `Capability` (`capability_id`) actually supplies
+/// them for real — docs/24's own "memory providers register storage backends into [08 — Memory
+/// Engine]" gap, closed the same honest, never-bypass-dispatch way
+/// [`KnowledgeProviderContribution`] closes the analogous topic-lookup gap: this never stores or
+/// retrieves a memory record itself, it only supplies a lookup a caller (`hyperion-memory`)
+/// consults to decide *which* capability can supply facts about an entity it has no local record
+/// of.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryProviderContribution {
+    pub tier: MemoryTierKind,
+    pub entity_key: String,
+    pub capability_id: CapabilityId,
+}
+
+/// docs/24 §4's `Contribution`, narrowed to the seven variants this
 /// workspace has an owning subsystem for — see this crate's doc comment
-/// on the remaining two variants' deferral. `Agent` closes
+/// on the remaining variant's deferral. `Agent` closes
 /// docs/998-roadmap.md's own "`hyperion-coordination::catalog::default_manifests` is a
 /// hardcoded, static built-in list, not a live registry a plugin's `AgentManifest` could
 /// register into" gap: `crate::registry::PluginRegistry::agent_contributions` is that live
@@ -250,7 +276,9 @@ pub struct AutomationWorkflowContribution {
 /// `hyperion-workspace`'s own "every `CapabilityUiContract` is hand-authored by the caller, with
 /// no registry to consult" gap via `crate::registry::PluginRegistry::ui_component_contributions`.
 /// `AutomationWorkflow` closes `hyperion-intent`'s own hardcoded `TEMPLATES` gap via
-/// `crate::registry::PluginRegistry::automation_workflow_contributions`.
+/// `crate::registry::PluginRegistry::automation_workflow_contributions`. `MemoryProvider` closes
+/// `hyperion-memory`'s own "no external memory source registry" gap via
+/// `crate::registry::PluginRegistry::memory_provider_contributions`.
 #[derive(Debug, Clone)]
 pub enum Contribution {
     Capability(CapabilityManifest),
@@ -259,6 +287,7 @@ pub enum Contribution {
     KnowledgeProvider(KnowledgeProviderContribution),
     UiComponent(UiComponentContribution),
     AutomationWorkflow(AutomationWorkflowContribution),
+    MemoryProvider(MemoryProviderContribution),
 }
 
 /// docs/24 §4's `PluginManifest`. `signature` (docs/998-roadmap.md M9) is a real Ed25519

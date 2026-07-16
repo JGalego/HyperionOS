@@ -1896,9 +1896,17 @@ mean here):
   matching. Not yet wired into a live `hyperion-console`/`hyperion-shell` session (no
   `PluginRegistry` is constructed there today) — a real, separate next step, same scope boundary
   the `Agent` slice already drew.
-- **The other two `Contribution` variants** (`ExecutionEngine`, `MemoryProvider`) — neither has an
-  owning subsystem with a real registration point yet; see `hyperion-plugin-framework`'s own doc
-  comment.
+- **`Contribution::MemoryProvider`, landed (2026-07-16).**
+  `PluginRegistry::memory_provider_contributions()` is the real `(tier, entity_key) ->
+  capability_id` registry docs/24's own "memory providers register storage backends into [08 —
+  Memory Engine]" gap named as missing. `hyperion_memory::{capability_for, capabilities_for}`
+  mirror `hyperion-knowledge-graph`'s own `KnowledgeProvider` lookup exactly — never bypassing
+  the Capability Registry's own dispatch/consent path, never writing a `MemoryRecord` itself. A
+  bare `MemoryProvider` contribution can only ever justify `Read`. Proven end to end: exact
+  `(tier, entity_key)` lookup, multiple providers for the same pair, and uninstall/quarantine
+  really removing it.
+- **The one remaining `Contribution` variant** (`ExecutionEngine`) has no owning subsystem with a
+  real registration point yet; see `hyperion-plugin-framework`'s own doc comment.
 
 ### Social — connect with other Hyperion instances
 

@@ -3040,7 +3040,9 @@ name = "hyperion-memory"
 version = "0.2.0"
 dependencies = [
  "hyperion-capability",
+ "hyperion-crypto",
  "hyperion-knowledge-graph",
+ "hyperion-plugin-framework",
  "hyperion-scheduler",
  "hyperion-storage",
  "proptest",
