@@ -97,10 +97,10 @@ export const consoleDemos = [
     lines: [
       { type: "input", text: "/backend groq llama-3.1-8b-instant" },
       { type: "output", text: 'Switched to the groq (model "llama-3.1-8b-instant") backend.' },
-      { type: "input", text: "/mesh-request 9606 translate-ja say hello in Japanese" },
+      { type: "input", text: "/mesh-request 9106 translate-ja say hello in Japanese" },
       {
         type: "output",
-        text: 'I don\'t have "translate-ja" myself, so I asked kenji (2)._hyperion-a2a._tcp.local. (127.0.0.1:9601), which does. It replied: status: done -- # Say Hello in Japanese\n\nHere are the most common ways to say hello in Japanese:\n\n1. **おはよう (Ohayou)** - Good morning (casual)\n2. **こんにちは (Konnichiwa)** - Hello / Good afternoon\n3. **こんばんは (Konbanwa)** - Good evening\n\nThe most universally useful greeting is **こんにちは (Konnichiwa)** -- it\'s appropriate for most daytime situations and is what most people learn first!\n\n(Trusting 127.0.0.1:9601\'s identity for the first time: 767e997ba5e2440512ef3b513f210705db2a3618a6bf7d307b03e9cf5254e0b8.)',
+        text: 'I don\'t have "translate-ja" myself, so I asked kenji._hyperion-a2a._tcp.local. (127.0.0.1:9101), which does. It replied: status: done -- こんにちは (Konnichiwa)\n\nThis is a common way to say "hello" in Japanese, used during daytime hours. Other greetings include:\n- おはよう (Ohayou) - good morning\n- こんばんは (Konbanwa) - good evening\n\n(Trusting 127.0.0.1:9101\'s identity for the first time: 46c559994406105160c06ed3e3182cbe229d2dd27dee297afc2fbf70745dc0d1.)',
       },
     ] satisfies ConsoleLine[],
   },

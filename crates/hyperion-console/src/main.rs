@@ -137,7 +137,13 @@ fn main() {
     // fragile `printf '%s\n' "..." | hyperion-console` pattern that pattern's own file had no
     // real way to check in with secrets still injected only at run time.
     if let Some(scenario_path) = std::env::args().nth(1) {
-        run_scenario_file(&scenario_path, &session, &data_dir, &capabilities, &mesh_log);
+        run_scenario_file(
+            &scenario_path,
+            &session,
+            &data_dir,
+            &capabilities,
+            &mesh_log,
+        );
         return;
     }
 
@@ -442,7 +448,9 @@ fn start_mesh_dashboard(port_arg: &str) -> ControlOutcome {
     // Starts empty, not with a real first scan already run: `mesh::build_mesh_graph` blocks for
     // a real, multi-second LAN scan, and this command must return (so `/mesh-dashboard`'s own
     // real HTTP server actually binds) immediately, not after that scan happens to finish.
-    let graph = Arc::new(Mutex::new(serde_json::json!({"generated_at": "", "nodes": []})));
+    let graph = Arc::new(Mutex::new(
+        serde_json::json!({"generated_at": "", "nodes": []}),
+    ));
     {
         let graph = graph.clone();
         thread::spawn(move || loop {
@@ -453,7 +461,11 @@ fn start_mesh_dashboard(port_arg: &str) -> ControlOutcome {
     }
 
     match http_server::spawn(port, move |method, path, _body| match (method, path) {
-        ("GET", "/") => (200, "text/html", include_str!("mesh_dashboard.html").to_string()),
+        ("GET", "/") => (
+            200,
+            "text/html",
+            include_str!("mesh_dashboard.html").to_string(),
+        ),
         ("GET", "/mesh/graph") => (200, "application/json", graph.lock().unwrap().to_string()),
         _ => (
             404,

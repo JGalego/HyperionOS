@@ -72,12 +72,11 @@ pub fn mesh_status(
     backend_label: &str,
     log: &MeshEventLog,
 ) -> Value {
-    let trusted_peers =
-        hyperion_console::peer_trust::PeerTrustStore::open_or_create(crate::peer_trust_path(
-            data_dir,
-        ))
-        .map(|store| store.trusted_peers())
-        .unwrap_or_default();
+    let trusted_peers = hyperion_console::peer_trust::PeerTrustStore::open_or_create(
+        crate::peer_trust_path(data_dir),
+    )
+    .map(|store| store.trusted_peers())
+    .unwrap_or_default();
     json!({
         "capabilities": capabilities,
         "backend": backend_label,
@@ -93,7 +92,10 @@ pub fn mesh_status(
 /// demo's whole point) won't all have finished mDNS-converging by the time the first one asks,
 /// and real multicast convergence across several concurrently-advertising processes can take
 /// longer than a single short scan, especially over a virtualized/NAT'd network adapter.
-pub fn find_capability_peer(capability: &str, own_port: u16) -> Result<(String, SocketAddr), String> {
+pub fn find_capability_peer(
+    capability: &str,
+    own_port: u16,
+) -> Result<(String, SocketAddr), String> {
     for _attempt in 0..5 {
         let peers = discovery::discover(discovery::A2A_SERVICE_TYPE, Duration::from_secs(2))
             .map_err(|e| format!("couldn't scan the LAN for A2A peers: {e}"))?;
@@ -111,14 +113,14 @@ pub fn find_capability_peer(capability: &str, own_port: u16) -> Result<(String, 
             let Ok(card) = serde_json::from_str::<Value>(&card_body) else {
                 continue;
             };
-            let has_capability = card
-                .get("skills")
-                .and_then(|s| s.as_array())
-                .is_some_and(|skills| {
-                    skills
-                        .iter()
-                        .any(|skill| skill.get("id").and_then(|id| id.as_str()) == Some(capability))
-                });
+            let has_capability =
+                card.get("skills")
+                    .and_then(|s| s.as_array())
+                    .is_some_and(|skills| {
+                        skills.iter().any(|skill| {
+                            skill.get("id").and_then(|id| id.as_str()) == Some(capability)
+                        })
+                    });
             if has_capability {
                 return Ok((peer.instance_name.clone(), peer.addr));
             }

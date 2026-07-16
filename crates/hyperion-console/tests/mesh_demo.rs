@@ -9,7 +9,11 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-fn spawn_scenario(dir: &std::path::Path, scenario: &str, capabilities: &str) -> std::process::Child {
+fn spawn_scenario(
+    dir: &std::path::Path,
+    scenario: &str,
+    capabilities: &str,
+) -> std::process::Child {
     let scenario_path = dir.join("scenario.txt");
     std::fs::write(&scenario_path, scenario).expect("write a real scenario file");
     Command::new(env!("CARGO_BIN_EXE_hyperion-console"))
@@ -100,7 +104,10 @@ mod real {
         // The provider's own Agent Card really reflects its configured capability, not the old
         // hardcoded default.
         let card = http_get(PROVIDER_PORT, "/.well-known/agent-card.json");
-        assert!(card.contains("\"id\":\"mesh-test-translate-ja\""), "got: {card:?}");
+        assert!(
+            card.contains("\"id\":\"mesh-test-translate-ja\""),
+            "got: {card:?}"
+        );
 
         let requester_dir = tempfile::tempdir().unwrap();
         let requester = spawn_scenario(
@@ -130,10 +137,7 @@ mod real {
 
         // The provider's own `/mesh/status` really recorded having been asked, from its own side.
         let status = http_get(PROVIDER_PORT, "/mesh/status");
-        assert!(
-            status.contains("\"DelegationReceived\""),
-            "got: {status:?}"
-        );
+        assert!(status.contains("\"DelegationReceived\""), "got: {status:?}");
         assert!(
             status.contains("hello there"),
             "expected the real request text in the provider's own event log, got: {status:?}"
@@ -157,7 +161,8 @@ mod fallback {
         );
         let transcript = resume_and_wait(child);
         assert!(
-            transcript.contains("I couldn't find anyone on the LAN with \"mesh-test-translate-ja\""),
+            transcript
+                .contains("I couldn't find anyone on the LAN with \"mesh-test-translate-ja\""),
             "got: {transcript:?}"
         );
         assert!(
