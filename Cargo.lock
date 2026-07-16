@@ -2780,6 +2780,7 @@ dependencies = [
  "hyperion-crypto",
  "hyperion-knowledge-graph",
  "hyperion-memory",
+ "hyperion-model-router",
  "hyperion-netstack",
  "hyperion-plugin-framework",
  "hyperion-scheduler",
@@ -2826,6 +2827,7 @@ dependencies = [
  "hyperion-observability",
  "hyperion-plugin-framework",
  "hyperion-recovery",
+ "hyperion-scheduler",
  "hyperion-security",
  "serde_json",
  "tempfile",
@@ -3013,6 +3015,7 @@ dependencies = [
 name = "hyperion-intent"
 version = "0.2.0"
 dependencies = [
+ "hyperion-ai-runtime",
  "hyperion-capability",
  "hyperion-context",
  "hyperion-crypto",
@@ -3118,6 +3121,7 @@ version = "0.2.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
+ "hyperion-scheduler",
  "hyperion-trust-boundary",
  "serde_json",
  "tempfile",
@@ -3182,7 +3186,9 @@ dependencies = [
 name = "hyperion-scheduler"
 version = "0.2.0"
 dependencies = [
+ "hyperion-ai-runtime",
  "hyperion-capability",
+ "hyperion-model-router",
  "proptest",
  "thiserror 2.0.18",
 ]
@@ -3194,6 +3200,7 @@ dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
  "hyperion-plugin-framework",
+ "hyperion-scheduler",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",

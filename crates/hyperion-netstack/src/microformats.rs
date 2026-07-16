@@ -5,12 +5,14 @@
 //! finds a real signal, populates [`crate::types::FetchedPage::structured`] for real rather than
 //! always `None`.
 //!
-//! **Named scope boundary, not silently assumed complete:** [`StructuredSignal::relationships`]
-//! is always empty here -- a real schema.org JSON-LD document often nests related entities
-//! (`"author": {"@type": "Person", ...}`, `"publisher": {...}`), and extracting those as real
-//! `(predicate, related_entity_identifier)` pairs would need real nested-graph traversal this
-//! module does not attempt, matching [`crate::extract::HtmlHeuristicExtractionBackend`]'s own
-//! `relationships: Vec::new()` scope rather than half-building it.
+//! ~~**Named scope boundary, not silently assumed complete:** [`StructuredSignal::relationships`]
+//! is always empty here~~ -- now real for the JSON-LD path: [`extract_relationships`] walks every
+//! top-level property whose value is itself a real JSON-LD object (or array of objects) declaring
+//! its own `@type` (`"author": {"@type": "Person", ...}`, `"publisher": {...}`) and turns each one
+//! into a real `(predicate, related_entity_identifier)` pair, the property name itself as the
+//! predicate. `crate::extract::HtmlHeuristicExtractionBackend`'s own `relationships: Vec::new()`
+//! remains exactly as scoped -- a real HTML heuristic (title/meta-description) has no nested
+//! entity structure to walk at all, unlike a real JSON-LD document.
 
 use crate::types::{EntityType, StructuredSignal};
 
@@ -34,6 +36,44 @@ fn entity_type_for(schema_type: &str) -> EntityType {
     }
 }
 
+/// docs/19 §5.5's `(predicate, related_entity_identifier)` extraction, real: every top-level
+/// property of a real JSON-LD object whose own value is itself an object (or array of objects)
+/// declaring a real `@type` is a genuine nested entity -- schema.org's own convention for
+/// `"author"`/`"publisher"`/similarly-shaped properties, not this module inventing a schema of
+/// its own. The property name itself is the real predicate; the nested entity's own identifier
+/// falls back through the same `@id`/`url`/`identifier` chain [`parse_json_ld`] uses for the
+/// top-level entity, plus `name` as an honest last resort -- many nested stubs (a `Person` naming
+/// just an author) carry nothing else. A nested value with no real `@type` of its own (a plain
+/// string, number, or untyped object -- most schema.org properties) contributes nothing; this
+/// never guesses a relationship out of untyped data.
+fn extract_relationships(value: &serde_json::Value) -> Vec<(String, String)> {
+    let Some(object) = value.as_object() else {
+        return Vec::new();
+    };
+    object
+        .iter()
+        .filter(|(key, _)| !key.starts_with('@'))
+        .flat_map(|(predicate, related)| {
+            let candidates: Vec<&serde_json::Value> = match related {
+                serde_json::Value::Object(_) => vec![related],
+                serde_json::Value::Array(items) => items.iter().collect(),
+                _ => Vec::new(),
+            };
+            candidates.into_iter().filter_map(move |candidate| {
+                let candidate_object = candidate.as_object()?;
+                candidate_object.get("@type")?.as_str()?;
+                let identifier = candidate_object
+                    .get("@id")
+                    .or_else(|| candidate_object.get("url"))
+                    .or_else(|| candidate_object.get("identifier"))
+                    .or_else(|| candidate_object.get("name"))
+                    .and_then(|v| v.as_str())?;
+                Some((predicate.clone(), identifier.to_string()))
+            })
+        })
+        .collect()
+}
+
 /// Parses a real `<script type="application/ld+json">` block's own JSON body into a
 /// [`StructuredSignal`] -- schema.org's own real, standardized shape (`@type`, `@id`/`url`, plus
 /// whatever other real fields the publisher included), not a heuristic guess. `None` if the block
@@ -48,11 +88,12 @@ fn parse_json_ld(raw: &str) -> Option<StructuredSignal> {
         .or_else(|| value.get("identifier"))
         .and_then(|v| v.as_str())
         .map(str::to_string);
+    let relationships = extract_relationships(&value);
     Some(StructuredSignal {
         entity_type: entity_type_for(schema_type),
         identifier,
         fields: value,
-        relationships: Vec::new(),
+        relationships,
     })
 }
 
@@ -189,5 +230,84 @@ mod tests {
     fn no_structured_markup_at_all_returns_none() {
         let html = "<html><head><title>Just a page</title></head><body><p>Hi</p></body></html>";
         assert!(parse(html).is_none());
+    }
+
+    #[test]
+    fn a_nested_typed_author_and_publisher_become_real_relationships() {
+        let html = r#"<script type="application/ld+json">
+            {
+                "@type": "Article",
+                "url": "https://example.com/articles/1",
+                "author": {"@type": "Person", "@id": "https://example.com/people/ada", "name": "Ada Lovelace"},
+                "publisher": {"@type": "Organization", "name": "Analytical Engine Press"}
+            }
+        </script>"#;
+        let signal = parse(html).expect("a real JSON-LD block must parse");
+        let mut relationships = signal.relationships.clone();
+        relationships.sort();
+        assert_eq!(
+            relationships,
+            vec![
+                (
+                    "author".to_string(),
+                    "https://example.com/people/ada".to_string()
+                ),
+                (
+                    "publisher".to_string(),
+                    "Analytical Engine Press".to_string()
+                ),
+            ],
+            "author's real @id and publisher's own real name (its only real identifier) must \
+             both surface as real relationships, got: {relationships:?}"
+        );
+    }
+
+    #[test]
+    fn multiple_authors_in_a_real_json_ld_array_each_become_their_own_relationship() {
+        let html = r#"<script type="application/ld+json">
+            {
+                "@type": "Article",
+                "url": "https://example.com/articles/2",
+                "author": [
+                    {"@type": "Person", "name": "Ada Lovelace"},
+                    {"@type": "Person", "name": "Charles Babbage"}
+                ]
+            }
+        </script>"#;
+        let signal = parse(html).expect("a real JSON-LD block must parse");
+        let mut names: Vec<&str> = signal
+            .relationships
+            .iter()
+            .map(|(_, identifier)| identifier.as_str())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["Ada Lovelace", "Charles Babbage"]);
+        assert!(
+            signal
+                .relationships
+                .iter()
+                .all(|(predicate, _)| predicate == "author"),
+            "each array entry keeps the same real predicate, got: {:?}",
+            signal.relationships
+        );
+    }
+
+    #[test]
+    fn an_untyped_nested_object_contributes_no_relationship() {
+        // `address` here is a plain nested object with no real `@type` of its own -- schema.org's
+        // own common shape for a property that just groups fields, not a related entity.
+        let html = r#"<script type="application/ld+json">
+            {
+                "@type": "Organization",
+                "name": "Acme Corp",
+                "address": {"streetAddress": "123 Main St", "addressCountry": "US"}
+            }
+        </script>"#;
+        let signal = parse(html).expect("a real JSON-LD block must parse");
+        assert!(
+            signal.relationships.is_empty(),
+            "an untyped nested object must never be guessed as a relationship, got: {:?}",
+            signal.relationships
+        );
     }
 }

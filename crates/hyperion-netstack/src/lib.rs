@@ -49,10 +49,14 @@
 //!   `<script type="application/ld+json">` block (preferred) or real `<meta property="og:*">`
 //!   tags (fallback) and [`fetch::ReqwestFetchBackend`] populates
 //!   [`types::FetchedPage::structured`] with it for real, rather than always `None`.
-//!   [`microformats`]'s own doc comment names the one still-deferred piece: nested JSON-LD
-//!   relationships (`author`/`publisher`, etc.) are not extracted as
-//!   [`types::StructuredSignal::relationships`], matching every real backend in this crate's own
-//!   `relationships: Vec::new()` scope rather than half-building graph traversal here.
+//!   ~~[`microformats`]'s own doc comment named one still-deferred piece: nested JSON-LD
+//!   relationships~~ — now real too: every top-level property whose value is itself a real
+//!   JSON-LD object (or array of objects) declaring its own `@type` (`author`/`publisher`, etc.)
+//!   becomes a real [`types::StructuredSignal::relationships`] `(predicate, identifier)` pair,
+//!   which [`hub::NetstackHub::web_research`]'s own pre-existing real edge-writing loop
+//!   (previously starved of input for the JSON-LD path) now genuinely exercises against real
+//!   fetched pages. `extract::HtmlHeuristicExtractionBackend`'s own `relationships: Vec::new()`
+//!   remains exactly as scoped — a real HTML heuristic has no nested entity structure to walk.
 //!   `MockFetchBackend` is unaffected — a fixture still declares `structured` directly.
 //! - **Real embeddings for entity-resolution similarity (§5.4).** No
 //!   embedding producer exists in this pipeline (Phase 3's Local AI

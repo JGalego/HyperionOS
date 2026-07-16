@@ -3015,3 +3015,30 @@ next step on any of these is a design pass, not code.
   record `Executing`); a `Claimed`-but-`RolledBack` (i.e. `Denied`) task is correctly refused; an
   unknown task name is rejected. All pre-existing `hyperion-coordination` tests (7 prior unit + 14
   `worked_trace` integration tests) pass unchanged.
+
+- **`hyperion-netstack`'s nested JSON-LD relationship extraction, landed (2026-07-16)** (this
+  crate's own named scope boundary: "`StructuredSignal::relationships` is always empty here -- a
+  real schema.org JSON-LD document often nests related entities (`"author": {"@type": "Person",
+  ...}`, `"publisher": {...}`), and extracting those... would need real nested-graph traversal
+  this module does not attempt"). A new `microformats::extract_relationships` walks every
+  top-level property of a real parsed JSON-LD object whose own value is itself an object (or array
+  of objects) declaring a real `@type` of its own — the property name is the real predicate; the
+  nested entity's identifier falls back through the same `@id`/`url`/`identifier` chain the
+  top-level entity uses, plus `name` as an honest last resort for a stub that names nothing else.
+  An untyped nested object (most schema.org properties — `address`, plain strings, numbers) never
+  contributes a fabricated relationship. `parse_json_ld` now calls this instead of hardcoding
+  `relationships: Vec::new()`; `extract::extract_entity` already cloned `structured.relationships`
+  straight through unchanged. `hub::NetstackHub::web_research`'s own pre-existing real
+  edge-writing loop — previously starved of input for the JSON-LD path, since `relationships` was
+  always empty — now genuinely writes real typed edges from real fetched pages instead of only
+  ever running for the (untouched) OpenGraph/heuristic paths, which never carried relationships
+  anyway. `extract::HtmlHeuristicExtractionBackend`'s own `relationships: Vec::new()` remains
+  exactly as scoped — a real HTML heuristic has no nested entity structure to walk at all.
+  `MockFetchBackend` is unaffected — a fixture still declares `structured` directly. Proven with 3
+  new tests: a nested typed `author` (with a real `@id`) and `publisher` (with only a real `name`)
+  both become real relationships; a schema.org array of multiple authors each becomes its own
+  relationship under the same predicate; an untyped nested object (`address`) contributes nothing.
+  All 6 pre-existing `microformats` tests and this crate's full `--features real-http` suite pass
+  unchanged (one pre-existing, unrelated `real_web_fetch.rs` timeout-classification test remains
+  environment-flaky in this sandbox, confirmed via `git stash` to fail identically without this
+  change).
