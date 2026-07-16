@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_crypto::{Keystore, Signature, VerifyingKey};
-use hyperion_recovery::{RecoveryPointId, RecoveryService, Trigger};
+use hyperion_recovery::{RecoveryPointId, RecoveryService, RollbackCause, Trigger};
 
 use crate::types::{
     CompatibilityCheckResult, RollbackReceipt, RolloutState, UpdateError, UpdateManifest,
@@ -137,6 +137,28 @@ impl UpdateOrchestrator {
             return Err(UpdateError::Incompatible);
         }
 
+        // docs/998-roadmap.md's Self-Sustaining pillar: a rollback's real cause now really
+        // shapes this decision, not just a future log line -- refuse to blindly retry the
+        // exact same (subject, from_version, to_version) that already rolled back once,
+        // instead of repeating a doomed rollout. See `update_rollback_with_cause`'s own doc
+        // comment for what gets recorded and why this check can only ever see it if the
+        // real `RecoveryService` this orchestrator was built with has a memory backend wired.
+        let subject_key = subject_key(&manifest.subject);
+        if let Some(previous) = self
+            .recovery
+            .rollback_causes(monitor, token, &subject_key)?
+            .into_iter()
+            .rev()
+            .find(|r| {
+                r.cause.detail.get("to_version").and_then(|v| v.as_u64())
+                    == Some(u64::from(manifest.to_version))
+            })
+        {
+            return Err(UpdateError::RepeatedRecentRollback {
+                reason: previous.cause.reason,
+            });
+        }
+
         self.rollout_states
             .lock()
             .unwrap()
@@ -163,7 +185,22 @@ impl UpdateOrchestrator {
             let health = health_for_stage(stage.percent);
             if !health.within(&manifest.rollout_policy.health_thresholds) {
                 if manifest.rollout_policy.auto_rollback_on_breach {
-                    self.update_rollback(monitor, token, manifest)?;
+                    let cause = RollbackCause {
+                        reason: format!(
+                            "rollout health breach at stage {stage_index} \
+                             ({}% of the fleet)",
+                            stage.percent
+                        ),
+                        detail: serde_json::json!({
+                            "stage_index": stage_index,
+                            "to_version": manifest.to_version,
+                            "crash_rate": health.crash_rate,
+                            "latency_p99_ms": health.latency_p99_ms,
+                            "max_crash_rate": manifest.rollout_policy.health_thresholds.max_crash_rate,
+                            "max_latency_p99_ms": manifest.rollout_policy.health_thresholds.max_latency_p99_ms,
+                        }),
+                    };
+                    self.update_rollback_with_cause(monitor, token, manifest, cause, now)?;
                 } else {
                     self.rollout_states
                         .lock()
@@ -225,4 +262,63 @@ impl UpdateOrchestrator {
             rolled_back_to: manifest.from_version,
         })
     }
+
+    /// As [`Self::update_rollback`], additionally remembering *why* -- docs/998-roadmap.md's
+    /// Self-Sustaining pillar's own named gap, closed for real: `cause` is really persisted via
+    /// `hyperion_recovery::RecoveryService::restore_to_with_cause` (a no-op beyond the restore
+    /// itself if this orchestrator's own `RecoveryService` has no memory backend wired), and
+    /// [`Self::apply_update`]'s own health-breach path is this crate's real caller, building a
+    /// real [`RollbackCause`] from the exact `CohortHealth` data that used to be computed and
+    /// immediately discarded.
+    pub fn update_rollback_with_cause(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        manifest: &UpdateManifest,
+        cause: RollbackCause,
+        now: u64,
+    ) -> Result<RollbackReceipt, UpdateError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+
+        let recovery_point = self
+            .recovery_points
+            .lock()
+            .unwrap()
+            .get(&manifest.subject)
+            .copied()
+            .ok_or(UpdateError::NoRecoveryPoint)?;
+        if !manifest.touched_objects.is_empty() {
+            self.recovery.restore_to_with_cause(
+                monitor,
+                token,
+                recovery_point,
+                &subject_key(&manifest.subject),
+                cause,
+                now,
+            )?;
+        }
+
+        self.active_versions
+            .lock()
+            .unwrap()
+            .insert(manifest.subject.clone(), manifest.from_version);
+        self.rollout_states
+            .lock()
+            .unwrap()
+            .insert(manifest.subject.clone(), RolloutState::RolledBack);
+        Ok(RollbackReceipt {
+            subject: manifest.subject.clone(),
+            rolled_back_to: manifest.from_version,
+        })
+    }
+}
+
+/// A stable string key for a `UpdateSubject` -- `hyperion-recovery`'s own rollback-cause history
+/// is keyed by a plain caller-defined string (it has no `UpdateSubject` of its own to reuse), so
+/// this is the one real place that mapping is defined, reused by both
+/// [`UpdateOrchestrator::apply_update`]'s own history check and
+/// [`UpdateOrchestrator::update_rollback_with_cause`]'s own write -- the same `Debug`-string
+/// convention `canonical_bytes` already established for signing this same field.
+fn subject_key(subject: &UpdateSubject) -> String {
+    format!("{subject:?}")
 }

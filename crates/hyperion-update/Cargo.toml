@@ -11,9 +11,13 @@ hyperion-crypto = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
 hyperion-observability = { workspace = true }
 hyperion-recovery = { workspace = true }
+# Real, structured rollback-cause detail -- see `orchestrator::UpdateOrchestrator::
+# update_rollback_with_cause`.
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+hyperion-memory = { workspace = true }
 hyperion-storage = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

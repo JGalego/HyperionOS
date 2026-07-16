@@ -2056,10 +2056,24 @@ mean here):
   restart) — a specialization's suspension count is really there the second time, and a
   *different* specialization's fresh instance genuinely starts at zero (no cross-contamination).
 
+- **`hyperion-recovery` learning from what it rolls back, landed (2026-07-16).** No longer
+  purely reactive. `RecoveryService::restore_to_with_cause` really remembers a real
+  `RollbackCause` (a short reason plus whatever structured data justified it) in an optional,
+  real wired `MemoryEngine`'s Procedural tier — the same `Option<Arc<...>>` shape this pillar's
+  own agent-runtime slice above already established, so every existing caller of the unchanged
+  `restore_to`/`new` keeps working exactly as before. `RecoveryService::rollback_causes` really
+  queries that history back. `hyperion-update::UpdateOrchestrator` is the real caller: its own
+  health-breach rollback path used to compute a real `CohortHealth` breach and immediately
+  discard it — it's now threaded into the cause a real rollback is recorded with. A rollback's
+  cause now really shapes a future decision, not just a future log line:
+  `UpdateOrchestrator::apply_update` checks history before ever starting a rollout again, and
+  refuses outright (`UpdateError::RepeatedRecentRollback`, before `health_for_stage` is even
+  called) to retry the exact same `(subject, from_version, to_version)` that already rolled back
+  once — while a genuinely different update for the same subject is untouched by that history.
+  Proven end to end with both cases.
+
 **Deliberately still deferred:**
 
-- **`hyperion-recovery` learning from what it rolls back.** Still purely reactive; no mechanism
-  connects a rollback's cause to a future decision.
 - **A model-router-style "demote, never remove" signal for agent instances generally** — the
   closest existing precedent (`hyperion-model-router`'s circuit breaker, fed by `report_outcome`)
   is scoped to model selection only.

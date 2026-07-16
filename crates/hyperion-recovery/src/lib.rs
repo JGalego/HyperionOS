@@ -25,6 +25,18 @@
 //! belongs to [05 — Intent Engine](../05-intent-engine.md), invoked
 //! whenever a caller next drives the fresh instance).
 //!
+//! Real (2026-07-16, docs/998-roadmap.md's Self-Sustaining pillar): this crate's own rollback
+//! machinery used to be purely reactive, with "no mechanism connects a rollback's cause to a
+//! future decision." [`service::RecoveryService::restore_to_with_cause`] closes that for real:
+//! an optional, real [`hyperion_memory::MemoryEngine`] (`Option<Arc<...>>`, the same shape
+//! `hyperion-agent-runtime`'s own optional backends already use) remembers a real
+//! [`types::RollbackCause`] — a short reason plus whatever structured data justified it — in its
+//! Procedural tier every time a caller rolls back with one. [`service::RecoveryService::rollback_causes`]
+//! really queries that history back. `hyperion-update::orchestrator::UpdateOrchestrator` is the
+//! real caller: it now threads its own previously-discarded health-breach data into the cause
+//! it rolls back with, and refuses to retry an update it just rolled back for the exact same
+//! reason — a rollback's cause now really shapes a future decision, not just a future log line.
+//!
 //! Deliberately deferred, and why:
 //!
 //! - **A true zero-copy, whole-graph MVCC cut.** docs/33 frames a
@@ -89,6 +101,6 @@ mod types;
 
 pub use service::RecoveryService;
 pub use types::{
-    ActionId, ActionRecord, ActionStatus, RecoveryError, RecoveryPoint, RecoveryPointId,
-    RedoReceipt, Trigger, UndoReceipt, UndoScope,
+    ActionId, ActionRecord, ActionStatus, RecordedRollback, RecoveryError, RecoveryPoint,
+    RecoveryPointId, RedoReceipt, RollbackCause, Trigger, UndoReceipt, UndoScope,
 };

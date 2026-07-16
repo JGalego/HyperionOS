@@ -5,11 +5,17 @@ use std::sync::{Arc, Mutex};
 use hyperion_agent_runtime::AgentRuntime;
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_knowledge_graph::{GraphError, KnowledgeGraph, NodeId};
+use hyperion_memory::{MemoryEngine, MemoryFilter, MemoryTier};
 
 use crate::types::{
-    ActionId, ActionRecord, ActionStatus, RecoveryError, RecoveryPoint, RecoveryPointId,
-    RedoReceipt, Snapshot, Trigger, UndoReceipt, UndoScope,
+    ActionId, ActionRecord, ActionStatus, RecordedRollback, RecoveryError, RecoveryPoint,
+    RecoveryPointId, RedoReceipt, RollbackCause, Snapshot, Trigger, UndoReceipt, UndoScope,
 };
+
+/// The real, stable tag every rollback-cause memory this crate ever writes carries in its own
+/// `content["kind"]` -- how [`RecoveryService::rollback_causes`] finds exactly these records
+/// (and only these) back out of a Procedural tier a caller may share with other subsystems.
+const ROLLBACK_CAUSE_KIND: &str = "recovery_rollback";
 
 /// docs/33 — Rollback & Recovery. See this crate's doc comment for the
 /// full real/deferred split.
@@ -27,10 +33,23 @@ pub struct RecoveryService {
     redo_snapshots: Mutex<HashMap<ActionId, Snapshot>>,
     next_point_id: AtomicU64,
     next_action_id: AtomicU64,
+    /// Real, optional (`Option<Arc<...>>`, the same shape `hyperion-agent-runtime`'s own
+    /// optional backends already use) place to really remember *why* a rollback happened -- see
+    /// [`Self::restore_to_with_cause`]/[`Self::rollback_causes`]. `None` (the shape [`Self::new`]
+    /// still produces, unchanged) means every existing caller keeps working exactly as before;
+    /// only [`Self::new_with_memory`] callers get real, persisted rollback-cause history.
+    memory: Option<Arc<MemoryEngine>>,
 }
 
 impl RecoveryService {
     pub fn new(graph: Arc<KnowledgeGraph>) -> Self {
+        Self::new_with_memory(graph, None)
+    }
+
+    /// As [`Self::new`], additionally wiring a real [`MemoryEngine`] so
+    /// [`Self::restore_to_with_cause`] can really remember why a rollback happened, and
+    /// [`Self::rollback_causes`] can really query that history back.
+    pub fn new_with_memory(graph: Arc<KnowledgeGraph>, memory: Option<Arc<MemoryEngine>>) -> Self {
         RecoveryService {
             graph,
             points: Mutex::new(HashMap::new()),
@@ -39,6 +58,7 @@ impl RecoveryService {
             redo_snapshots: Mutex::new(HashMap::new()),
             next_point_id: AtomicU64::new(1),
             next_action_id: AtomicU64::new(1),
+            memory,
         }
     }
 
@@ -223,6 +243,103 @@ impl RecoveryService {
             .map(|(id, _)| *id)
             .collect();
         self.restore_objects(monitor, token, recovery_point_id, &all_ids)
+    }
+
+    /// As [`Self::restore_to`], additionally remembering *why* -- docs/998-roadmap.md's Self-
+    /// Sustaining pillar's own named gap, closed for real (see this crate's own doc comment).
+    /// `subject` identifies whatever real thing this recovery point belongs to (a caller-defined
+    /// string -- this crate has no subject type of its own; `hyperion-update`'s own
+    /// `UpdateSubject` is the real, motivating case). Restoring itself is byte-for-byte
+    /// [`Self::restore_to`]; only a real [`MemoryEngine`] wired via [`Self::new_with_memory`]
+    /// records anything -- with no memory wired, this behaves exactly like [`Self::restore_to`]
+    /// and the cause is simply not remembered anywhere (degrades, never fails the rollback
+    /// itself over a missing memory backend).
+    pub fn restore_to_with_cause(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        recovery_point_id: RecoveryPointId,
+        subject: &str,
+        cause: RollbackCause,
+        now: u64,
+    ) -> Result<(), RecoveryError> {
+        self.restore_to(monitor, token, recovery_point_id)?;
+        if let Some(memory) = &self.memory {
+            let content = serde_json::json!({
+                "kind": ROLLBACK_CAUSE_KIND,
+                "recovery_point_id": recovery_point_id,
+                "subject": subject,
+                "reason": cause.reason,
+                "detail": cause.detail,
+                "created_at": now,
+            });
+            // Best-effort: a real memory write failing must never turn an already-completed
+            // rollback into a reported error -- the restore above already succeeded for real.
+            let _ = memory.remember(
+                monitor,
+                token,
+                MemoryTier::Procedural,
+                content,
+                None,
+                1.0,
+                false,
+                Vec::new(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Every real, remembered rollback for `subject` (most recent last), or an empty list if no
+    /// real [`MemoryEngine`] was ever wired via [`Self::new_with_memory`] -- the real query half
+    /// of [`Self::restore_to_with_cause`], letting a caller (`hyperion-update`'s own
+    /// `UpdateOrchestrator` is the real one) check what a *past* rollback's cause was before
+    /// making a *future* decision, instead of retrying blind.
+    pub fn rollback_causes(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        subject: &str,
+    ) -> Result<Vec<RecordedRollback>, RecoveryError> {
+        let Some(memory) = &self.memory else {
+            return Ok(Vec::new());
+        };
+        let records = memory
+            .query(
+                monitor,
+                token,
+                &MemoryFilter {
+                    tier: Some(MemoryTier::Procedural),
+                    ..Default::default()
+                },
+            )
+            .map_err(RecoveryError::Memory)?;
+
+        let mut rollbacks: Vec<RecordedRollback> = records
+            .into_iter()
+            .filter(|record| {
+                record.content.get("kind").and_then(|v| v.as_str()) == Some(ROLLBACK_CAUSE_KIND)
+                    && record.content.get("subject").and_then(|v| v.as_str()) == Some(subject)
+            })
+            .filter_map(|record| {
+                let recovery_point_id = record.content.get("recovery_point_id")?.as_u64()?;
+                let reason = record.content.get("reason")?.as_str()?.to_string();
+                let detail = record.content.get("detail").cloned().unwrap_or_default();
+                // The caller-supplied `now` embedded in `content`, not `record.created_at` --
+                // the latter is this `MemoryRecord`'s own real wall-clock write time, which
+                // would silently ignore whatever logical timestamp the caller actually rolled
+                // back with (this crate's own convention throughout: every other timestamp
+                // here is caller-supplied, never the wall clock).
+                let created_at = record.content.get("created_at")?.as_u64()?;
+                Some(RecordedRollback {
+                    recovery_point_id,
+                    subject: subject.to_string(),
+                    cause: RollbackCause { reason, detail },
+                    created_at,
+                })
+            })
+            .collect();
+        rollbacks.sort_by_key(|r| r.created_at);
+        Ok(rollbacks)
     }
 
     /// docs/33 §5's `recover_from_crash()` — the Phase 8 exit criterion:

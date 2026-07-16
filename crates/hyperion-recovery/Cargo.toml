@@ -9,6 +9,11 @@ repository.workspace = true
 hyperion-agent-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
+# Real, optional (Option<Arc<...>>, same shape as hyperion-agent-runtime's own optional
+# backends) place to really remember *why* a rollback happened, and really query that history
+# later -- see `service::RecoveryService::restore_to_with_cause`/`rollback_causes`.
+hyperion-memory = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

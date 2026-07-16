@@ -149,6 +149,11 @@ pub enum UpdateError {
     NoRecoveryPoint,
     #[error("this slot has exhausted its boot attempts")]
     BootAttemptsExhausted,
+    #[error(
+        "refusing to retry: this exact update (subject, from_version, to_version) already \
+         rolled back once for this reason: {reason}"
+    )]
+    RepeatedRecentRollback { reason: String },
     #[error("recovery error: {0}")]
     Recovery(#[from] hyperion_recovery::RecoveryError),
 }

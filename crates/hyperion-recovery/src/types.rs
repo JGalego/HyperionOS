@@ -92,6 +92,33 @@ pub enum RedoReceipt {
 
 pub(crate) type Snapshot = Vec<(NodeId, Option<NodeRecord>)>;
 
+/// The real *why* behind a rollback -- docs/998-roadmap.md's Self-Sustaining pillar's own named
+/// gap: "`hyperion-recovery` learning from what it rolls back. Still purely reactive; no
+/// mechanism connects a rollback's cause to a future decision." `reason` is a short, plain-
+/// language label a caller already has at the moment it decides to roll back (e.g. a health
+/// threshold breach); `detail` is whatever real, structured data justified that reason (e.g. the
+/// actual health numbers), kept as-is rather than flattened into more strings — a future
+/// decision point can read it back verbatim via
+/// [`crate::service::RecoveryService::rollback_causes`].
+#[derive(Debug, Clone)]
+pub struct RollbackCause {
+    pub reason: String,
+    pub detail: serde_json::Value,
+}
+
+/// One real, remembered rollback -- what [`crate::service::RecoveryService::rollback_causes`]
+/// returns. `subject` mirrors whatever caller-defined string identified the thing rolled back
+/// (this crate has no `UpdateSubject`/etc. of its own to reuse — see
+/// `hyperion-update::orchestrator::UpdateOrchestrator::update_rollback_with_cause`, the real
+/// caller that supplies one).
+#[derive(Debug, Clone)]
+pub struct RecordedRollback {
+    pub recovery_point_id: RecoveryPointId,
+    pub subject: String,
+    pub cause: RollbackCause,
+    pub created_at: u64,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RecoveryError {
     #[error("capability does not authorize this operation")]
@@ -104,4 +131,6 @@ pub enum RecoveryError {
     Graph(#[from] hyperion_knowledge_graph::GraphError),
     #[error("agent runtime error: {0}")]
     Agent(#[from] hyperion_agent_runtime::AgentError),
+    #[error("memory error: {0}")]
+    Memory(#[from] hyperion_memory::MemoryError),
 }
