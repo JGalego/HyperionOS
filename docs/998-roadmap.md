@@ -2394,3 +2394,32 @@ next step on any of these is a design pass, not code.
   genuinely never fetched, an allowed path fetches normally, a missing `robots.txt` allows
   everything, and a second page fetch against the same host reuses the cached ruleset rather than
   re-fetching it.
+
+- **`hyperion-netstack`'s `schema.org`/JSON-LD/OpenGraph microformat parsing, landed
+  (2026-07-16)** (docs/19's own named "no real `schema.org`/JSON-LD/OpenGraph microformat parser
+  exists" gap). `FetchedPage::structured` was always `None` from `ReqwestFetchBackend`, so
+  `extract_entity`'s own structured-data-preferred branch was dead code against every real fetch.
+  A new, dependency-light `microformats::parse` (using the already-present `scraper` crate) reads
+  a real `<script type="application/ld+json">` block first (schema.org's own typed vocabulary,
+  mapped through a deliberately narrow, explicit `@type` → `EntityType` allowlist -- an
+  unrecognized or generic type honestly falls back to `EntityType::WebPage`, the same floor
+  `MockExtractionBackend`'s own doc comment already establishes for "no confident entity", not a
+  guessed-at specific type with no real evidence behind it), falling back to real
+  `<meta property="og:*">` OpenGraph tags (requiring at least a real, non-empty `og:title`) when
+  no JSON-LD block parses. `ReqwestFetchBackend::fetch` now populates `FetchedPage::structured`
+  with the real result rather than always `None`; `MockFetchBackend` is unaffected. Named scope
+  boundary, not silently assumed complete: nested JSON-LD relationships (`author`/`publisher`,
+  etc.) are not extracted as `StructuredSignal::relationships` -- real nested-graph traversal this
+  module does not attempt, matching every real backend in this crate's own `relationships:
+  Vec::new()` scope rather than half-building it. Proven end to end: 6 fast, dependency-free unit
+  tests in `microformats.rs` cover JSON-LD parsing, unrecognized-type fallback, malformed-JSON-LD
+  falling through to OpenGraph, OpenGraph-alone parsing, a missing-title OpenGraph block correctly
+  producing no signal, and plain pages with no markup at all producing `None`; a new
+  `real-http`-feature-gated `tests/real_microformats.rs`, against a real local HTTP/1.1 fixture
+  server, proves `ReqwestFetchBackend` itself populates a real signal from a real JSON-LD page and
+  from a real OpenGraph-only page, and leaves `structured` `None` for a real plain page -- with an
+  explicit note on why this crate's own `NetstackHub`-level "structured wins over the model
+  fallback" behavior (already proven via `MockFetchBackend` in `extraction_and_resolution.rs`)
+  can't be re-proven against a local fixture: this crate's own real SSRF containment correctly
+  refuses a loopback target at that layer, the same reason `real_web_fetch.rs`'s own hub-level
+  tests use a real remote host instead of a local one.

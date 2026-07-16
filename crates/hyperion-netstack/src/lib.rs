@@ -43,10 +43,17 @@
 //! - ~~**The real HTTP/1.1/2/3, TLS 1.3, and DNS stack.**~~ — now real for HTTP/1.1 + TLS 1.3 +
 //!   DNS (see the M10 note above); real HTTP/2/3(QUIC) specifically remain whatever `reqwest`'s
 //!   own default negotiation provides, not something this crate configures or asserts on.
-//! - **Real HTML/DOM parsing** beyond [`extract::HtmlHeuristicExtractionBackend`]'s real but
-//!   narrow `<title>`/`<meta name="description">`/`<p>` tag selectors — no real `schema.org`/
-//!   JSON-LD/OpenGraph microformat parser exists; [`types::FetchedPage::structured`] is always
-//!   `None` from the real fetch backend, exactly as from the mock one.
+//! - ~~**Real HTML/DOM parsing** beyond [`extract::HtmlHeuristicExtractionBackend`]'s real but
+//!   narrow `<title>`/`<meta name="description">`/`<p>` tag selectors~~ — real `schema.org`/
+//!   JSON-LD/OpenGraph microformat parsing now exists: [`microformats::parse`] reads a real
+//!   `<script type="application/ld+json">` block (preferred) or real `<meta property="og:*">`
+//!   tags (fallback) and [`fetch::ReqwestFetchBackend`] populates
+//!   [`types::FetchedPage::structured`] with it for real, rather than always `None`.
+//!   [`microformats`]'s own doc comment names the one still-deferred piece: nested JSON-LD
+//!   relationships (`author`/`publisher`, etc.) are not extracted as
+//!   [`types::StructuredSignal::relationships`], matching every real backend in this crate's own
+//!   `relationships: Vec::new()` scope rather than half-building graph traversal here.
+//!   `MockFetchBackend` is unaffected — a fixture still declares `structured` directly.
 //! - **Real embeddings for entity-resolution similarity (§5.4).** No
 //!   embedding producer exists in this pipeline (Phase 3's Local AI
 //!   Runtime embeddings were never wired into web extraction). A
@@ -101,6 +108,8 @@ mod canonical;
 mod extract;
 mod fetch;
 mod hub;
+#[cfg(feature = "real-http")]
+mod microformats;
 mod quarantine;
 mod resolve;
 #[cfg(feature = "real-http")]

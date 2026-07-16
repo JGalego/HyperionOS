@@ -262,11 +262,10 @@ impl FetchBackend for ReqwestFetchBackend {
         let text = response
             .text()
             .map_err(|e| Self::classify_error(canonical_url, &e))?;
+        let structured = crate::microformats::parse(&text);
         Ok(FetchedPage {
             final_url: None,
-            // Real schema.org/JSON-LD/OpenGraph parsing remains this crate's own already-named
-            // deferred gap -- this real backend always returns unstructured text, same as before.
-            structured: None,
+            structured,
             text,
             // Always `false` here: a real `true` already returned above, before this real page
             // fetch ever ran.
