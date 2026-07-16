@@ -8,6 +8,14 @@
 //!
 //! Kept separate from `main.rs` so the full real pipeline is testable directly (feed a string in,
 //! assert on the real `Vec<String>` that comes back) without needing a real stdin/stdout.
+//!
+//! `/meaningful yes|no` (2026-07-16, docs/998-roadmap.md's Backlog "Protect the Human" item: "no
+//! 'was this meaningful' signal, only 'was this fast'") is a real, optional per-goal reflection --
+//! persisted through this session's own real `hyperion_memory::MemoryEngine` (the same
+//! `KnowledgeGraph` `/recall` already searches), and deliberately carrying no timing/speed data at
+//! all, unlike `hyperion-observability`'s own latency tracking. `/think on|off`/`/think-proceed`
+//! (same backlog section, landed the same day) are the analogous real, opt-in pause before intent
+//! decomposition -- see `hyperion_intent::IntentEngine::set_think_mode`'s own doc comment.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -23,6 +31,7 @@ use hyperion_coordination::{CoordinationSession, TaskNode};
 use hyperion_crypto::{Keystore, SecretStore};
 use hyperion_intent::{HandleOutcome, IntentEngine};
 use hyperion_knowledge_graph::{GraphError, KnowledgeGraph, NodeId};
+use hyperion_memory::{MemoryEngine, MemoryTier};
 
 use crate::graph_explorer::GraphExplorer;
 use hyperion_netstack::{DomainEgressGrant, NetstackHub};
@@ -149,6 +158,14 @@ pub struct ConsoleSession {
     /// [`Self::handle_meta_command`]'s `/think` commands), if any -- what `/think-proceed`
     /// resolves against, since a human wouldn't type a raw `NodeId`.
     pending_think_root: Option<NodeId>,
+    /// docs/998-roadmap.md's Backlog "Protect the Human" item: "no 'was this meaningful' signal,
+    /// only 'was this fast.'" Real, persisted via [`Self::memory`] -- see the `/meaningful`
+    /// meta-command.
+    memory: MemoryEngine,
+    /// The most recent real, non-meta-command utterance this session actually handled -- what
+    /// `/meaningful yes|no` reflects on, since a human wouldn't type a raw Intent `NodeId`. `None`
+    /// until this session's first real goal utterance.
+    last_utterance: Option<String>,
 }
 
 /// The real prompt and capability this session is waiting to re-invoke once a live
@@ -333,6 +350,7 @@ impl ConsoleSession {
         let netstack = Arc::new(Self::build_netstack(graph.clone()));
         let graph_explorer = GraphExplorer::new(graph.clone());
         let intent_engine = IntentEngine::new(graph.clone(), context.clone());
+        let memory = MemoryEngine::new(graph.clone());
 
         let keystore = Keystore::open_or_create(&data_dir.join("device.key"))
             .expect("open or create this session's real device signing key");
@@ -406,6 +424,8 @@ impl ConsoleSession {
             last_plan_session_id: None,
             keystore,
             pending_think_root: None,
+            memory,
+            last_utterance: None,
         })
     }
 
@@ -787,6 +807,50 @@ impl ConsoleSession {
             });
         }
 
+        // docs/998-roadmap.md's Backlog "Protect the Human" item: "no 'was this meaningful'
+        // signal, only 'was this fast.'" A real, optional per-goal reflection, explicitly not a
+        // productivity/speed metric -- no timing data is attached to this record at all.
+        if lower.starts_with("/meaningful") {
+            let rest = trimmed["/meaningful".len()..].trim();
+            let Some(goal) = self.last_utterance.clone() else {
+                return Some(vec!["Nothing to reflect on yet.".to_string()]);
+            };
+            let meaningful = match rest {
+                "" => {
+                    return Some(vec![format!(
+                        "Was \"{goal}\" meaningful? Say \"/meaningful yes\" or \"/meaningful no\"."
+                    )])
+                }
+                "yes" => true,
+                "no" => false,
+                other => {
+                    return Some(vec![format!(
+                        "\"/meaningful {other}\" isn't something I know how to record -- try \
+                         \"/meaningful yes\" or \"/meaningful no\"."
+                    )])
+                }
+            };
+            return Some(
+                match self.memory.remember(
+                    &self.monitor,
+                    &self.token,
+                    MemoryTier::Episodic,
+                    serde_json::json!({
+                        "entity_key": "reflection",
+                        "goal": goal,
+                        "meaningful": meaningful,
+                    }),
+                    None,
+                    0.5,
+                    false,
+                    Vec::new(),
+                ) {
+                    Ok(_) => vec!["Noted -- thanks for the reflection.".to_string()],
+                    Err(e) => vec![format!("I couldn't record that: {e}")],
+                },
+            );
+        }
+
         if lower.starts_with("/recall") {
             let text = trimmed["/recall".len()..].trim();
             return Some(self.graph_explorer.recall(&self.monitor, &self.token, text));
@@ -1037,6 +1101,9 @@ impl ConsoleSession {
             "  /think-proceed                              commit to deciding what the paused \
              goal means"
                 .to_string(),
+            "  /meaningful yes|no                          reflect on whether the last goal \
+             actually mattered (bare, to see what it would ask)"
+                .to_string(),
             "  /help                                        show this message".to_string(),
         ]
     }
@@ -1138,6 +1205,10 @@ impl ConsoleSession {
         if let Some(reply) = self.handle_meta_command(utterance) {
             return reply;
         }
+        // docs/998-roadmap.md's Backlog "Protect the Human" item: what `/meaningful yes|no`
+        // reflects on -- only ever a real goal utterance, never a meta-command (the checks above
+        // already returned for those).
+        self.last_utterance = Some(utterance.to_string());
 
         let outcome = match self.intent_engine.handle_utterance(
             &self.monitor,

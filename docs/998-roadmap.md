@@ -2175,10 +2175,19 @@ have a real architectural home yet.
   control."). Still missing, honestly: no console/workspace surface actually calls this or asks
   the user "want to do the next one yourself?" yet — this closes the *signal*, not the end-to-end
   UX.
-- **No "was this meaningful" signal, only "was this fast."** `hyperion-observability` tracks system
-  health and latency; nothing tracks whether a completed goal actually mattered to the user, as
-  opposed to how quickly it was produced. Likely home: a new, optional per-goal reflection surface
-  in `hyperion-console`/`hyperion-workspace`, explicitly not a productivity metric.
+- **"Was this meaningful" signal, distinct from "was this fast" — landed (2026-07-16).**
+  `hyperion-observability` tracks system health and latency; nothing tracked whether a completed
+  goal actually mattered to the user, as opposed to how quickly it was produced.
+  `hyperion-console`'s new `/meaningful yes|no` meta-command is a real, optional per-goal
+  reflection — persisted through a real `hyperion_memory::MemoryEngine` (a new, small dependency
+  this console gained for exactly this), reflecting on `/meaningful`'s own real last-handled-goal
+  text (`ConsoleSession::last_utterance`), never a task's speed or latency; bare `/meaningful` asks
+  what it would record without recording anything. Proven end to end: a recorded reflection is
+  really findable afterward through this same console's own `/recall`, since it's stored in the
+  same shared Knowledge Graph, not a second, parallel store. Honest scope boundary: this is
+  user-invoked, not automatically prompted after every goal (deliberately — CLAUDE.md's Progressive
+  Complexity principle, and the item's own "optional" framing), and nothing yet aggregates
+  reflections into a queryable trend.
 - **No teaching mode.** The model-role catalog (planning/coding/reasoning/vision/etc., docs/23) has
   no role oriented around building the *user's* competence rather than producing an artifact —
   nothing that explains the underlying principle instead of just the output. Likely home: a new

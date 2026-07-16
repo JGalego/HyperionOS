@@ -18,6 +18,9 @@ hyperion-coordination = { workspace = true }
 hyperion-crypto = { workspace = true }
 hyperion-intent = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
+# Real, encrypted-nowhere-else "was this meaningful?" reflection signal (docs/998-roadmap.md's
+# Backlog "Protect the Human" item) -- see the `/meaningful` meta-command in `src/session.rs`.
+hyperion-memory = { workspace = true }
 hyperion-netstack = { workspace = true }
 hyperion-workspace = { workspace = true }
 # Real mDNS/DNS-SD advertise+discover for `/mcp-server`/`/a2a-server` (docs/998-roadmap.md's
