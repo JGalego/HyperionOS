@@ -2991,3 +2991,27 @@ next step on any of these is a design pass, not code.
   with nothing to transition. `control.resume` (transitioning a record back to `Executing` once
   `Interrupted`) remains the one real signal still undelivered by any caller. All 14 pre-existing
   `hyperion-coordination` `worked_trace` tests pass unchanged.
+
+- **`hyperion-explainability`'s `control.resume` signal plumbing, landed (2026-07-16)** — the
+  last of that crate's own named "`control.interrupt`/`control.modify`/`control.resume` signal
+  plumbing" gap, closing it entirely. `is_ready`'s `Unassigned`-only readiness check left a task
+  `apply_dispatch_results` marked `Claimed` on a real `PendingConsent`/`QuotaExceeded` outcome
+  permanently stuck — nothing ever moved it back. A new `CoordinationSession::resume_task` looks
+  the named task's most recent real record up via the `last_explanation_by_task` map (added for
+  `control.modify`), confirms it's genuinely `Claimed` with an `Interrupted` record (distinguishing
+  a real pause from a terminally `Denied` task, which also leaves `Claimed` but with a
+  `RolledBack` record — a new `CoordError::TaskNotInterrupted` refuses that case honestly, not
+  silently), resets the task to `Unassigned` so the very next real `allocate()` tick genuinely
+  re-attempts it, and transitions the record to `ControlState::Executing`. The actual re-dispatch
+  mints its own fresh `ExplanationId`, exactly like every other real attempt, rather than
+  inventing a mechanism to reuse one record across multiple attempts. No built-in HTN template in
+  this workspace's own test fixtures can naturally reach a genuine `PendingConsent`/`QuotaExceeded`
+  outcome (every template leaf's required Capability is always baseline, never requestable, for
+  the specialization that dispatches it), so this is proven by a new internal `engine.rs` test
+  module that fabricates the real, production-reachable `Claimed`+`Interrupted` state directly
+  against the session's own private fields — the same technique `hyperion-observability`'s
+  `ledger.rs` test module already uses to simulate a tamper the public API can't otherwise
+  produce. Three new tests: a genuinely interrupted task really resumes (status `Unassigned`,
+  record `Executing`); a `Claimed`-but-`RolledBack` (i.e. `Denied`) task is correctly refused; an
+  unknown task name is rejected. All pre-existing `hyperion-coordination` tests (7 prior unit + 14
+  `worked_trace` integration tests) pass unchanged.

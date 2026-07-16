@@ -209,6 +209,8 @@ pub enum CoordError {
     TaskNotFound,
     #[error("no built-in specialization fits the required capabilities")]
     NoFit,
+    #[error("this task is not currently interrupted, so there is nothing to resume")]
+    TaskNotInterrupted,
 }
 
 /// One [`PreparedDispatch`]'s own real dispatch result, paired back up with it once
@@ -950,6 +952,61 @@ impl CoordinationSession {
         Ok(dependents)
     }
 
+    /// docs/18's `control.resume` signal, delivered for real -- `hyperion-explainability`'s own
+    /// named "`control.interrupt`/`control.modify`/`control.resume` signal plumbing" gap's last
+    /// remaining piece (`control.interrupt`/`control.modify` are both already real: see
+    /// [`Self::apply_dispatch_results`]/[`Self::amend_task`]). `apply_dispatch_results` already
+    /// marks a task `Claimed` and its most recent real Explanation Record `Interrupted` on a
+    /// genuine `PendingConsent`/`QuotaExceeded` dispatch outcome, but nothing ever moved it back
+    /// -- [`Self::is_ready`]'s own `Unassigned`-only check leaves it permanently stuck otherwise.
+    /// Resets the named task back to `Unassigned` (so the very next real [`Self::allocate`] tick
+    /// genuinely re-attempts it) and transitions its most recent real record to
+    /// `ControlState::Executing`, recording that a real resume decision landed -- the actual
+    /// re-dispatch mints its own fresh `ExplanationId`, exactly like every other real attempt,
+    /// rather than inventing a mechanism to reuse one record across multiple attempts. A task
+    /// that isn't currently `Claimed`+`Interrupted` (already resumed, never interrupted at all, or
+    /// terminally `Denied` -- which also leaves a task `Claimed`, but with a `RolledBack` record,
+    /// not `Interrupted`) is a real, honest [`CoordError::TaskNotInterrupted`], not a silent no-op.
+    pub fn resume_task(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        session_id: u64,
+        task_name: &str,
+    ) -> Result<(), CoordError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+        let mut plans = self.plans.lock().unwrap();
+        let plan = plans.get_mut(&session_id).ok_or(CoordError::NotFound)?;
+        let idx = plan
+            .nodes
+            .iter()
+            .position(|n| n.description.eq_ignore_ascii_case(task_name))
+            .ok_or(CoordError::TaskNotFound)?;
+        let task_id = plan.nodes[idx].task_id;
+
+        let explanation_id = self
+            .last_explanation_by_task
+            .lock()
+            .unwrap()
+            .get(&task_id)
+            .copied();
+        let is_interrupted = explanation_id
+            .and_then(|id| self.explanations.get(id))
+            .is_some_and(|record| record.control_state == ControlState::Interrupted);
+        if plan.nodes[idx].status != TaskStatus::Claimed || !is_interrupted {
+            return Err(CoordError::TaskNotInterrupted);
+        }
+
+        plan.nodes[idx].status = TaskStatus::Unassigned;
+        self.explanations.transition(
+            monitor,
+            token,
+            explanation_id.expect("is_interrupted is only true when explanation_id is Some"),
+            ControlState::Executing,
+        )?;
+        Ok(())
+    }
+
     /// docs/12 §5.2's `proposeWrite`: optimistic concurrency on a named
     /// plan fact. Auto-merge applies trivially to non-colliding keys
     /// (independent facts never conflict by construction); a genuine
@@ -1147,5 +1204,146 @@ impl CoordinationSession {
         let plan = plans.get(&session_id).ok_or(CoordError::NotFound)?;
         let key = task_partition_key(&plan.nodes, task_id);
         Ok(plan.partition_versions.get(&key).copied().unwrap_or(0))
+    }
+}
+
+#[cfg(test)]
+mod resume_task_tests {
+    //! `resume_task`'s own real precondition -- a task genuinely `Claimed` with its most recent
+    //! real Explanation Record `Interrupted` -- needs a real `PendingConsent`/`QuotaExceeded`
+    //! dispatch outcome to occur naturally, which no built-in HTN template/specialization in this
+    //! workspace's own test fixtures can reach (every built-in template's own required Capability
+    //! is always baseline, never requestable, for the specialization that dispatches it). Proven
+    //! here instead by fabricating that real, reachable-in-production state directly against this
+    //! session's own private fields -- the same pattern `ledger.rs`'s own internal test module
+    //! uses to simulate a tamper the public API can't otherwise produce.
+
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use hyperion_agent_runtime::AgentRuntime;
+    use hyperion_ai_runtime::{LocalAiRuntime, MockBackend};
+    use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
+    use hyperion_knowledge_graph::KnowledgeGraph;
+
+    use super::*;
+
+    fn setup() -> (
+        tempfile::TempDir,
+        CapabilityMonitor,
+        CapabilityToken,
+        CoordinationSession,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut monitor = CapabilityMonitor::new();
+        let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+        let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+        let ai_runtime = Arc::new(LocalAiRuntime::new(Box::new(MockBackend), 8_000));
+        let session = CoordinationSession::new(Arc::new(AgentRuntime::new(ai_runtime)), graph);
+        (dir, monitor, token, session)
+    }
+
+    /// Installs a one-task plan whose task is `Claimed` with a real Explanation Record already
+    /// transitioned to `control_state`, mirroring exactly what `apply_dispatch_results` leaves
+    /// behind for a real `Denied` (`RolledBack`) or `PendingConsent`/`QuotaExceeded`
+    /// (`Interrupted`) outcome.
+    fn install_claimed_task(
+        session: &CoordinationSession,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        control_state: ControlState,
+    ) -> (u64, NodeId, ExplanationId) {
+        let task_id = hyperion_storage::ObjectId(1);
+        let action_id = session.explanations.next_action_id();
+        let explanation_id = session
+            .explanations
+            .begin(monitor, token, action_id, 0, 1, "web.search", vec![], 0)
+            .unwrap();
+        session
+            .explanations
+            .transition(monitor, token, explanation_id, control_state)
+            .unwrap();
+        session
+            .last_explanation_by_task
+            .lock()
+            .unwrap()
+            .insert(task_id, explanation_id);
+
+        let plan = SharedPlan {
+            session_id: 1,
+            root_intent: hyperion_storage::ObjectId(0),
+            root_utterance: String::new(),
+            partition_versions: HashMap::new(),
+            nodes: vec![TaskNode {
+                task_id,
+                description: "market_research".to_string(),
+                required_capabilities: vec!["web.search".to_string()],
+                required_trust_tier: TrustTier::System,
+                assigned_agent: Some(1),
+                status: TaskStatus::Claimed,
+                dependencies: Vec::new(),
+                base_version: 0,
+                attempts: 0,
+                result: None,
+                extra_context: None,
+                judgment_class: JudgmentClass::Mechanical,
+            }],
+            participants: vec![1],
+            conflicts: Vec::new(),
+            facts: HashMap::new(),
+        };
+        session.plans.lock().unwrap().insert(1, plan);
+        (1, task_id, explanation_id)
+    }
+
+    #[test]
+    fn resume_task_reactivates_a_genuinely_interrupted_task_and_marks_its_record_executing() {
+        let (_dir, monitor, token, session) = setup();
+        let (session_id, _task_id, explanation_id) =
+            install_claimed_task(&session, &monitor, &token, ControlState::Interrupted);
+
+        session
+            .resume_task(&monitor, &token, session_id, "market_research")
+            .unwrap();
+
+        let plan = session.get_plan(&monitor, &token, session_id).unwrap();
+        assert_eq!(
+            plan.nodes[0].status,
+            TaskStatus::Unassigned,
+            "resuming must genuinely re-open the task for the next real allocate() tick"
+        );
+        assert_eq!(
+            session.explanation(explanation_id).unwrap().control_state,
+            ControlState::Executing,
+            "resuming must really transition the record, not just the task status"
+        );
+    }
+
+    #[test]
+    fn resume_task_rejects_a_claimed_but_not_interrupted_task() {
+        // A real `Denied` outcome also leaves a task `Claimed`, but with a `RolledBack` record --
+        // a terminal state, never something to resume.
+        let (_dir, monitor, token, session) = setup();
+        let (session_id, _task_id, _explanation_id) =
+            install_claimed_task(&session, &monitor, &token, ControlState::RolledBack);
+
+        let result = session.resume_task(&monitor, &token, session_id, "market_research");
+        assert!(
+            matches!(result, Err(CoordError::TaskNotInterrupted)),
+            "got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn resume_task_rejects_an_unknown_task_name() {
+        let (_dir, monitor, token, session) = setup();
+        let (session_id, ..) =
+            install_claimed_task(&session, &monitor, &token, ControlState::Interrupted);
+
+        let result = session.resume_task(&monitor, &token, session_id, "not_a_real_task");
+        assert!(
+            matches!(result, Err(CoordError::TaskNotFound)),
+            "got: {result:?}"
+        );
     }
 }
