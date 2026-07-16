@@ -1,0 +1,498 @@
+<meta charset="utf-8">
+<!--
+  Real, live "Social" mesh dashboard (docs/998-roadmap.md's Social pillar). Served by this
+  binary's own `/mesh-dashboard` command (see `main.rs::start_mesh_dashboard`) -- a plain,
+  self-contained page with no external requests, no CDN, no build step. It polls this same
+  process's own `GET /mesh/graph` every second and redraws: nodes on a circle (one per live
+  `_hyperion-a2a._tcp.local.` peer), colored by which real backend each is dispatching through
+  (a live legend maps color -> backend), dashed lines for real, persisted trust, and a real dot
+  that actually travels an edge (or an expanding ring, for the receiving side of a request that
+  can't name its caller) when a real discovery/delegation event happened in roughly the last few
+  seconds. A raw scrolling event log underneath is the plain-text explanation of everything the
+  graph is animating. Node *positions* are deliberately stable across refreshes (sorted server-
+  side by id in `mesh::build_mesh_graph`, not left to a fresh `HashMap`'s own unstable iteration
+  order) -- a node should hold still, only its color/animations should change.
+-->
+<title>Hyperion Mesh</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0f14;
+    --panel: #121822;
+    --line: #26313f;
+    --text: #d7e0ea;
+    --dim: #7c8a9a;
+    --accent: #5fd0ff;
+    --trust: #3c4a5a;
+    --ok: #57e389;
+    --fail: #ff6b6b;
+    --discover: #ffcf6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 0.9rem 1.2rem;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 1rem; margin: 0; color: var(--accent); font-weight: 600; }
+  header .sub { color: var(--dim); font-size: 0.8rem; }
+  /* Plain-English explanation of what this page is showing -- CLAUDE.md's own "explainability"
+     and "accessibility first" rules applied to the dashboard itself, not just the mesh it draws.
+     A native <details>/<summary> needs no JS to be keyboard- and screen-reader-operable, and
+     stays open by default so a first-time viewer isn't left guessing what a dot or a dashed line
+     means. */
+  .explainer {
+    border-bottom: 1px solid var(--line);
+    padding: 0.6rem 1.2rem;
+    font-size: 0.82rem;
+    line-height: 1.5;
+  }
+  .explainer summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-weight: 600;
+    list-style: none;
+  }
+  .explainer summary::-webkit-details-marker { display: none; }
+  .explainer summary::before { content: "▾ "; }
+  .explainer[open] summary::before { content: "▾ "; }
+  .explainer:not([open]) summary::before { content: "▸ "; }
+  /* A two-column body -- prose on the left, legend on the right -- so this uses the full real
+     width of the page instead of an arbitrarily-capped paragraph leaving the right half of the
+     panel empty (a single narrow column was the actual bug: plenty of horizontal room existed,
+     nothing was using it). */
+  .explainer-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(260px, 0.7fr);
+    gap: 0.3rem 2.5rem;
+    margin-top: 0.6rem;
+  }
+  .explainer-text p { margin: 0 0 0.6rem; color: var(--text); }
+  .explainer-text p:last-child { margin-bottom: 0; }
+  .explainer-legend { margin: 0; padding-left: 1.3rem; color: var(--text); }
+  .explainer-legend li { margin: 0.3rem 0; }
+  .explainer .dot-swatch, .explainer .dash-swatch, .explainer .pulse-swatch, .explainer .glow-swatch {
+    display: inline-block;
+    width: 1.4em;
+    text-align: center;
+  }
+  .explainer .dot-swatch { color: var(--accent); }
+  .explainer .dash-swatch { color: var(--trust); }
+  .explainer .pulse-swatch { color: var(--ok); }
+  .explainer .glow-swatch { color: var(--accent); }
+  /* A live legend of which real backends are actually on the mesh right now -- populated by JS
+     each refresh from the same real data the graph itself draws from, not a fixed list, since
+     which backends are present is whatever the running nodes actually report. */
+  .backend-legend {
+    list-style: none;
+    margin: 0.7rem 0 0;
+    padding: 0.6rem 0 0;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1rem;
+  }
+  .backend-legend li { display: flex; align-items: center; gap: 0.4rem; margin: 0; }
+  .backend-legend .swatch {
+    width: 0.75em;
+    height: 0.75em;
+    border-radius: 50%;
+    display: inline-block;
+    flex: none;
+  }
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+    gap: 0;
+    min-height: 0;
+  }
+  #graph-wrap {
+    position: relative;
+    min-height: 420px;
+    overflow: auto;
+  }
+  #graph { display: block; width: 100%; height: 100%; }
+  #log-wrap {
+    border-left: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  #log-wrap h2 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--dim);
+    margin: 0;
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--line);
+  }
+  #log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem 0.9rem;
+  }
+  .log-line { padding: 0.2rem 0; border-bottom: 1px dashed var(--line); word-break: break-word; }
+  .log-ts { color: var(--dim); }
+  .kind-discovered { color: var(--discover); }
+  .kind-delegationcompleted { color: var(--ok); }
+  .kind-delegationfailed { color: var(--fail); }
+  .kind-delegationreceived { color: var(--accent); }
+  .empty { color: var(--dim); padding: 1rem; }
+  /* Sizes here are in the SVG's own 100x100 user-unit space (see the JS viewBox below), NOT
+     real CSS pixels -- a size that looks small as a number is what keeps text legible once the
+     whole viewBox is stretched to fill a much larger real panel. */
+  .node-label { fill: var(--text); font-size: 3.3px; font-weight: 600; }
+  .cap-label { fill: #eaf3ff; font-size: 2.1px; }
+  /* A soft, continuously-breathing halo behind each node -- purely decorative (unlike the
+     delegation glow ring, which means something specific), just what keeps a mesh of otherwise-
+     idle dots from reading as a static diagram. */
+  @keyframes breathe {
+    0%, 100% { opacity: 0.22; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.18); }
+  }
+  .node-halo {
+    animation: breathe 2.6s ease-in-out infinite;
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  /* Real motion for a real event, not just a color -- a small dot actually travels the edge for
+     "Discovered"/"DelegationCompleted"/"DelegationFailed" (see `travelingDot` in the script
+     below); each play-once when its own event is fresh, replayed by the next ~1s refresh for as
+     long as the event stays "recent". */
+  @keyframes travel {
+    from { offset-distance: 0%; opacity: 1; }
+    to { offset-distance: 100%; opacity: 0.05; }
+  }
+  .travel-dot { animation: travel 1.1s ease-out forwards; }
+  /* An expanding "ping" ring for "DelegationReceived" -- this node was just asked something, no
+     directed edge to animate since the protocol never names the caller. */
+  @keyframes ping {
+    from { r: 1.5; opacity: 0.9; }
+    to { r: 7; opacity: 0; }
+  }
+  .ping-ring { animation: ping 1.1s ease-out forwards; }
+</style>
+
+<header>
+  <h1>Hyperion Mesh</h1>
+  <span class="sub" id="summary">connecting…</span>
+</header>
+<details class="explainer" open>
+  <summary>What am I looking at?</summary>
+  <div class="explainer-body">
+    <div class="explainer-text">
+      <p>
+        Each dot below is a separate, real Hyperion program running on this machine, each
+        pretending to be a different device on the network. Every node only really knows how to
+        do a few things (its capabilities are printed under its dot). When a node is asked to do
+        something it can't do itself, it looks around the real network for a peer that can,
+        checks that peer is really who it claims to be, and hands the task off to it -- no human
+        names a host or port anywhere in this flow.
+      </p>
+      <p>
+        The <b>real event log</b> on the right is the plain-text version of the same story:
+        every discovery, trust decision, and delegation, in the order it really happened.
+      </p>
+    </div>
+    <ul class="explainer-legend">
+      <li><span class="dot-swatch">●</span> a real, independently-running Hyperion node -- colored by which real backend it's dispatching through (see below).</li>
+      <li><span class="dash-swatch">╌╌</span> this node has verified and now trusts that peer, from a real past delegation.</li>
+      <li><span class="pulse-swatch">➜</span> a dot really travels this edge while a discovery/delegation is in flight -- amber outbound (discovering), green returning (the real answer), red if it failed.</li>
+      <li><span class="glow-swatch">◎</span> an expanding ring: this node was just asked to do something -- it honestly can't say by whom, since the protocol never authenticates its caller.</li>
+    </ul>
+    <ul class="backend-legend" id="backend-legend"></ul>
+  </div>
+</details>
+<main>
+  <div id="graph-wrap"><svg id="graph"></svg></div>
+  <div id="log-wrap">
+    <h2>Real event log</h2>
+    <div id="log"><div class="empty">Waiting for the first real peer…</div></div>
+  </div>
+</main>
+
+<script>
+  const RECENT_MS = 6000; // how long a delegation edge/glow stays lit after its own event fires
+  const svgNS = "http://www.w3.org/2000/svg";
+
+  function since(ts) {
+    return Date.now() - new Date(ts).getTime();
+  }
+
+  function kindClass(kind) {
+    return "kind-" + kind.toLowerCase();
+  }
+
+  // mDNS's own fullname is verbose ("aria._hyperion-a2a._tcp.local.") -- everything a human
+  // actually wants from it is the instance name before the first dot.
+  function shortName(name) {
+    return (name || "").split(".")[0];
+  }
+
+  // A stable, deterministic color per node -- keyed by which real backend it's dispatching
+  // through, so two nodes talking to the same real provider read as visually related (a node's
+  // capabilities are already spelled out as text under it -- encoding them a second time as
+  // color was redundant). Purely a display hash, not a hash of anything security-relevant.
+  function hashHue(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+    }
+    return hash % 360;
+  }
+
+  // A backend's own `label()` includes its exact model/base-url ("openai (model \"gpt-4o-mini\"
+  // at ...)") -- too specific to group a legend by. Everything up to the first " (" is the real
+  // backend *kind* (`"mock"`, `"candle"`, `"openai"`, `"anthropic"`, ...), which is what the
+  // legend and node color actually key on.
+  function backendKey(label) {
+    return (label || "mock").split(" (")[0];
+  }
+
+  // A small dot that really travels the real edge between two nodes over `durationMs` -- used
+  // for "Discovered" (searching), "DelegationCompleted" (the real answer coming back), and
+  // "DelegationFailed" (the attempt that didn't land). Re-inserted fresh on every ~1s refresh
+  // for as long as the event stays "recent" (see RECENT_MS), so it keeps replaying, not just
+  // playing once and vanishing.
+  function travelingDot(x1, y1, x2, y2, color) {
+    const dot = document.createElementNS(svgNS, "circle");
+    dot.setAttribute("r", "1.15");
+    dot.setAttribute("fill", color);
+    dot.setAttribute("class", "travel-dot");
+    dot.style.offsetPath = `path("M ${x1} ${y1} L ${x2} ${y2}")`;
+    return dot;
+  }
+
+  // An expanding ring for "DelegationReceived" -- this node was just asked something. No edge to
+  // animate (the protocol never names the caller), so the node itself pings instead.
+  function pingRing(cx, cy, color) {
+    const ring = document.createElementNS(svgNS, "circle");
+    ring.setAttribute("cx", cx);
+    ring.setAttribute("cy", cy);
+    ring.setAttribute("fill", "none");
+    ring.setAttribute("stroke", color);
+    ring.setAttribute("stroke-width", "0.7");
+    ring.setAttribute("class", "ping-ring");
+    return ring;
+  }
+
+  function layout(nodes) {
+    const cx = 50, cy = 50, r = 38; // percentage-space circle, scaled by the SVG viewBox
+    return nodes.map((node, i) => {
+      const angle = (2 * Math.PI * i) / Math.max(nodes.length, 1) - Math.PI / 2;
+      return { ...node, x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+    });
+  }
+
+  function render(graph) {
+    const nodes = layout(graph.nodes || []);
+    const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+    const summary = document.getElementById("summary");
+    summary.textContent = nodes.length
+      ? `${nodes.length} real peer(s) on the mesh -- refreshed ${graph.generated_at || ""}`
+      : "No real peers found yet -- start a few /a2a-server nodes on this LAN.";
+
+    const svg = document.getElementById("graph");
+    svg.setAttribute("viewBox", "0 0 100 100");
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    svg.innerHTML = "";
+
+    // Static trust edges: every peer this node has really, persistently trusted (TOFU), drawn
+    // only when that peer is itself currently a live node in this same snapshot.
+    for (const node of nodes) {
+      for (const [peerId] of node.trusted_peers || []) {
+        const peer = byId[peerId];
+        if (!peer) continue;
+        const line = document.createElementNS(svgNS, "line");
+        line.setAttribute("x1", node.x);
+        line.setAttribute("y1", node.y);
+        line.setAttribute("x2", peer.x);
+        line.setAttribute("y2", peer.y);
+        line.setAttribute("stroke", "var(--trust)");
+        line.setAttribute("stroke-width", "0.4");
+        line.setAttribute("stroke-dasharray", "2,2");
+        svg.appendChild(line);
+      }
+    }
+
+    // Real animated events within the last RECENT_MS: a traveling dot for a discovery/delegation
+    // in flight, or an expanding ping for the side that just got asked something.
+    for (const node of nodes) {
+      for (const event of node.recent_events || []) {
+        if (since(event.ts) > RECENT_MS) continue;
+        if (event.kind === "DelegationReceived") {
+          svg.appendChild(pingRing(node.x, node.y, "var(--accent)"));
+          continue;
+        }
+        const peer = byId[event.peer];
+        if (!peer) continue;
+        // A faint, static guide line so the edge itself is still visible between an animated
+        // dot's own play-throughs, not just during the ~1.1s it's actually moving.
+        const guide = document.createElementNS(svgNS, "line");
+        guide.setAttribute("x1", node.x);
+        guide.setAttribute("y1", node.y);
+        guide.setAttribute("x2", peer.x);
+        guide.setAttribute("y2", peer.y);
+        guide.setAttribute("stroke", "var(--trust)");
+        guide.setAttribute("stroke-width", "0.35");
+        guide.setAttribute("opacity", String(0.4 * (1 - since(event.ts) / RECENT_MS)));
+        svg.appendChild(guide);
+
+        if (event.kind === "Discovered") {
+          svg.appendChild(travelingDot(node.x, node.y, peer.x, peer.y, "var(--discover)"));
+        } else if (event.kind === "DelegationCompleted") {
+          // Reversed: the real answer traveling back from the peer that did the work.
+          svg.appendChild(travelingDot(peer.x, peer.y, node.x, node.y, "var(--ok)"));
+        } else if (event.kind === "DelegationFailed") {
+          svg.appendChild(travelingDot(node.x, node.y, peer.x, peer.y, "var(--fail)"));
+        }
+      }
+    }
+
+    // Nodes themselves, on top of every edge -- each colored by which real backend it's
+    // dispatching through, with a soft gradient fill, a continuously-breathing halo, and a
+    // measured pill behind its capability label (real getBBox() sizing, not a guessed width).
+    //
+    // Hue assignment: sorted distinct backend keys, spaced by the golden angle (~137.5deg) --
+    // deterministic (same sorted input always produces the same map) and, unlike hashing each
+    // string independently, guaranteed well-separated regardless of how few or many backends are
+    // actually present (two arbitrary strings can hash to similar hues by pure chance; stepping
+    // by the golden angle never clusters two adjacent-index colors together).
+    const backendHues = new Map();
+    [...new Set(nodes.map((n) => backendKey(n.backend)))]
+      .sort()
+      .forEach((key, i) => backendHues.set(key, (i * 137.508) % 360));
+
+    const defs = document.createElementNS(svgNS, "defs");
+    svg.appendChild(defs);
+
+    for (const node of nodes) {
+      const backend = backendKey(node.backend);
+      const hue = backendHues.get(backend);
+      const gradId = "grad-" + node.id.replace(/[^a-zA-Z0-9]/g, "");
+
+      const gradient = document.createElementNS(svgNS, "radialGradient");
+      gradient.setAttribute("id", gradId);
+      gradient.setAttribute("cx", "35%");
+      gradient.setAttribute("cy", "30%");
+      const stopA = document.createElementNS(svgNS, "stop");
+      stopA.setAttribute("offset", "0%");
+      stopA.setAttribute("stop-color", `hsl(${hue}, 90%, 74%)`);
+      const stopB = document.createElementNS(svgNS, "stop");
+      stopB.setAttribute("offset", "100%");
+      stopB.setAttribute("stop-color", `hsl(${hue}, 80%, 46%)`);
+      gradient.append(stopA, stopB);
+      defs.appendChild(gradient);
+
+      const halo = document.createElementNS(svgNS, "circle");
+      halo.setAttribute("cx", node.x);
+      halo.setAttribute("cy", node.y);
+      halo.setAttribute("r", "5.2");
+      halo.setAttribute("fill", `hsl(${hue}, 90%, 65%)`);
+      halo.setAttribute("class", "node-halo");
+      svg.appendChild(halo);
+
+      const dot = document.createElementNS(svgNS, "circle");
+      dot.setAttribute("cx", node.x);
+      dot.setAttribute("cy", node.y);
+      dot.setAttribute("r", "3.6");
+      dot.setAttribute("fill", `url(#${gradId})`);
+      dot.setAttribute("stroke", `hsl(${hue}, 95%, 85%)`);
+      dot.setAttribute("stroke-width", "0.25");
+      svg.appendChild(dot);
+
+      const label = document.createElementNS(svgNS, "text");
+      label.setAttribute("x", node.x);
+      label.setAttribute("y", node.y - 5.5);
+      label.setAttribute("text-anchor", "middle");
+      label.setAttribute("class", "node-label");
+      label.textContent = shortName(node.name) || node.id;
+      svg.appendChild(label);
+
+      const capText = (node.capabilities || []).join(", ");
+      if (capText) {
+        const caps = document.createElementNS(svgNS, "text");
+        caps.setAttribute("x", node.x);
+        caps.setAttribute("y", node.y + 8.6);
+        caps.setAttribute("text-anchor", "middle");
+        caps.setAttribute("class", "cap-label");
+        caps.textContent = capText;
+        svg.appendChild(caps);
+
+        const box = caps.getBBox();
+        const padX = 1.1, padY = 0.6;
+        const pill = document.createElementNS(svgNS, "rect");
+        pill.setAttribute("x", box.x - padX);
+        pill.setAttribute("y", box.y - padY);
+        pill.setAttribute("width", box.width + padX * 2);
+        pill.setAttribute("height", box.height + padY * 2);
+        pill.setAttribute("rx", (box.height + padY * 2) / 2);
+        pill.setAttribute("fill", `hsla(${hue}, 55%, 28%, 0.75)`);
+        pill.setAttribute("stroke", `hsl(${hue}, 60%, 50%)`);
+        pill.setAttribute("stroke-width", "0.18");
+        svg.insertBefore(pill, caps);
+      }
+    }
+
+    // The live backend-color legend -- whichever real backend kinds are actually present in
+    // this snapshot, sorted for a stable reading order (not insertion order, which would jitter
+    // exactly like the node positions used to).
+    const legend = document.getElementById("backend-legend");
+    const backendEntries = [...backendHues.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    legend.innerHTML = backendEntries.length
+      ? backendEntries
+          .map(
+            ([name, hue]) =>
+              `<li><span class="swatch" style="background:hsl(${hue},85%,60%)"></span>${name}</li>`
+          )
+          .join("")
+      : "";
+
+    // Raw event log, newest first, across every node in this snapshot.
+    const allEvents = nodes.flatMap((n) =>
+      (n.recent_events || []).map((e) => ({ ...e, node: shortName(n.name) || n.id }))
+    );
+    allEvents.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+    const log = document.getElementById("log");
+    if (!allEvents.length) {
+      log.innerHTML = '<div class="empty">No real mesh activity yet.</div>';
+    } else {
+      log.innerHTML = allEvents
+        .slice(0, 100)
+        .map(
+          (e) =>
+            `<div class="log-line"><span class="log-ts">${e.ts}</span> ` +
+            `<b>${e.node}</b> <span class="${kindClass(e.kind)}">${e.kind}</span> ` +
+            `${e.peer !== "unknown" ? "&harr; " + e.peer + " " : ""}` +
+            `-- ${e.detail}</div>`
+        )
+        .join("");
+    }
+  }
+
+  async function refresh() {
+    try {
+      const response = await fetch("/mesh/graph");
+      render(await response.json());
+    } catch (e) {
+      document.getElementById("summary").textContent = "Couldn't reach this node's own /mesh/graph: " + e;
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 1000);
+</script>

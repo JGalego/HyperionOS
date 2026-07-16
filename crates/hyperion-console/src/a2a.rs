@@ -29,6 +29,7 @@ use hyperion_console::ConsoleSession;
 use serde_json::{json, Value};
 
 use crate::http_server::{self, RunningServer};
+use crate::mesh::MeshEventLog;
 
 static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -70,6 +71,9 @@ impl TaskStore {
 pub fn spawn_server(
     session: Arc<Mutex<ConsoleSession>>,
     port: u16,
+    data_dir: String,
+    capabilities: Vec<String>,
+    mesh_log: Arc<MeshEventLog>,
 ) -> std::io::Result<RunningServer> {
     let verifying_key_hex = encode_hex(&session.lock().unwrap().verifying_key().to_bytes());
     let task_store = Arc::new(TaskStore::default());
@@ -77,12 +81,26 @@ pub fn spawn_server(
         ("GET", "/.well-known/agent-card.json") => (
             200,
             "application/json",
-            agent_card(&verifying_key_hex).to_string(),
+            agent_card(&verifying_key_hex, &capabilities).to_string(),
+        ),
+        // Real, many-instance mesh telemetry (docs/998-roadmap.md's Social pillar) -- see
+        // `crate::mesh`'s own doc comment; this is what `/mesh-dashboard`'s background refresh
+        // loop polls on every discovered peer.
+        ("GET", "/mesh/status") => (
+            200,
+            "application/json",
+            crate::mesh::mesh_status(
+                &data_dir,
+                &capabilities,
+                &session.lock().unwrap().backend_label(),
+                &mesh_log,
+            )
+            .to_string(),
         ),
         ("POST", _) => (
             200,
             "application/json",
-            handle_request(&session, &task_store, body),
+            handle_request(&session, &task_store, &mesh_log, body),
         ),
         _ => (
             404,
@@ -92,7 +110,29 @@ pub fn spawn_server(
     })
 }
 
-fn agent_card(verifying_key_hex: &str) -> Value {
+/// Builds the real `skills` array from this node's own configured capabilities -- the exact same
+/// single `hyperion.ask` entry as before this module's mesh-delegation slice existed, when that's
+/// all a node was ever given (see `main.rs`'s own default for `HYPERION_CONSOLE_CAPABILITIES`).
+fn agent_card(verifying_key_hex: &str, capabilities: &[String]) -> Value {
+    let skills: Vec<Value> = capabilities
+        .iter()
+        .map(|capability| {
+            if capability == "hyperion.ask" {
+                json!({
+                    "id": "hyperion.ask",
+                    "name": "Ask Hyperion",
+                    "description": "A real utterance through Hyperion's real Intent Engine and Agent dispatch.",
+                })
+            } else {
+                json!({
+                    "id": capability,
+                    "name": capability,
+                    "description": format!("A real Hyperion capability: {capability}."),
+                })
+            }
+        })
+        .collect();
+
     json!({
         "id": "hyperion-console",
         "name": "Hyperion",
@@ -103,13 +143,7 @@ fn agent_card(verifying_key_hex: &str) -> Value {
             "extendedAgentCard": false,
         },
         "interfaces": [{"type": "json-rpc", "url": "/"}],
-        "skills": [
-            {
-                "id": "hyperion.ask",
-                "name": "Ask Hyperion",
-                "description": "A real utterance through Hyperion's real Intent Engine and Agent dispatch.",
-            },
-        ],
+        "skills": skills,
         // Not part of the real A2A spec -- an additive, real proof of identity this Agent Card
         // also happens to be a convenient place to publish (see this module's own doc comment).
         "publicKey": verifying_key_hex,
@@ -119,6 +153,7 @@ fn agent_card(verifying_key_hex: &str) -> Value {
 fn handle_request(
     session: &Arc<Mutex<ConsoleSession>>,
     task_store: &TaskStore,
+    mesh_log: &MeshEventLog,
     body: &str,
 ) -> String {
     let request: Value = match serde_json::from_str(body) {
@@ -148,6 +183,10 @@ fn handle_request(
                 let signature = encode_hex(&session.sign(reply.as_bytes()).to_bytes());
                 (reply, signature)
             };
+            // Real, many-instance mesh telemetry: this node was just asked to do something --
+            // `"unknown"` because `SendMessage` (unlike this crate's own outbound `send_message`)
+            // never authenticates its caller, so honestly recording *who* isn't possible here.
+            mesh_log.record("DelegationReceived", "unknown", text);
 
             let task_id = format!("task-{}", NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
             let task = json!({
@@ -192,7 +231,7 @@ fn error_response(id: Value, code: i64, message: &str) -> String {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}).to_string()
 }
 
-fn unix_seconds_now() -> u64 {
+pub(crate) fn unix_seconds_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock before Unix epoch")
@@ -217,7 +256,7 @@ fn civil_from_unix_days(z: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
-fn rfc3339_utc(unix_seconds: u64) -> String {
+pub(crate) fn rfc3339_utc(unix_seconds: u64) -> String {
     let days = (unix_seconds / 86_400) as i64;
     let secs_of_day = unix_seconds % 86_400;
     let (y, m, d) = civil_from_unix_days(days);

@@ -10,6 +10,7 @@ mod discovery;
 mod http_client;
 mod http_server;
 mod mcp;
+mod mesh;
 
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,6 +33,7 @@ const SPINNER_FRAME_INTERVAL: Duration = Duration::from_millis(80);
 /// `/a2a-server` work with no argument; either can still be given an explicit port.
 const DEFAULT_MCP_PORT: u16 = 8765;
 const DEFAULT_A2A_PORT: u16 = 8766;
+const DEFAULT_MESH_DASHBOARD_PORT: u16 = 8767;
 
 /// A real, live "this is still running" animation for whichever task names
 /// [`TaskProgress::Starting`] just named -- a real background thread redraws the same terminal
@@ -103,6 +105,25 @@ fn main() {
     // divergent copies.
     let session = Arc::new(Mutex::new(session));
 
+    // Real, per-node capability differentiation (docs/998-roadmap.md's Social pillar, many-
+    // instance mesh delegation slice) -- comma-separated skill ids this node's own `/a2a-server`
+    // advertises. Default: the exact single capability every node advertised before this slice
+    // existed, so a node started with no opinion behaves exactly as before.
+    let capabilities: Vec<String> = std::env::var("HYPERION_CONSOLE_CAPABILITIES")
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|caps| !caps.is_empty())
+        .unwrap_or_else(|| vec!["hyperion.ask".to_string()]);
+    // Real, in-process mesh telemetry shared by every command this session might run (see
+    // `mesh`'s own doc comment) -- one log per process, not per server, since `/mesh-request` and
+    // `/a2a-server`'s own `SendMessage` handling both need to record into the same one.
+    let mesh_log = Arc::new(mesh::MeshEventLog::default());
+
     // `--mcp-stdio` takes over the *entire* process as a real MCP stdio-transport server (see
     // `mcp::run_stdio`'s own doc comment) -- checked before the scenario-file/interactive paths
     // below, since it's a whole distinct launch mode, not a meta-command within one.
@@ -116,11 +137,11 @@ fn main() {
     // fragile `printf '%s\n' "..." | hyperion-console` pattern that pattern's own file had no
     // real way to check in with secrets still injected only at run time.
     if let Some(scenario_path) = std::env::args().nth(1) {
-        run_scenario_file(&scenario_path, &session, &data_dir);
+        run_scenario_file(&scenario_path, &session, &data_dir, &capabilities, &mesh_log);
         return;
     }
 
-    run_interactive(&session, &data_dir);
+    run_interactive(&session, &data_dir, &capabilities, &mesh_log);
 }
 
 /// What a real, typed line meant to control the *process* itself, rather than being a normal
@@ -144,8 +165,9 @@ enum ControlOutcome {
 /// `/mcp-discover`/`/a2a-discover` still feels like a command, not a hang.
 const DEFAULT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// Recognizes `/mcp-server [port]`, `/a2a-server [port]`, `/mcp-discover [seconds]`,
-/// `/a2a-discover [seconds]`, `/standby`, `/mcp-call`, `/a2a-call`, `/trust list`, and
+/// Recognizes `/mcp-server [port]`, `/a2a-server [port] [instance_name]`, `/mcp-discover
+/// [seconds]`, `/a2a-discover [seconds]`, `/standby`, `/mcp-call`, `/a2a-call`,
+/// `/mesh-request <own_port> <capability> <text>`, `/mesh-dashboard [port]`, `/trust list`, and
 /// `/trust forget <peer>` -- see each real handler's own doc comment. Returns
 /// [`ControlOutcome::NotRecognized`] for everything else, so the normal utterance pipeline runs
 /// unchanged.
@@ -153,6 +175,8 @@ fn try_control_command(
     trimmed: &str,
     session: &Arc<Mutex<ConsoleSession>>,
     data_dir: &str,
+    capabilities: &[String],
+    mesh_log: &Arc<mesh::MeshEventLog>,
 ) -> ControlOutcome {
     let lower = trimmed.to_ascii_lowercase();
 
@@ -160,7 +184,10 @@ fn try_control_command(
         return start_mcp_server(session, rest.trim());
     }
     if let Some(rest) = lower.strip_prefix("/a2a-server") {
-        return start_a2a_server(session, rest.trim());
+        return start_a2a_server(session, rest.trim(), data_dir, capabilities, mesh_log);
+    }
+    if let Some(rest) = lower.strip_prefix("/mesh-dashboard") {
+        return start_mesh_dashboard(rest.trim());
     }
     if let Some(rest) = lower.strip_prefix("/mcp-discover") {
         return ControlOutcome::Handled(vec![discover_peers(
@@ -186,6 +213,14 @@ fn try_control_command(
     if let Some(rest) = trimmed.strip_prefix("/a2a-call ") {
         return ControlOutcome::Handled(vec![a2a_call(rest.trim(), data_dir)]);
     }
+    if let Some(rest) = trimmed.strip_prefix("/mesh-request ") {
+        return ControlOutcome::Handled(vec![mesh_request(
+            rest.trim(),
+            data_dir,
+            capabilities,
+            mesh_log,
+        )]);
+    }
     if let Some(rest) = lower.strip_prefix("/trust") {
         return ControlOutcome::Handled(vec![trust_command(rest.trim(), data_dir)]);
     }
@@ -193,7 +228,7 @@ fn try_control_command(
     ControlOutcome::NotRecognized
 }
 
-fn peer_trust_path(data_dir: &str) -> std::path::PathBuf {
+pub(crate) fn peer_trust_path(data_dir: &str) -> std::path::PathBuf {
     std::path::Path::new(data_dir).join("peer_trust.json")
 }
 
@@ -331,9 +366,21 @@ fn start_mcp_server(session: &Arc<Mutex<ConsoleSession>>, port_arg: &str) -> Con
     }
 }
 
-/// `/a2a-server [port]` -- as [`start_mcp_server`], for a real A2A server instead; see [`a2a`]'s
-/// own doc comment for exactly what it exposes.
-fn start_a2a_server(session: &Arc<Mutex<ConsoleSession>>, port_arg: &str) -> ControlOutcome {
+/// `/a2a-server [port] [instance_name]` -- as [`start_mcp_server`], for a real A2A server
+/// instead; see [`a2a`]'s own doc comment for exactly what it exposes. `instance_name` (default
+/// `"hyperion-a2a"`, unchanged from before this argument existed) is real, not cosmetic: several
+/// simultaneously-running nodes (this crate's own many-instance mesh demo) all advertising the
+/// identical literal mDNS instance name would collide on the real LAN.
+fn start_a2a_server(
+    session: &Arc<Mutex<ConsoleSession>>,
+    rest: &str,
+    data_dir: &str,
+    capabilities: &[String],
+    mesh_log: &Arc<mesh::MeshEventLog>,
+) -> ControlOutcome {
+    let mut args = rest.split_whitespace();
+    let port_arg = args.next().unwrap_or("");
+    let instance_name = args.next().unwrap_or("hyperion-a2a");
     let port = if port_arg.is_empty() {
         DEFAULT_A2A_PORT
     } else {
@@ -347,13 +394,19 @@ fn start_a2a_server(session: &Arc<Mutex<ConsoleSession>>, port_arg: &str) -> Con
             }
         }
     };
-    match a2a::spawn_server(session.clone(), port) {
+    match a2a::spawn_server(
+        session.clone(),
+        port,
+        data_dir.to_string(),
+        capabilities.to_vec(),
+        mesh_log.clone(),
+    ) {
         Ok(server) => {
             let addr = server.addr();
             // See `start_mcp_server`'s own comment on why a plain drop is enough here.
             drop(server);
             let advertised =
-                advertise_and_describe(discovery::A2A_SERVICE_TYPE, "hyperion-a2a", addr.port());
+                advertise_and_describe(discovery::A2A_SERVICE_TYPE, instance_name, addr.port());
             ControlOutcome::Handled(vec![format!(
                 "Real A2A server listening on http://{addr} -- Agent Card at \
                  /.well-known/agent-card.json, SendMessage at /. Still running when this command \
@@ -362,6 +415,64 @@ fn start_a2a_server(session: &Arc<Mutex<ConsoleSession>>, port_arg: &str) -> Con
             )])
         }
         Err(e) => ControlOutcome::Handled(vec![format!("I couldn't start the A2A server: {e}")]),
+    }
+}
+
+/// `/mesh-dashboard [port]` -- a real, separate observability role, not a participant in
+/// delegation itself (docs/998-roadmap.md's Social pillar): a real background thread repeatedly
+/// scans the real LAN for every live `/a2a-server` peer, fetches each one's real Agent Card +
+/// `/mesh/status` (see [`mesh::build_mesh_graph`]), and serves the aggregate as a real,
+/// self-contained live page (`GET /`, `mesh_dashboard.html`) plus its raw JSON (`GET /mesh/graph`)
+/// a browser can poll directly.
+fn start_mesh_dashboard(port_arg: &str) -> ControlOutcome {
+    let port = if port_arg.is_empty() {
+        DEFAULT_MESH_DASHBOARD_PORT
+    } else {
+        match port_arg.parse() {
+            Ok(port) => port,
+            Err(_) => {
+                return ControlOutcome::Handled(vec![format!(
+                    "\"{port_arg}\" isn't a real port number -- try \"/mesh-dashboard\" or \
+                     \"/mesh-dashboard 8767\"."
+                )])
+            }
+        }
+    };
+
+    // Starts empty, not with a real first scan already run: `mesh::build_mesh_graph` blocks for
+    // a real, multi-second LAN scan, and this command must return (so `/mesh-dashboard`'s own
+    // real HTTP server actually binds) immediately, not after that scan happens to finish.
+    let graph = Arc::new(Mutex::new(serde_json::json!({"generated_at": "", "nodes": []})));
+    {
+        let graph = graph.clone();
+        thread::spawn(move || loop {
+            let snapshot = mesh::build_mesh_graph();
+            *graph.lock().unwrap() = snapshot;
+            thread::sleep(Duration::from_secs(2));
+        });
+    }
+
+    match http_server::spawn(port, move |method, path, _body| match (method, path) {
+        ("GET", "/") => (200, "text/html", include_str!("mesh_dashboard.html").to_string()),
+        ("GET", "/mesh/graph") => (200, "application/json", graph.lock().unwrap().to_string()),
+        _ => (
+            404,
+            "application/json",
+            serde_json::json!({"error": "not found"}).to_string(),
+        ),
+    }) {
+        Ok(server) => {
+            let addr = server.addr();
+            drop(server);
+            ControlOutcome::Handled(vec![format!(
+                "Real mesh dashboard listening on http://{addr} -- open it in a browser to watch \
+                 the real mesh discover and delegate, live. Still running when this command \
+                 returns; use \"/standby\" to keep this process alive."
+            )])
+        }
+        Err(e) => {
+            ControlOutcome::Handled(vec![format!("I couldn't start the mesh dashboard: {e}")])
+        }
     }
 }
 
@@ -465,6 +576,74 @@ fn a2a_call(rest: &str, data_dir: &str) -> String {
     }
 }
 
+/// `/mesh-request <own_port> <capability> <message text>` -- real, many-instance Hyperion-to-
+/// Hyperion capability delegation (docs/998-roadmap.md's Social pillar): unlike `/a2a-call`, the
+/// caller doesn't already know who to ask. If `capabilities` doesn't already cover `capability`
+/// locally, this scans the real LAN (see [`mesh::find_capability_peer`]) for a real peer whose own
+/// Agent Card advertises it, then delegates `text` to it via the same real, identity-checked
+/// [`a2a::send_message`] `/a2a-call` uses. `own_port` is this node's own bound A2A port (excluded
+/// from the search, so a node never delegates to itself).
+fn mesh_request(
+    rest: &str,
+    data_dir: &str,
+    capabilities: &[String],
+    mesh_log: &mesh::MeshEventLog,
+) -> String {
+    let mut parts = rest.splitn(3, ' ');
+    let (Some(own_port_str), Some(capability), Some(text)) =
+        (parts.next(), parts.next(), parts.next())
+    else {
+        return "\"/mesh-request\" needs <own_port> <capability> <message text>, e.g. \
+                \"/mesh-request 9001 translate-ja hello there\""
+            .to_string();
+    };
+    let Ok(own_port) = own_port_str.parse::<u16>() else {
+        return format!("\"{own_port_str}\" isn't a real port number.");
+    };
+
+    if capabilities.iter().any(|c| c == capability) {
+        return format!(
+            "I already have the \"{capability}\" capability myself -- no need to delegate."
+        );
+    }
+
+    let (peer_name, peer_addr) = match mesh::find_capability_peer(capability, own_port) {
+        Ok(found) => found,
+        Err(e) => return format!("I couldn't find anyone on the LAN with \"{capability}\": {e}"),
+    };
+    let peer_id = format!("{}:{}", peer_addr.ip(), peer_addr.port());
+    mesh_log.record("Discovered", &peer_id, capability);
+
+    let mut trust_store = match hyperion_console::peer_trust::PeerTrustStore::open_or_create(
+        peer_trust_path(data_dir),
+    ) {
+        Ok(store) => store,
+        Err(e) => return format!("I couldn't open the real peer trust store: {e}"),
+    };
+
+    match a2a::send_message(
+        &peer_addr.ip().to_string(),
+        peer_addr.port(),
+        text,
+        &mut trust_store,
+    ) {
+        Ok(reply) => {
+            mesh_log.record("DelegationCompleted", &peer_id, &reply);
+            format!(
+                "I don't have \"{capability}\" myself, so I asked {peer_name} ({peer_id}), \
+                 which does. It replied: {reply}"
+            )
+        }
+        Err(e) => {
+            mesh_log.record("DelegationFailed", &peer_id, &e);
+            format!(
+                "I found {peer_name} ({peer_id}) advertising \"{capability}\", but delegating \
+                 to it failed: {e}"
+            )
+        }
+    }
+}
+
 /// Feeds a real scenario file, one real utterance per line, through the exact same
 /// [`ConsoleSession::handle_utterance_with_progress`] path [`run_interactive`] uses -- a scenario
 /// file is a *record* of the same real turns a person could have typed, not a distinct code path.
@@ -474,7 +653,13 @@ fn a2a_call(rest: &str, data_dir: &str) -> String {
 /// this echo exactly as [`hyperion_console::secret_input::RawEchoOff`] keeps it off a real
 /// terminal. No banner, no trailing interactive prompt: a scenario file's output is meant to be a
 /// reviewable transcript, not a chat session.
-fn run_scenario_file(path: &str, session: &Arc<Mutex<ConsoleSession>>, data_dir: &str) {
+fn run_scenario_file(
+    path: &str,
+    session: &Arc<Mutex<ConsoleSession>>,
+    data_dir: &str,
+    capabilities: &[String],
+    mesh_log: &Arc<mesh::MeshEventLog>,
+) {
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(e) => {
@@ -501,7 +686,7 @@ fn run_scenario_file(path: &str, session: &Arc<Mutex<ConsoleSession>>, data_dir:
         }
 
         if !awaiting_secret {
-            match try_control_command(&utterance, session, data_dir) {
+            match try_control_command(&utterance, session, data_dir, capabilities, mesh_log) {
                 ControlOutcome::Exit => return,
                 ControlOutcome::Handled(lines) => {
                     for line in lines {
@@ -574,7 +759,12 @@ fn expand_env_vars(line: &str) -> String {
 
 /// The real, live stdin/stdout chat loop -- unchanged from before scenario files existed, just
 /// pulled into its own function so [`main`] can choose it or [`run_scenario_file`].
-fn run_interactive(session: &Arc<Mutex<ConsoleSession>>, data_dir: &str) {
+fn run_interactive(
+    session: &Arc<Mutex<ConsoleSession>>,
+    data_dir: &str,
+    capabilities: &[String],
+    mesh_log: &Arc<mesh::MeshEventLog>,
+) {
     // Only for a real interactive terminal -- a screen reader, a pipe, or a redirected/scripted
     // caller gets straight to the one line that actually matters, not decorative noise before it.
     if io::stdout().is_terminal() {
@@ -621,7 +811,7 @@ fn run_interactive(session: &Arc<Mutex<ConsoleSession>>, data_dir: &str) {
         }
 
         if !awaiting_secret {
-            match try_control_command(utterance, session, data_dir) {
+            match try_control_command(utterance, session, data_dir, capabilities, mesh_log) {
                 ControlOutcome::Exit => break,
                 ControlOutcome::Handled(lines) => {
                     for line in lines {

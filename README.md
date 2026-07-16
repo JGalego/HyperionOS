@@ -8,6 +8,8 @@
 
 Hyperion is an intent-native operating system: humans express goals, and the system determines how those goals become reality.
 
+It's resourceful, self-sustaining, and social — reaching for the right capability / tool, recovering from failure on its own, and treating other Hyperions as peers, not silos.
+
 Want the thinking behind it? Read [`CLAUDE.md`](CLAUDE.md).
 
 Want to know exactly what's built and what's next? See [the Roadmap](docs/998-roadmap.md).

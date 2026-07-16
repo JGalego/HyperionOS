@@ -593,6 +593,78 @@ directly to the affected scenario file. Finding 2 is a new, open finding — see
 below; no regression test exists for it yet, since it lives in `hyperion-console`'s own
 `graph_explorer.rs`, not any of the crates under test today.
 
+### 15. Social, at scale — many real Hyperion instances discover, choose, and delegate, live
+
+**[998 — Roadmap](998-roadmap.md)'s Social pillar, past scenario 12.** Scenario 12 proved two
+processes could talk MCP/A2A at all, but by hardcoded host/port and a shared chat turn — no
+discovery, no choice, no delegated capability. This scenario is the real thing: several real,
+separately-launched `hyperion-console` processes, each advertising a *different*
+`HYPERION_CONSOLE_CAPABILITIES` over real mDNS, several of which then really discover a peer that
+has what they themselves lack and delegate to it — no human names a host or port anywhere in this
+flow. `scripts/run-mesh-demo.sh` runs it end to end:
+
+```
+$ ./scripts/run-mesh-demo.sh
+Starting kenji on port 9101 (capabilities: translate-ja)…
+Starting priya on port 9102 (capabilities: image-edit)…
+Starting sam on port 9103 (capabilities: summarize)…
+Starting dana on port 9104 (capabilities: image-edit,summarize)…
+Starting milo on port 9105 (capabilities: hyperion.ask)…
+Starting aria on port 9106 (capabilities: hyperion.ask)…
+
+Mesh dashboard:  http://127.0.0.1:8767
+```
+
+`sam`'s own real transcript, unprompted, choosing and explaining itself:
+
+```
+> /mesh-request 9103 translate-ja please translate this greeting to Japanese
+I don't have "translate-ja" myself, so I asked kenji._hyperion-a2a._tcp.local. (127.0.0.1:9101),
+which does. It replied: status: done -- [mock model 1] echo: please translate this greeting to
+Japanese
+
+(Trusting 127.0.0.1:9101's identity for the first time: 1944943a...)
+```
+
+`kenji`'s own `GET /mesh/status` (queried directly, from a third vantage point) shows the same
+event from the other side, honestly unable to name its caller (`SendMessage` never authenticates
+one):
+
+```json
+{"capabilities":["translate-ja"],"trusted_peers":[],
+ "recent_events":[{"kind":"DelegationReceived","peer":"unknown",
+ "detail":"please translate this greeting to Japanese","ts":"2026-07-16T14:54:06Z"}]}
+```
+
+`/mesh-dashboard`'s own served page (`http://127.0.0.1:8767`, opened in a real browser) polls
+every discovered node's Agent Card + `/mesh/status` once a second and renders all six as a live
+graph — dashed lines for real, persisted trust; a brief bright pulse on an edge for a delegation
+that just happened; a raw scrolling log underneath as the plain-text version of the same story.
+
+**Real bugs this scenario's own manual verification actually caught (both fixed, not just noted):**
+
+1. **`/mesh-dashboard` blocked its own startup on a full LAN scan.** The command handler built the
+   first graph snapshot synchronously before spawning the HTTP server, so the dashboard's own port
+   didn't open until a multi-second mDNS scan finished — invisible in a 2-node test, but real
+   enough to blow past a launcher's own port-wait budget once several other daemons were also on
+   the LAN. Fixed: the server now starts immediately with an empty snapshot; a background thread
+   fills it in.
+2. **The same real peer showed up as several empty "ghost" nodes.** `mdns-sd` resolves one
+   advertised instance to one address *per real network interface* (loopback, a virtualized
+   adapter, …) — `build_mesh_graph` was treating every resolution as its own node, and the ones
+   this process couldn't actually reach rendered as capability-less, event-less clutter. Fixed:
+   deduped by instance name, keeping only the resolution whose Agent Card actually answered.
+
+**Status:** Verified live, both fixes applied directly (not left as open findings) — six real
+nodes discovering, choosing, and delegating with no human naming a peer, and a dashboard that
+really shows it happening. **Open finding, named honestly:** real mDNS convergence across several
+concurrently-advertising processes is genuinely slower and less reliable over some virtualized/
+sandboxed network adapters (observed firsthand: a several-second delay, occasionally more, before
+a later-starting node's own scan sees an earlier one) than the same two-process case scenario 12
+already covers — `mesh::find_capability_peer`'s own real, bounded retry (5 scans × 2s) is a
+mitigation, not a fix for the underlying network's own convergence speed; a real LAN or real
+hardware should converge faster than this sandbox did.
+
 ## Open findings (named, not fixed)
 
 - **Out-of-the-box default experience is a raw model echo.** `MockBackend::generate` is

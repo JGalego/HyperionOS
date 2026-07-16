@@ -453,6 +453,15 @@ impl ConsoleSession {
         self.keystore.sign(bytes)
     }
 
+    /// This session's own real, human-readable label for whichever backend
+    /// [`Self::handle_utterance`] currently dispatches through (`"mock"`, `"candle"`, an `Engine`'s
+    /// own `label()`, or a `Cloud` provider's) -- the same string the bare `/backend` meta-command
+    /// already reports, exposed here so a real caller outside this session (the mesh dashboard's
+    /// own honest "mock vs real" badge) can ask the same question without duplicating this match.
+    pub fn backend_label(&self) -> String {
+        self.current_backend.label()
+    }
+
     /// Real model selection for this session's own `assistant.respond` calls (see
     /// [`Self::run_undecomposed_goal`]) -- a real, small, CPU-only [`hyperion_ai_runtime::CandleBackend`]
     /// when this binary is built with `--features candle`, [`MockBackend`] otherwise, the exact
