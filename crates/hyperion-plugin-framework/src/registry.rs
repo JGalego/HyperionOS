@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
 use hyperion_crypto::VerifyingKey;
 
-use crate::review::validate_manifest;
+use crate::review::{validate_manifest, validate_manifest_against_registry};
 use crate::types::{
     AgentContribution, AutomationWorkflowContribution, CapabilityGrantRequest, CapabilityId,
     CapabilityManifest, Contribution, ExecutionEngineContribution, HardwareSupportContribution,
@@ -220,14 +220,69 @@ impl PluginRegistry {
         manifest: PluginManifest,
         available_depth: TrustDepth,
         consented: bool,
-        _now: u64,
+        now: u64,
         verifying_key: &VerifyingKey,
     ) -> Result<PluginHandle, PluginError> {
         monitor
             .check_rights_ok_result(admin_token, RightsMask::GRANT)
             .map_err(|_| PluginError::Unauthorized)?;
         validate_manifest(&manifest, verifying_key)?;
+        self.install_validated(
+            monitor,
+            admin_token,
+            manifest,
+            available_depth,
+            consented,
+            now,
+        )
+    }
 
+    /// As [`Self::install`], but resolving the manifest's real trusted signing key from
+    /// `manifest.publisher` via a real `hyperion_crypto::PublisherRegistry` instead of taking one
+    /// caller-supplied key on faith -- docs/24's own "verify against publisher's registered key"
+    /// framing, made real. This crate's own previously-named "multi-party / publisher trust
+    /// stores" gap, closed here rather than by replacing [`Self::install`]'s own signature (every
+    /// existing caller trusting one known device identity directly keeps working unchanged). A
+    /// publisher `publishers` has no key registered for is [`PluginError::UnknownPublisher`] —
+    /// never silently trusted against some other key.
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_with_publisher_registry(
+        &self,
+        monitor: &mut CapabilityMonitor,
+        admin_token: &CapabilityToken,
+        manifest: PluginManifest,
+        available_depth: TrustDepth,
+        consented: bool,
+        now: u64,
+        publishers: &hyperion_crypto::PublisherRegistry,
+    ) -> Result<PluginHandle, PluginError> {
+        monitor
+            .check_rights_ok_result(admin_token, RightsMask::GRANT)
+            .map_err(|_| PluginError::Unauthorized)?;
+        validate_manifest_against_registry(&manifest, publishers)?;
+        self.install_validated(
+            monitor,
+            admin_token,
+            manifest,
+            available_depth,
+            consented,
+            now,
+        )
+    }
+
+    /// The real, shared rest of `plugin_install`, once a manifest's signature has already
+    /// verified against whichever key [`Self::install`]/[`Self::install_with_publisher_registry`]
+    /// resolved it against -- kept as one function so the two entry points can never drift on
+    /// what happens after signature verification.
+    fn install_validated(
+        &self,
+        monitor: &mut CapabilityMonitor,
+        admin_token: &CapabilityToken,
+        manifest: PluginManifest,
+        available_depth: TrustDepth,
+        consented: bool,
+        _now: u64,
+    ) -> Result<PluginHandle, PluginError> {
         if manifest.min_trust_depth > available_depth {
             return Err(PluginError::InsufficientTrustDepth);
         }
@@ -304,7 +359,56 @@ impl PluginRegistry {
         monitor
             .check_rights_ok_result(admin_token, RightsMask::GRANT)
             .map_err(|_| PluginError::Unauthorized)?;
+        let (old_manifest, boundary) = self.plugin_and_boundary(plugin_id)?;
+        validate_manifest(&new_manifest, verifying_key)?;
+        self.update_validated(
+            monitor,
+            admin_token,
+            plugin_id,
+            old_manifest,
+            boundary,
+            new_manifest,
+            available_depth,
+            consented_to_new_grants,
+        )
+    }
 
+    /// As [`Self::update`], but resolving the new manifest's real trusted signing key from
+    /// `new_manifest.publisher` via a real `hyperion_crypto::PublisherRegistry` -- the identical
+    /// real multi-publisher trust closure [`Self::install_with_publisher_registry`] gives
+    /// installation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_with_publisher_registry(
+        &self,
+        monitor: &mut CapabilityMonitor,
+        admin_token: &CapabilityToken,
+        plugin_id: PluginId,
+        new_manifest: PluginManifest,
+        available_depth: TrustDepth,
+        consented_to_new_grants: bool,
+        publishers: &hyperion_crypto::PublisherRegistry,
+    ) -> Result<Vec<CapabilityGrantRequest>, PluginError> {
+        monitor
+            .check_rights_ok_result(admin_token, RightsMask::GRANT)
+            .map_err(|_| PluginError::Unauthorized)?;
+        let (old_manifest, boundary) = self.plugin_and_boundary(plugin_id)?;
+        validate_manifest_against_registry(&new_manifest, publishers)?;
+        self.update_validated(
+            monitor,
+            admin_token,
+            plugin_id,
+            old_manifest,
+            boundary,
+            new_manifest,
+            available_depth,
+            consented_to_new_grants,
+        )
+    }
+
+    fn plugin_and_boundary(
+        &self,
+        plugin_id: PluginId,
+    ) -> Result<(PluginManifest, TrustBoundaryId), PluginError> {
         let old_manifest = self
             .plugins
             .lock()
@@ -318,8 +422,24 @@ impl PluginRegistry {
             .unwrap()
             .get(&plugin_id)
             .ok_or(PluginError::NoSuchPlugin)?;
+        Ok((old_manifest, boundary))
+    }
 
-        validate_manifest(&new_manifest, verifying_key)?;
+    /// The real, shared rest of `plugin_update`, once the new manifest's signature has already
+    /// verified against whichever key [`Self::update`]/[`Self::update_with_publisher_registry`]
+    /// resolved it against.
+    #[allow(clippy::too_many_arguments)]
+    fn update_validated(
+        &self,
+        monitor: &mut CapabilityMonitor,
+        admin_token: &CapabilityToken,
+        plugin_id: PluginId,
+        old_manifest: PluginManifest,
+        boundary: TrustBoundaryId,
+        new_manifest: PluginManifest,
+        available_depth: TrustDepth,
+        consented_to_new_grants: bool,
+    ) -> Result<Vec<CapabilityGrantRequest>, PluginError> {
         if new_manifest.min_trust_depth > available_depth {
             return Err(PluginError::InsufficientTrustDepth);
         }

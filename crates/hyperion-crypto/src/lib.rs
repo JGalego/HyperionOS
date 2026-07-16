@@ -45,13 +45,15 @@
 //!   anchoring as opportunistic ("a software key otherwise, degrading gracefully"); this crate
 //!   *is* that software-key fallback. Real TPM-backed sealing on real reference hardware that
 //!   has one is real, separate, hardware-dependent work this sandbox cannot do or verify.
-//! - **Multi-party / publisher trust stores.** docs/24 describes verifying a plugin manifest's
-//!   signature "against publisher's registered key," implying a registry of many trusted
-//!   publisher public keys. No such registry exists anywhere in this workspace today, and
-//!   building one is a separate, real PKI/trust-management feature -- this crate instead models
-//!   one real device identity whose private key nothing without it can forge a valid signature
-//!   under, which already satisfies the milestone's actual exit criterion ("not a checksum a
-//!   forger could trivially reproduce") without inventing an undocumented multi-key design.
+//! - ~~Multi-party / publisher trust stores~~ (2026-07-16) — now real for a caller that wants one:
+//!   [`publisher_registry::PublisherRegistry`] is exactly docs/24's own "verify against
+//!   publisher's registered key" framing, a real map from publisher id to trusted
+//!   [`VerifyingKey`]. `hyperion-plugin-framework::PluginRegistry::install_with_publisher_registry`/
+//!   `update_with_publisher_registry` are its real callers — see that crate's own doc comment.
+//!   This crate's single-device-identity path (`verify` against one caller-supplied key) is
+//!   unchanged and still every existing caller's default; the registry is additive, not a
+//!   replacement. Real publisher onboarding ceremony/rotation policy/revocation remain out of
+//!   scope — this is the trust store itself, not the process that populates or governs it.
 
 use std::fs;
 use std::path::Path;
@@ -60,12 +62,14 @@ use ed25519_dalek::{Signer, Verifier};
 use rand_core::OsRng;
 
 pub mod key_exchange;
+pub mod publisher_registry;
 pub mod secret_store;
 pub mod sync_envelope;
 
 pub use blake3::Hash;
 pub use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 pub use key_exchange::diffie_hellman;
+pub use publisher_registry::PublisherRegistry;
 pub use secret_store::{SecretStore, SecretStoreError};
 pub use sync_envelope::{SyncEnvelope, SyncEnvelopeError};
 pub use x25519_dalek::PublicKey as X25519PublicKey;

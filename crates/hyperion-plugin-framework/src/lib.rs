@@ -75,11 +75,15 @@
 //! - ~~**Real publisher-key signature verification.**~~ — now real
 //!   (docs/998-roadmap.md M9): [`registry::PluginRegistry::install`] checks a real Ed25519
 //!   signature (via [`hyperion_crypto`]) over [`review::sign`]'s canonical bytes, not a
-//!   non-cryptographic checksum a forger could reproduce. Still deferred: docs/24's own
-//!   "verify against publisher's registered key" implies a multi-publisher trust store; no such
-//!   registry exists anywhere in this workspace, so this verifies against one real, trusted
-//!   device identity instead — see [`hyperion_crypto`]'s own doc comment on why that's a
-//!   deliberate, named scope boundary, not an oversight.
+//!   non-cryptographic checksum a forger could reproduce.
+//! - ~~**Multi-publisher trust store.**~~ (2026-07-16) — now real: docs/24's own "verify against
+//!   publisher's registered key" is exactly [`hyperion_crypto::PublisherRegistry`], and
+//!   [`registry::PluginRegistry::install_with_publisher_registry`]/`update_with_publisher_registry`
+//!   resolve a manifest's real trusted key from its own declared `publisher` instead of taking one
+//!   caller-supplied key on faith. [`registry::PluginRegistry::install`]/`update` are unchanged —
+//!   still verify against one caller-supplied key directly, every existing caller's default; the
+//!   registry-aware entry points are additive. An unregistered publisher is a real, honest
+//!   [`types::PluginError::UnknownPublisher`], never a silent fall-through to some other trust.
 //! - **The Consent/Permission-Diff UI.** [`registry::PluginRegistry::install`]
 //!   takes a plain `consented: bool` — the same "caller supplies the
 //!   confirmation, no real prompt UI" pattern `hyperion-device`'s
@@ -124,7 +128,7 @@ mod review;
 mod types;
 
 pub use registry::PluginRegistry;
-pub use review::{sign, validate_manifest};
+pub use review::{sign, validate_manifest, validate_manifest_against_registry};
 pub use types::{
     AgentContribution, AutomationWorkflowContribution, CapabilityGrantRequest, CapabilityId,
     CapabilityManifest, Contribution, ExecutionEngineContribution, HardwareCapabilityEntry,

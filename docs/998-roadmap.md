@@ -2683,3 +2683,28 @@ next step on any of these is a design pass, not code.
   real revoke's cleared `pairing` all land on the exact same real node, never a second, parallel
   one. All 18 of this crate's own pre-existing tests, and `hyperion-threat-model`'s own device
   tests (already calling `pair`/`revoke` with a real token), pass unchanged.
+
+- **`hyperion-crypto`'s multi-publisher trust store, landed (2026-07-16)** (this crate's own named
+  gap: docs/24 describes verifying a plugin manifest's signature "against publisher's registered
+  key," implying a registry of many trusted publisher keys, but no such registry existed anywhere
+  in this workspace). A new `PublisherRegistry` (a real `publisher_id -> VerifyingKey` map,
+  `register`/`verifying_key_for`) is exactly that — real key rotation (re-registering an id
+  replaces its key), and a real, honest `None` for an unrecognized publisher, never a silent
+  fallback to some other trust. `hyperion-plugin-framework` is its real first consumer: new
+  `PluginRegistry::install_with_publisher_registry`/`update_with_publisher_registry` resolve a
+  manifest's real trusted key from its own declared `publisher` field instead of taking one
+  caller-supplied key on faith, closing that crate's own mirrored "multi-party / publisher trust
+  stores" gap. `install`/`update` are unchanged and still every existing caller's default — the
+  registry-aware entry points are additive, both delegating to the identical shared
+  `install_validated`/`update_validated` logic so the two verification paths can never drift on
+  what happens after signature verification. A manifest claiming a publisher it wasn't really
+  signed by is a real `PluginError::SignatureInvalid`; a manifest from a publisher nobody
+  registered a key for is a new, real `PluginError::UnknownPublisher`, never silently accepted.
+  `hyperion-update`'s own mirrored deferred bullet is left open, explicitly: `UpdateManifest` has
+  no `publisher` field to key a lookup by — docs/32 describes a single-vendor OS update model, not
+  a marketplace, so closing it there would mean inventing a field that doc never asks for, not
+  closing a gap it names. Proven end to end in a new `tests/publisher_registry.rs` (5 tests) plus
+  3 in `hyperion-crypto` itself: two publishers each verify against their own real key; a manifest
+  claiming a publisher it wasn't really signed by is rejected; an unregistered publisher is
+  rejected; and `update_with_publisher_registry` resolves the same real trust. All of both crates'
+  pre-existing tests pass unchanged.

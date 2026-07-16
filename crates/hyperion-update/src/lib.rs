@@ -88,8 +88,12 @@
 //!   state store — this crate still has no keystore/state-store concept for any of its data (every
 //!   field here is in-process `Mutex` state, gone on restart), a separate, larger gap this pass
 //!   doesn't attempt to close.
-//! - **Real PKI beyond one device identity.** No multi-publisher trust store exists anywhere in
-//!   this workspace — the same honest boundary `hyperion-plugin-framework`'s own doc comment
+//! - **Real PKI beyond one device identity.** `hyperion-crypto::PublisherRegistry` (2026-07-16)
+//!   now closes this gap for `hyperion-plugin-framework`, which has a real `publisher` field on
+//!   its own manifest to key a lookup by. `UpdateManifest` has no such field — docs/32 describes a
+//!   single-vendor OS update model, not a marketplace of independent publishers — so there is no
+//!   real multi-publisher concept for this crate's own manifest to resolve a key from yet; adding
+//!   one would mean inventing a `publisher` field docs/32 never asks for, not closing a gap it
 //!   already names.
 //! - **Real bootloader A/B hardware.** [`system_image::SystemImageController`]
 //!   simulates the slot/boot-attempt state machine in-process; nothing

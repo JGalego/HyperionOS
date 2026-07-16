@@ -383,6 +383,12 @@ pub enum PluginError {
     Unauthorized,
     #[error("manifest signature does not verify")]
     SignatureInvalid,
+    /// docs/24's own "verify against publisher's registered key" framing: a manifest whose
+    /// declared `publisher` has no key registered in the real
+    /// `hyperion_crypto::PublisherRegistry` a caller supplied — never silently trusted against
+    /// some other key.
+    #[error("no trusted key is registered for publisher {0:?}")]
+    UnknownPublisher(String),
     #[error("requested permission '{0:?}' is not justified by any declared side effect")]
     PermissionOverreach(Operation),
     #[error("this environment cannot satisfy the manifest's declared minimum trust depth")]

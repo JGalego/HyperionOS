@@ -1,4 +1,4 @@
-use hyperion_crypto::{Keystore, Signature, VerifyingKey};
+use hyperion_crypto::{Keystore, PublisherRegistry, Signature, VerifyingKey};
 
 use crate::types::{
     Contribution, Operation, PluginError, PluginManifest, SemanticContract, SideEffect,
@@ -109,7 +109,25 @@ pub fn validate_manifest(
     if !verify_signature(manifest, verifying_key) {
         return Err(PluginError::SignatureInvalid);
     }
+    check_permission_overreach(manifest)
+}
 
+/// As [`validate_manifest`], but resolving `manifest.publisher`'s real, trusted key from
+/// `publishers` instead of taking one caller-supplied key on faith — docs/24's own "verify
+/// against publisher's registered key" framing, made real. A publisher `install_with_
+/// publisher_registry`/`update_with_publisher_registry` has never registered a key for is a real,
+/// honest [`PluginError::UnknownPublisher`], never a silent fall-through to some other trust.
+pub fn validate_manifest_against_registry(
+    manifest: &PluginManifest,
+    publishers: &PublisherRegistry,
+) -> Result<(), PluginError> {
+    let verifying_key = publishers
+        .verifying_key_for(&manifest.publisher)
+        .ok_or_else(|| PluginError::UnknownPublisher(manifest.publisher.clone()))?;
+    validate_manifest(manifest, &verifying_key)
+}
+
+fn check_permission_overreach(manifest: &PluginManifest) -> Result<(), PluginError> {
     for request in &manifest.requested_permissions {
         let justified = manifest.contributions.iter().any(|c| match c {
             Contribution::Capability(cm) => contract_requires(&cm.contract, request.operation),
