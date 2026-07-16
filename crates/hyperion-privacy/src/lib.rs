@@ -71,15 +71,19 @@
 //!   `propagated_to_devices` field — this crate has no multi-device sync
 //!   model to propagate across; `hyperion-federation` is where multiple
 //!   devices exist in this workspace, and it isn't wired to this crate.
-//! - **Physical deletion / `CryptoShred`'s wire-indistinguishability
-//!   guarantee.** ~~`hyperion-knowledge-graph` has no node-delete operation
-//!   (only edges tombstone)~~ — that primitive is now real
-//!   (`hyperion_knowledge_graph::KnowledgeGraph::delete_node`), but [`erasure::erase`] doesn't
-//!   call it yet: it still overwrites a node's current metadata with a tombstone-shaped
-//!   placeholder — a real, observable state change, not the real tombstone the KG itself now
-//!   supports. Wiring `erase(CryptoShred)` to call the real `delete_node` instead remains
-//!   separate follow-up work; nothing here disguises an erasure's network/timing signature (moot
-//!   without a real transport anyway).
+//! - **`CryptoShred`'s wire-indistinguishability guarantee.** ~~`hyperion-knowledge-graph` has no
+//!   node-delete operation (only edges tombstone), so `erasure::erase` overwrote a node's
+//!   metadata with a tombstone-shaped placeholder rather than physically removing it~~ — now
+//!   real: `erase(CryptoShred)` calls the real
+//!   `hyperion_knowledge_graph::KnowledgeGraph::delete_node`, a genuine tombstone no
+//!   `get`/`query`/`traverse`/`dump` call ever surfaces again — not merely an overwritten-but-
+//!   still-readable placeholder. `erase(SoftDelete)` deliberately keeps the placeholder overwrite:
+//!   its own real grace-period `undo` restores through `put_node`, which could never un-tombstone
+//!   a node `delete_node` had genuinely deleted. Still not a byte-level deletion from the WAL's
+//!   history, which no crate in this workspace performs — a real `CryptoShred` would additionally
+//!   destroy the encryption key old versions were sealed under; this crate has no
+//!   encryption-at-rest to shred. Nothing here disguises an erasure's network/timing signature
+//!   either (moot without a real transport anyway).
 //! - ~~**Real crash-recovery timers expiring the grace period.**~~ — now real:
 //!   [`erasure::expire_lapsed_soft_deletes`] is the real, caller-driven clock (matching this
 //!   workspace's hosted-simulator convention of a caller-supplied `now` rather than a real

@@ -21,16 +21,20 @@ fn require(
         .map_err(|_| PrivacyError::Unauthorized)
 }
 
-/// docs/16 §5's erasure: `hyperion-knowledge-graph` has no node-delete
-/// operation (only edges tombstone — see this crate's doc comment), so
-/// "erase" here overwrites the node's metadata with a tombstone-shaped
-/// placeholder rather than physically removing it. This is a real,
-/// observable state change (every field a caller previously stored is
-/// gone from the current version), just not a byte-level deletion from
-/// the WAL's history, which no crate in this workspace performs — a real
-/// `CryptoShred` would additionally destroy the encryption key old
-/// versions were sealed under; this crate has no encryption-at-rest to
-/// shred (see this crate's doc comment).
+/// docs/16 §5's erasure. `ErasureMode::SoftDelete` overwrites the node's metadata with a
+/// tombstone-shaped placeholder via a real, undoable `put_node` -- a real, observable state
+/// change (every field a caller previously stored is gone from the current version) that a real
+/// grace-period `undo` can still reverse. ~~`ErasureMode::CryptoShred` used the same placeholder
+/// overwrite, since `hyperion-knowledge-graph` had no node-delete operation~~ — that primitive is
+/// now real: `CryptoShred` calls `hyperion_knowledge_graph::KnowledgeGraph::delete_node` instead,
+/// a genuine tombstone no `get`/`query`/`traverse`/`dump` call ever surfaces again, not merely an
+/// overwritten-but-still-readable placeholder. Still not a byte-level deletion from the WAL's
+/// history, which no crate in this workspace performs — a real `CryptoShred` would additionally
+/// destroy the encryption key old versions were sealed under; this crate has no encryption-at-rest
+/// to shred (see this crate's doc comment). `SoftDelete` deliberately keeps the placeholder
+/// overwrite, never the real tombstone: its own grace-period `undo` restores through `put_node`,
+/// which — correctly, mirroring the CRDT tombstone-never-silently-resurrected invariant edges
+/// already have — could never un-tombstone a node `delete_node` had genuinely deleted.
 ///
 /// `ErasureMode::SoftDelete` registers a real [33 — Rollback &
 /// Recovery](../33-rollback-recovery.md) grace period: `recovery` opens a
@@ -74,14 +78,21 @@ pub fn erase(
     };
 
     for &id in object_ids {
-        graph.put_node(
-            monitor,
-            token,
-            Some(id),
-            "Erased",
-            None,
-            serde_json::json!({ "erased": true, "mode": format!("{mode:?}") }),
-        )?;
+        match mode {
+            ErasureMode::SoftDelete => {
+                graph.put_node(
+                    monitor,
+                    token,
+                    Some(id),
+                    "Erased",
+                    None,
+                    serde_json::json!({ "erased": true, "mode": format!("{mode:?}") }),
+                )?;
+            }
+            ErasureMode::CryptoShred => {
+                graph.delete_node(monitor, token, id)?;
+            }
+        }
     }
 
     if let Some(action_id) = grace_period_action {

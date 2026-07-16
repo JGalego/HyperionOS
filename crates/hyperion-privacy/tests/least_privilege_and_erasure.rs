@@ -95,7 +95,7 @@ fn an_object_that_is_both_needed_and_permitted_is_included() {
 }
 
 #[test]
-fn erasing_an_object_overwrites_its_metadata_and_returns_a_receipt() {
+fn crypto_shredding_an_object_really_deletes_it_and_returns_a_receipt() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let dir = tempfile::tempdir().unwrap();
@@ -129,11 +129,12 @@ fn erasing_an_object_overwrites_its_metadata_and_returns_a_receipt() {
         "CryptoShred is this crate's no-grace-period, no-recovery path"
     );
 
-    let after = graph.get(&monitor, &root, node).unwrap();
-    assert_eq!(after.metadata["erased"], serde_json::json!(true));
+    // `hyperion-knowledge-graph`'s own real node-delete primitive: a crypto-shredded object is
+    // genuinely gone, not merely overwritten with a still-readable placeholder.
+    let result = graph.get(&monitor, &root, node);
     assert!(
-        after.metadata.get("text").is_none(),
-        "erasure must overwrite the prior sensitive fields, not merely tag them"
+        matches!(result, Err(hyperion_knowledge_graph::GraphError::NotFound)),
+        "a crypto-shredded node must be really deleted, not just tagged, got: {result:?}"
     );
 }
 

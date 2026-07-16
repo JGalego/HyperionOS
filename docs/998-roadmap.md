@@ -3108,3 +3108,21 @@ next step on any of these is a design pass, not code.
   incorrectly resurrected. All other pre-existing `hyperion-recovery` tests, plus
   `hyperion-coordination`'s own `recovery_bridge.rs` (whose real task-result nodes are always
   fresh creates — exactly this code path), pass unchanged.
+
+- **`hyperion-privacy`'s `CryptoShred` wiring to the real `delete_node`, landed (2026-07-16)**
+  (this crate's own named gap, the second and final consumer of
+  `hyperion-knowledge-graph::KnowledgeGraph::delete_node`: "`erasure::erase` overwrites a node's
+  current metadata with a tombstone-shaped placeholder rather than physically removing it").
+  `erase`'s per-id loop now branches on `mode`: `CryptoShred` calls the real `delete_node` — a
+  genuine tombstone no `get`/`query`/`traverse`/`dump` call ever surfaces again — while
+  `SoftDelete` deliberately keeps the placeholder overwrite via `put_node` unchanged, since its
+  own real grace-period `undo` restores through `put_node`, which could never un-tombstone a node
+  `delete_node` had genuinely deleted (the same "an insert never resurrects a deliberate
+  deletion" invariant edges already have). A pre-existing test asserted the *old* placeholder
+  behavior for `CryptoShred` directly (`graph.get(...).unwrap()` succeeding, checking the
+  placeholder's own fields) — renamed and rewritten to assert the new, correct one (a real
+  `GraphError::NotFound`). The sibling `SoftDelete` test, and the crypto-shred/grace-period-sweep
+  interaction test, both pass completely unchanged, confirming `SoftDelete`'s own path was never
+  touched. Still not a byte-level deletion from the WAL's history, and still no real
+  encryption-at-rest to shred — both remain honestly out of scope, unchanged from before. All
+  pre-existing `hyperion-privacy` tests pass unchanged.
