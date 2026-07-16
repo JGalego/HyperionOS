@@ -39,15 +39,19 @@
 //!   in-crate. The vector index is brute-force cosine similarity, not an
 //!   HNSW/ANN structure — adequate for a hosted simulator's object counts,
 //!   explicitly not the docs/09 §11 performance target at scale.
-//! - **`semantically-similar-to` inferred edges, and decay for either
-//!   kind** (docs/09 §5.2). The `co-occurs-with` half is now real:
+//! - **`semantically-similar-to` inferred edges** (docs/09 §5.2) still need real embeddings this
+//!   workspace doesn't have. The `co-occurs-with` half is real:
 //!   `hyperion-memory::MemoryEngine::run_co_occurrence_pass` (that crate
 //!   is real as of Phase 3) submits a real `hyperion-scheduler`
 //!   `BatchDistributable` task and links every pair of objects a real
-//!   `MemoryRecord.provenance` names together. `semantically-similar-to`
-//!   still needs real embeddings this workspace doesn't have, and
-//!   neither kind of inferred edge decays yet (weight is reset to a
-//!   fixed value each pass, not accumulated or aged).
+//!   `MemoryRecord.provenance` names together. ~~Decay for either kind~~ — now real:
+//!   [`decay::effective_edge_weight`] closes "weight is reset to a fixed value each pass, not
+//!   accumulated or aged" for real, on demand — an [`types::EdgeOrigin::Inferred`] edge's real
+//!   weight shrinks with real elapsed time since [`types::EdgeRecord::last_confirmed_at`] (the
+//!   same recency-weighted mechanism docs/09 §5.2 names, `hyperion-memory::decay::decay_score`'s
+//!   own tau); an [`types::EdgeOrigin::Explicit`] edge never decays at all — "a hypothesis is
+//!   allowed to fade," an explicit fact is not. A pure, recompute-from-scratch function (mirrors
+//!   `decay_score`'s own shape), not a batch job overwriting `weight` in place.
 //! - ~~**Per-object ACL enforcement.**~~ Now real for [`graph::KnowledgeGraph::query`]/
 //!   [`graph::KnowledgeGraph::traverse`] — Phase 8's hardening pass
 //!   (docs/41-implementation-phases.md's own framing: "minimal versions... already exist from
@@ -76,11 +80,13 @@
 //!   multi-device/multi-tenant concern; a hosted simulator has exactly one
 //!   shard.
 
+mod decay;
 mod graph;
 mod index;
 mod providers;
 mod types;
 
+pub use decay::{effective_edge_weight, DEFAULT_INFERRED_EDGE_TAU_SECS};
 pub use graph::KnowledgeGraph;
 pub use providers::{capabilities_for_topic, capability_for_topic};
 // Re-exported the same way `NodeId`/`EdgeId` already alias `hyperion_storage::ObjectId` in

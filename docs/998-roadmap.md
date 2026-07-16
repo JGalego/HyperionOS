@@ -2216,6 +2216,23 @@ mean here):
   metric produce two separate rollup windows; an expired log is really gone while a fresh one
   survives the same pass.
 
+- **`hyperion-knowledge-graph`'s inferred-edge decay, landed (2026-07-16)** (docs/09 §5.2's own
+  previously-named gap: "neither kind of inferred edge decays yet (weight is reset to a fixed
+  value each pass, not accumulated or aged)"). `EdgeRecord` gains a real `last_confirmed_at`
+  field, distinct from `created_at` (which stays fixed at an edge's original creation) — every
+  real `KnowledgeGraph::link` call, fresh or reconfirming, advances it, exactly the "continued
+  co-occurrence or continued similarity" event docs/09 §5.2 names as what keeps an inferred edge
+  from decaying. `effective_edge_weight` is the real, on-demand decayed weight this drives: an
+  `EdgeOrigin::Inferred` edge's weight shrinks with real elapsed time since its last real
+  confirmation using the same recency-weighted mechanism docs/09 §5.2 points at
+  (`hyperion-memory::decay::decay_score`'s own 30-day tau for its Semantic/Procedural tiers,
+  reused rather than an invented constant); an `EdgeOrigin::Explicit` edge never decays at all —
+  "a hypothesis is allowed to fade," an explicit fact is not. A pure, recompute-from-scratch
+  function mirroring `decay_score`'s own shape, not a batch job overwriting `weight` in place.
+  Proven end to end: a freshly confirmed edge is at full strength; an edge unconfirmed for twice
+  its tau has decayed substantially; an explicit edge is untouched even ten tau-periods out; a
+  real reconfirmation (a second real `link` call) restores full strength.
+
 ## Backlog
 
 Product-level work that's real, named, and intentionally not yet scheduled — distinct from this

@@ -131,6 +131,10 @@ impl KnowledgeGraph {
             confidence,
             owner,
             created_at,
+            // Real per docs/09 §5.2: every `link` call -- fresh or reconfirming -- is a real
+            // "continued co-occurrence or continued similarity" event, so this always advances,
+            // unlike `created_at` above (which never changes once an edge first exists).
+            last_confirmed_at: now(),
             tombstone: false,
             version: existing.as_ref().map_or(0, |(_, e)| e.version + 1),
         };

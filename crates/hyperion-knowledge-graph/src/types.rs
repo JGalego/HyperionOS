@@ -57,6 +57,14 @@ pub struct EdgeRecord {
     pub confidence: Option<f32>,
     pub owner: u64,
     pub created_at: u64,
+    /// docs/09 §5.2's own previously-named decay gap: distinct from `created_at` (which never
+    /// changes once an edge first exists), this is the real timestamp of the *most recent*
+    /// confirmation -- a fresh [`crate::graph::KnowledgeGraph::link`] call for an already-existing
+    /// edge refreshes it, exactly the "continued co-occurrence or continued similarity" event
+    /// docs/09 §5.2 says keeps an inferred edge from decaying. See
+    /// [`crate::decay::effective_edge_weight`] for the real decay this drives.
+    #[serde(default)]
+    pub last_confirmed_at: u64,
     pub tombstone: bool,
     pub version: u64,
 }
