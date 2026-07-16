@@ -3241,3 +3241,27 @@ next step on any of these is a design pass, not code.
   ledger — proving the lookup genuinely resolves by `invocation_id`, not `target`, which a
   `target`-keyed lookup could never disambiguate. All pre-existing
   `hyperion-model-router`/`hyperion-observability`/`hyperion-api-gateway` tests pass unchanged.
+
+- **`hyperion-api-gateway`'s `cloud_consent` real consent check, landed (2026-07-16)** (this
+  crate's own named gap: "`cloud_consent` stays a fixed `true` — deliberately, not by omission,"
+  pending a dedicated commit rather than "an incidental side effect of unrelated work," per
+  `hyperion-privacy`'s own crate doc). New `router_bridge::build_invocation_with_consent` checks a
+  real, live `hyperion-privacy::ConsentLedger` standing grant scoped to the exact capability being
+  invoked, never assuming consent — the same `ConsentedCloudUpgrade` check
+  `hyperion-scalability::degrade::degrade_capability` already established as this workspace's
+  convention for exactly this question. New `ApiGateway::new_with_consent_ledger` wires an
+  `Option<Arc<ConsentLedger>>` (this workspace's own established optional-backend shape); plain
+  `ApiGateway::new` keeps `consent_ledger: None`, so `cloud_consent` stays the unchanged,
+  permissive `true` default for every existing caller. Explicitly *not* the migration
+  `hyperion-privacy`'s own doc comment asks not to be done as a side effect —
+  `hyperion-model-router`'s own already-shipped, already-tested two-value `PrivacyTier` gate is
+  untouched; only the plain `cloud_consent: bool` value fed into it becomes real, supplied from
+  this gateway's own new integration seam (already depending on both crates, with no dependency
+  cycle — confirmed via every crate's own `Cargo.toml`), exactly the "new integration work should
+  depend on `hyperion-privacy`'s types" path that same doc comment invites. Proven with 3 new
+  tests in `tests/consent_gated_routing.rs`: without a `ConsentLedger` wired, a `ConsentedCloud`-
+  only candidate is still selected (the unchanged default); with one wired and no standing grant,
+  the same candidate is genuinely excluded (`invoke_capability` returns
+  `ApiError::NoEligibleImplementation`, since it was the only registered candidate); after a real
+  `ConsentLedger::request` grant scoped to that exact capability, the candidate becomes eligible
+  and dispatch succeeds. All pre-existing `hyperion-api-gateway` tests pass unchanged.

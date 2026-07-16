@@ -17,6 +17,7 @@ hyperion-memory = { workspace = true }
 hyperion-model-router = { workspace = true }
 hyperion-observability = { workspace = true }
 hyperion-plugin-framework = { workspace = true }
+hyperion-privacy = { workspace = true }
 hyperion-recovery = { workspace = true }
 hyperion-scheduler = { workspace = true }
 hyperion-security = { workspace = true }

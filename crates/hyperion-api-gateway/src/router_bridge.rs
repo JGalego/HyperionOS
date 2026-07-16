@@ -141,13 +141,9 @@ pub(crate) fn consequence_tier_for(level: InterventionLevel) -> ConsequenceTier 
 /// `invoke_capability` is itself always a blocking call the caller waits
 /// on, so `UrgencyClass::Interactive` is already the objectively correct
 /// value here, not a placeholder standing in for a real derivation.
-/// `cloud_consent` staying `true` is also deliberate, not deferred:
-/// `hyperion-privacy::ConsentLedger` is this workspace's canonical
-/// consent mechanism, but that crate's own doc comment explicitly asks
-/// that `hyperion-model-router`'s already-shipped, already-tested
-/// two-value privacy gate *not* be rewired onto it as a rushed
-/// side-effect of unrelated work — "a real, separate migration," in its
-/// own words.
+/// `cloud_consent` staying `true` is [`build_invocation`]'s own default,
+/// unchanged for every caller with no `ConsentLedger` wired — see
+/// [`build_invocation_with_consent`] for the real check.
 pub(crate) fn build_invocation(
     capability_id: &str,
     consequence_tier: ConsequenceTier,
@@ -159,6 +155,38 @@ pub(crate) fn build_invocation(
         quality_floor: None,
         latency_budget_ms: 5_000,
         cloud_consent: true,
+    }
+}
+
+/// As [`build_invocation`], but `cloud_consent` (2026-07-16) is real: a live lookup against
+/// `hyperion-privacy::ConsentLedger` for a standing grant scoped to this exact capability, never
+/// assuming consent — the same `ConsentedCloudUpgrade` check `hyperion-scalability::degrade`
+/// already established as this workspace's convention for exactly this question. This does not
+/// rewire `hyperion-model-router`'s own already-shipped, already-tested two-value `PrivacyTier`
+/// gate onto `ConsentLedger` — that gate (`PrivacyTier::ConsentedCloud` vs. `Local`, checked
+/// against the plain `cloud_consent: bool` this function supplies) is untouched; only the
+/// *value* fed into its existing boolean input becomes real, from a new integration seam
+/// (`hyperion-api-gateway`, which already depends on both crates) rather than from inside
+/// `hyperion-model-router` itself — exactly the "new integration work should depend on
+/// `hyperion-privacy`'s types" path that crate's own doc comment invites, not the "rewiring
+/// three already-shipped crates" migration it asks not to be done as an incidental side effect.
+pub(crate) fn build_invocation_with_consent(
+    capability_id: &str,
+    consequence_tier: ConsequenceTier,
+    consent_ledger: &hyperion_privacy::ConsentLedger,
+    subject: u64,
+    now: u64,
+) -> CapabilityInvocation {
+    let cloud_consent = consent_ledger
+        .standing_grant(
+            subject,
+            &hyperion_privacy::DataScope::Capability(capability_id.to_string()),
+            now,
+        )
+        .is_some();
+    CapabilityInvocation {
+        cloud_consent,
+        ..build_invocation(capability_id, consequence_tier)
     }
 }
 

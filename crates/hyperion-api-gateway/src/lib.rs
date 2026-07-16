@@ -109,18 +109,26 @@
 //!   docs/26 §2's Context API actually needs (`assemble`); the rest of
 //!   `hyperion-context`'s surface isn't part of that API shape and stays
 //!   unexposed through the gateway.
-//! - **`urgency_class`/`cloud_consent` feeding the Model Router.**
+//! - **`urgency_class` feeding the Model Router.**
 //!   [`router_bridge::build_invocation`] now derives `consequence_tier`
 //!   from the real `hyperion-security::RiskAssessment` this same call
-//!   already computes, but `urgency_class` stays a fixed `Interactive`
-//!   and `cloud_consent` stays a fixed `true` — deliberately, not by
-//!   omission. See [`router_bridge::build_invocation`]'s own doc comment
-//!   for why: `invoke_capability` is always a synchronous, blocking call,
-//!   so `Interactive` is already objectively correct rather than a
-//!   placeholder; and `hyperion-privacy`'s own crate doc explicitly asks
-//!   that `hyperion-model-router`'s already-shipped privacy gate not be
-//!   rewired onto its `ConsentLedger` as an incidental side effect of
-//!   unrelated work.
+//!   already computes, but `urgency_class` stays a fixed `Interactive` —
+//!   deliberately, not by omission. See [`router_bridge::build_invocation`]'s
+//!   own doc comment for why: `invoke_capability` is always a synchronous,
+//!   blocking call, so `Interactive` is already objectively correct
+//!   rather than a placeholder. ~~`cloud_consent` stays a fixed `true`~~ (2026-07-16) — now
+//!   real when [`gateway::ApiGateway::new_with_consent_ledger`] is used:
+//!   [`router_bridge::build_invocation_with_consent`] checks a real, live
+//!   `hyperion-privacy::ConsentLedger` standing grant, never assuming consent — the same
+//!   `ConsentedCloudUpgrade` check `hyperion-scalability::degrade::degrade_capability` already
+//!   established as this workspace's convention. This is *not* the "rewiring
+//!   `hyperion-model-router`'s already-shipped privacy gate onto `ConsentLedger`" migration
+//!   `hyperion-privacy`'s own crate doc asks not to be done as an incidental side effect —
+//!   `hyperion-model-router`'s own two-value `PrivacyTier` gate is untouched; only the plain
+//!   `cloud_consent: bool` value fed into it becomes real, from this gateway's own new
+//!   integration seam (it already depends on both crates), exactly the path that same doc
+//!   comment invites. Every caller still using plain [`gateway::ApiGateway::new`] keeps the
+//!   unchanged, permissive `true` default.
 //! - ~~Per-implementation privacy tier from the Plugin Framework manifest~~ (2026-07-16) — now
 //!   real: `hyperion_plugin_framework::CapabilityManifest`/`ImplementationDescriptor` both gained
 //!   a real `privacy_tier` field, and [`router_bridge::to_router_descriptor`] reads

@@ -17,8 +17,8 @@ use hyperion_recovery::RecoveryService;
 use hyperion_security::{InterventionLevel, PendingAction};
 
 use crate::router_bridge::{
-    boost_confidence, build_invocation, consequence_tier_for, to_confidence_and_alternatives,
-    to_router_descriptor,
+    boost_confidence, build_invocation, build_invocation_with_consent, consequence_tier_for,
+    to_confidence_and_alternatives, to_router_descriptor,
 };
 use crate::types::{
     ApiError, ApiScope, EnsembleOutcome, InvokeRequest, InvokeResponse, SkillDelegationSignal,
@@ -49,6 +49,13 @@ pub struct ApiGateway {
     /// now writes — see this crate's doc comment.
     audit: Arc<AuditLedger>,
     scope_grants: Mutex<HashMap<TokenId, HashSet<ApiScope>>>,
+    /// `None` — the default, plain [`Self::new`] — keeps every existing caller's behavior
+    /// unchanged: `cloud_consent` stays the permissive `true` default (see
+    /// `crate::router_bridge::build_invocation`'s own doc comment for why that default is safe).
+    /// `Some` (via [`Self::new_with_consent_ledger`]) is what a caller that actually has a real
+    /// `hyperion-privacy::ConsentLedger` to check opts into — see
+    /// `crate::router_bridge::build_invocation_with_consent`.
+    consent_ledger: Option<Arc<hyperion_privacy::ConsentLedger>>,
 }
 
 impl ApiGateway {
@@ -85,7 +92,39 @@ impl ApiGateway {
             ai_runtime,
             audit,
             scope_grants: Mutex::new(HashMap::new()),
+            consent_ledger: None,
         }
+    }
+
+    /// As [`Self::new`], additionally wiring a real `hyperion-privacy::ConsentLedger` so
+    /// `invoke_capability`'s own `cloud_consent` input to the Model Router becomes a real,
+    /// never-assumed lookup instead of the permissive `true` default — see this crate's own doc
+    /// comment on why that default was previously a deliberate, named gap rather than an
+    /// oversight.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_consent_ledger(
+        intent: Arc<IntentEngine>,
+        memory: Arc<MemoryEngine>,
+        graph: Arc<KnowledgeGraph>,
+        registry: Arc<PluginRegistry>,
+        explainability: Arc<ExplanationStore>,
+        model_router: Arc<ModelRouter>,
+        context: Arc<ContextEngine>,
+        ai_runtime: Arc<LocalAiRuntime>,
+        consent_ledger: Arc<hyperion_privacy::ConsentLedger>,
+    ) -> Self {
+        let mut gateway = Self::new(
+            intent,
+            memory,
+            graph,
+            registry,
+            explainability,
+            model_router,
+            context,
+            ai_runtime,
+        );
+        gateway.consent_ledger = Some(consent_ledger);
+        gateway
     }
 
     /// docs/26 §3's scope grant — the gateway "mints no separate identity
@@ -418,10 +457,19 @@ impl ApiGateway {
             )?;
         }
 
-        let invocation = build_invocation(
-            &request.contract_id,
-            consequence_tier_for(risk_assessment.intervention_level),
-        );
+        let invocation = match &self.consent_ledger {
+            Some(consent_ledger) => build_invocation_with_consent(
+                &request.contract_id,
+                consequence_tier_for(risk_assessment.intervention_level),
+                consent_ledger,
+                token.token_id().0,
+                now,
+            ),
+            None => build_invocation(
+                &request.contract_id,
+                consequence_tier_for(risk_assessment.intervention_level),
+            ),
+        };
         let decision = self.model_router.route(&invocation);
         self.audit.append(
             monitor,
