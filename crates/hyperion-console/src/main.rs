@@ -103,6 +103,14 @@ fn main() {
     // divergent copies.
     let session = Arc::new(Mutex::new(session));
 
+    // `--mcp-stdio` takes over the *entire* process as a real MCP stdio-transport server (see
+    // `mcp::run_stdio`'s own doc comment) -- checked before the scenario-file/interactive paths
+    // below, since it's a whole distinct launch mode, not a meta-command within one.
+    if std::env::args().nth(1).as_deref() == Some("--mcp-stdio") {
+        mcp::run_stdio(session);
+        return;
+    }
+
     // A bare positional argument is a scenario file (docs/999-usage-scenarios.md's own "how to run a
     // scenario" section) -- `source .env && hyperion-console scenarios/foo.txt` in place of the
     // fragile `printf '%s\n' "..." | hyperion-console` pattern that pattern's own file had no

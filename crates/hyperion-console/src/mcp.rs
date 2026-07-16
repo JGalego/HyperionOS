@@ -2,13 +2,15 @@
 //! [`ConsoleSession`] as a small set of real tools and resources over MCP's JSON-RPC 2.0 wire
 //! format (docs/998-roadmap.md's Social pillar -- "being callable" over a real, known protocol,
 //! before "calling others"). Deliberately a narrow, honest subset: five real methods
-//! (`initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`) over HTTP
-//! (MCP's "Streamable HTTP" transport, request/response only -- no SSE streaming upgrade), not
-//! the full MCP surface (no prompts, notifications, or stdio transport). Every tool call and
-//! resource read is a real turn through the exact same [`ConsoleSession::handle_utterance`] path
-//! everything else in this crate already uses -- no new bypass of the capability/consent model;
-//! an MCP client genuinely drives the real Intent Engine, real Agent dispatch, real Knowledge
-//! Graph writes/reads.
+//! (`initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`) over two real
+//! transports -- HTTP ([`spawn_server`], MCP's "Streamable HTTP," request/response only, no SSE
+//! streaming upgrade) and real stdio ([`run_stdio`], newline-delimited JSON-RPC over this
+//! process's own real stdin/stdout -- the transport most real MCP clients, e.g. Claude Desktop,
+//! actually launch a server with) -- not the full MCP surface (no prompts, notifications). Every
+//! tool call and resource read is a real turn through the exact same
+//! [`ConsoleSession::handle_utterance`] path everything else in this crate already uses -- no new
+//! bypass of the capability/consent model; an MCP client genuinely drives the real Intent Engine,
+//! real Agent dispatch, real Knowledge Graph writes/reads, over either transport.
 //!
 //! **Real identity (docs/998-roadmap.md's Social pillar), the same shape `crate::a2a` already
 //! established:** `initialize`'s response now carries this session's own real, hex-encoded
@@ -53,7 +55,35 @@ pub fn spawn_server(
     })
 }
 
-fn handle_request(
+/// The real stdio transport: reads one real, newline-delimited JSON-RPC request per real line of
+/// this process's own stdin, dispatches it through the exact same [`handle_request`]
+/// [`spawn_server`] uses, and writes the real response (also one line, flushed immediately -- a
+/// real stdio client blocks reading a reply) to this process's own stdout. Returns (rather than
+/// looping forever) on real EOF -- the real, honest way a piped-in request stream ends. This
+/// takes over the *entire* process's stdin/stdout for as long as it runs, per the real spec's own
+/// framing (stdio transport is a whole-process launch mode, not one more command a normal
+/// interactive session can also run); see `main.rs`'s own `--mcp-stdio` flag, checked before any
+/// other real startup path.
+pub(crate) fn run_stdio(session: Arc<Mutex<ConsoleSession>>) {
+    use std::io::{BufRead, Write};
+
+    let verifying_key_hex = encode_hex(&session.lock().unwrap().verifying_key().to_bytes());
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else {
+            break; // A real read error ends the transport the same honest way real EOF does.
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let response = handle_request(&session, &line, &verifying_key_hex);
+        let _ = writeln!(stdout, "{response}");
+        let _ = stdout.flush();
+    }
+}
+
+pub(crate) fn handle_request(
     session: &Arc<Mutex<ConsoleSession>>,
     body: &str,
     verifying_key_hex: &str,

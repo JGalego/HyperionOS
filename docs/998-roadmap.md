@@ -2014,9 +2014,18 @@ mean here):
   history, not a queue of work in flight. Proven end to end: a completed task's id really
   round-trips through `GetTask`; an unknown id is a real, honest JSON-RPC error; `ListTasks`
   really returns every completed task in the order they finished.
+- **MCP real stdio transport, landed the same pass (2026-07-16).** `--mcp-stdio` takes over the
+  whole process as a real MCP server speaking newline-delimited JSON-RPC over its own real
+  stdin/stdout — the transport most real MCP clients (e.g. Claude Desktop) actually launch a
+  server with, not just the HTTP one this crate already had. Reuses the exact same
+  `handle_request` dispatch `/mcp-server`'s own HTTP transport uses (made `pub(crate)` rather
+  than duplicated) — one real protocol implementation, two real transports. Proven end to end: a
+  real child process spawned with `--mcp-stdio`, driven with real `initialize`/`tools/call`/
+  `resources/list` requests over real pipes, replies correctly on each and exits cleanly on real
+  stdin EOF.
 - **The rest of each real spec.** MCP: prompts, notifications, the SSE-streaming half of
-  "Streamable HTTP," stdio transport. A2A: streaming/push notifications themselves (see above for
-  why a task store alone doesn't need them yet).
+  "Streamable HTTP." A2A: streaming/push notifications themselves (see above for why a task
+  store alone doesn't need them yet).
 - **A2A, gossip, or any custom/invented protocol.** Worth exactly when a real, concrete need
   outgrows what MCP already covers — not before.
 - **Real network transport for federation** (`hyperion-federation`'s own deferred list: heartbeat
