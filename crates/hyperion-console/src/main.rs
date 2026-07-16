@@ -1,10 +1,12 @@
 //! The real stdin/stdout loop around [`hyperion_console::ConsoleSession`] -- all the real logic
 //! lives there and is tested directly; this binary is only real terminal I/O plumbing (plus, now,
 //! the real MCP/A2A server and client transports -- see [`mcp`]/[`a2a`]/[`http_server`]/
-//! [`http_client`], docs/998-roadmap.md's Social pillar).
+//! [`http_client`], docs/998-roadmap.md's Social pillar), and real mDNS/DNS-SD advertise+discover
+//! (see [`discovery`], same Social pillar's own next-named slice).
 
 mod a2a;
 mod color;
+mod discovery;
 mod http_client;
 mod http_server;
 mod mcp;
@@ -129,9 +131,15 @@ enum ControlOutcome {
     Exit,
 }
 
-/// Recognizes `/mcp-server [port]`, `/a2a-server [port]`, `/standby`, `/mcp-call`, and
-/// `/a2a-call` -- see each real handler's own doc comment. Returns [`ControlOutcome::NotRecognized`]
-/// for everything else, so the normal utterance pipeline runs unchanged.
+/// A real, bounded LAN scan's own default patience -- long enough for real mDNS responders to
+/// really answer (multicast queries/responses aren't instantaneous), short enough that
+/// `/mcp-discover`/`/a2a-discover` still feels like a command, not a hang.
+const DEFAULT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Recognizes `/mcp-server [port]`, `/a2a-server [port]`, `/mcp-discover [seconds]`,
+/// `/a2a-discover [seconds]`, `/standby`, `/mcp-call`, and `/a2a-call` -- see each real handler's
+/// own doc comment. Returns [`ControlOutcome::NotRecognized`] for everything else, so the normal
+/// utterance pipeline runs unchanged.
 fn try_control_command(trimmed: &str, session: &Arc<Mutex<ConsoleSession>>) -> ControlOutcome {
     let lower = trimmed.to_ascii_lowercase();
 
@@ -140,6 +148,18 @@ fn try_control_command(trimmed: &str, session: &Arc<Mutex<ConsoleSession>>) -> C
     }
     if let Some(rest) = lower.strip_prefix("/a2a-server") {
         return start_a2a_server(session, rest.trim());
+    }
+    if let Some(rest) = lower.strip_prefix("/mcp-discover") {
+        return ControlOutcome::Handled(vec![discover_peers(
+            discovery::MCP_SERVICE_TYPE,
+            rest.trim(),
+        )]);
+    }
+    if let Some(rest) = lower.strip_prefix("/a2a-discover") {
+        return ControlOutcome::Handled(vec![discover_peers(
+            discovery::A2A_SERVICE_TYPE,
+            rest.trim(),
+        )]);
     }
     if lower == "/standby" {
         return standby();
@@ -152,6 +172,64 @@ fn try_control_command(trimmed: &str, session: &Arc<Mutex<ConsoleSession>>) -> C
     }
 
     ControlOutcome::NotRecognized
+}
+
+/// Real background advertisement of `service_type` on `port` under `instance_name` -- degrades,
+/// never fails the caller's own server-start: a LAN this console can't multicast on (or a
+/// binary not built with the `mdns` feature) still leaves the real MCP/A2A server itself
+/// perfectly reachable by explicit host/port via `/mcp-call`/`/a2a-call`, exactly as before this
+/// slice existed. Returns a real, honest sentence either way, appended to the server-start
+/// message.
+fn advertise_and_describe(service_type: &str, instance_name: &str, port: u16) -> String {
+    // The returned handle is allowed to simply go out of scope here -- see `start_mcp_server`'s
+    // own comment on why that's enough: the real background daemon it wraps keeps the service
+    // published regardless of this particular handle's lifetime.
+    match discovery::advertise(service_type, instance_name, port) {
+        Ok(_advertisement) => format!(
+            " Also advertising as \"{instance_name}\" on {service_type} for the rest of this \
+             process's life."
+        ),
+        Err(e) => format!(" (Not advertised on the LAN: {e}.)"),
+    }
+}
+
+/// `/mcp-discover [seconds]`/`/a2a-discover [seconds]` -- the real browse half: scans the real
+/// LAN for `service_type` for [`DEFAULT_DISCOVERY_TIMEOUT`] (or `seconds`, if given) and lists
+/// every real peer resolved. See [`discovery`]'s own doc comment on what this does and doesn't
+/// prove about a listed peer.
+fn discover_peers(service_type: &str, seconds_arg: &str) -> String {
+    let timeout = if seconds_arg.is_empty() {
+        DEFAULT_DISCOVERY_TIMEOUT
+    } else {
+        match seconds_arg.parse() {
+            Ok(secs) => Duration::from_secs(secs),
+            Err(_) => {
+                return format!(
+                    "\"{seconds_arg}\" isn't a real number of seconds -- try \"/mcp-discover\" \
+                     or \"/mcp-discover 5\"."
+                )
+            }
+        }
+    };
+    match discovery::discover(service_type, timeout) {
+        Ok(peers) if peers.is_empty() => {
+            format!("No real peers answered for {service_type} within {timeout:?}.")
+        }
+        Ok(peers) => {
+            let mut lines = vec![format!(
+                "Found {} real peer(s) for {service_type}:",
+                peers.len()
+            )];
+            for peer in peers {
+                lines.push(format!(
+                    "  {} -- {} ({})",
+                    peer.instance_name, peer.addr, peer.host
+                ));
+            }
+            lines.join("\n")
+        }
+        Err(e) => format!("I couldn't scan the LAN for {service_type}: {e}"),
+    }
 }
 
 /// `/mcp-server [port]` -- starts a real MCP server in a real background thread (default port
@@ -181,10 +259,13 @@ fn start_mcp_server(session: &Arc<Mutex<ConsoleSession>>, port_arg: &str) -> Con
             // server keeps serving until the whole process ends -- see this function's own doc
             // comment.
             drop(server);
+            let advertised =
+                advertise_and_describe(discovery::MCP_SERVICE_TYPE, "hyperion-mcp", addr.port());
             ControlOutcome::Handled(vec![format!(
                 "Real MCP server listening on http://{addr} -- JSON-RPC 2.0 (initialize, \
                  tools/list, tools/call). Still running when this command returns; use \
-                 \"/standby\" to keep this process alive while you test it from elsewhere."
+                 \"/standby\" to keep this process alive while you test it from elsewhere.\
+                 {advertised}"
             )])
         }
         Err(e) => ControlOutcome::Handled(vec![format!("I couldn't start the MCP server: {e}")]),
@@ -212,11 +293,13 @@ fn start_a2a_server(session: &Arc<Mutex<ConsoleSession>>, port_arg: &str) -> Con
             let addr = server.addr();
             // See `start_mcp_server`'s own comment on why a plain drop is enough here.
             drop(server);
+            let advertised =
+                advertise_and_describe(discovery::A2A_SERVICE_TYPE, "hyperion-a2a", addr.port());
             ControlOutcome::Handled(vec![format!(
                 "Real A2A server listening on http://{addr} -- Agent Card at \
                  /.well-known/agent-card.json, SendMessage at /. Still running when this command \
                  returns; use \"/standby\" to keep this process alive while you test it from \
-                 elsewhere."
+                 elsewhere.{advertised}"
             )])
         }
         Err(e) => ControlOutcome::Handled(vec![format!("I couldn't start the A2A server: {e}")]),

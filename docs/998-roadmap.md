@@ -1943,7 +1943,22 @@ mean here):
   endpoint, including another Hyperion instance's own server. Verified live: two real
   `hyperion-console` processes, one running `/a2a-server`, the other running `/a2a-call` against
   it, genuinely exchanging a real reply pulled from the *first* process's own conversation history.
-  Not discovery — the endpoint is named, not found (see deferred, below).
+  Not discovery — the endpoint is named, not found (this pillar's own next gap when this was
+  written; now landed, next bullet).
+- **mDNS/DNS-SD advertise + discover, landed (2026-07-16).** `/mcp-server`/`/a2a-server` really
+  publish a real `_hyperion-mcp._tcp.local.`/`_hyperion-a2a._tcp.local.` mDNS service record (via
+  the pure-Rust `mdns-sd` crate) on the real port they bound; `/mcp-discover [seconds]`/
+  `/a2a-discover [seconds]` really browse the real LAN for the same service types and list every
+  real peer resolved. Feature-gated (`mdns`, off by default, matching `real-http`/`candle`'s own
+  convention) — a binary not built with it gets an honest `DiscoveryError::NotCompiledIn` from
+  both commands instead of a silently faked result. Proven end to end (including on this sandbox's
+  own real network stack): a running `/mcp-server` really resolves its own real advertised
+  address(es) via `/mcp-discover`, including across multiple real interfaces/address families on
+  a multi-homed host; scanning with nothing advertising finds nothing; the no-feature build
+  degrades honestly for both directions. Discovery only, not identity/trust (see deferred, below)
+  — and not yet consumed by `hyperion-device`'s own separate "real discovery protocols
+  (mDNS/BLE/Matter/cloud-relay)" gap for *device pairing*, which is a distinct concern from this
+  console-level *peer* discovery and remains its own, separate future step.
 - **`/standby`** — blocks on a real read of this process's own stdin until the user provides real
   input, then exits. Exists specifically so a scenario that starts a background server doesn't
   have the whole process (server included) exit the instant the scenario file ends — the real
@@ -1958,14 +1973,9 @@ mean here):
 - **Real cross-instance discovery, identity, and trust.** Every existing multi-device concept in
   this workspace (`hyperion-federation`, `hyperion-device`) models *one user's own devices* inside
   one process — there is no concept anywhere of a *different* user/instance as a peer yet. This is
-  a real, separate identity model, not a small extension of what exists. `/mcp-call`/`/a2a-call`
-  work only because the caller already knows the exact host/port to name.
-- **mDNS/DNS-SD advertise + discover.** The natural next slice for the gap above's *discovery*
-  half (not identity/trust): `/mcp-server`/`/a2a-server` publishing a real
-  `_hyperion-mcp._tcp.local.`/`_hyperion-a2a._tcp.local.` service record on the real port they
-  bound, and a way to browse for the same service types on the LAN — closing
-  `hyperion-device`'s own already-named "real discovery protocols (mDNS/BLE/Matter/cloud-relay)"
-  gap at the same time. Not started this pass.
+  a real, separate identity model, not a small extension of what exists — **discovery** (below) is
+  landed; **identity/trust** is not. `/mcp-call`/`/a2a-call` still work only because the caller
+  already knows the exact host/port to name — discovering a peer doesn't yet mean trusting it.
 - **The rest of each real spec.** MCP: resources, prompts, notifications, the SSE-streaming half
   of "Streamable HTTP," stdio transport. A2A: `GetTask`/`ListTasks`/streaming/push notifications
   (no real task store exists here — every dispatch completes synchronously before `SendMessage`

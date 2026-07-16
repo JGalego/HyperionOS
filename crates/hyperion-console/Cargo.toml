@@ -20,7 +20,12 @@ hyperion-intent = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
 hyperion-netstack = { workspace = true }
 hyperion-workspace = { workspace = true }
+# Real mDNS/DNS-SD advertise+discover for `/mcp-server`/`/a2a-server` (docs/998-roadmap.md's
+# Social pillar) -- a pure-Rust mDNS-SD implementation, no C/system daemon dependency. Optional,
+# gated behind the `mdns` feature -- see this crate's own `discovery` module doc comment.
+mdns-sd = { version = "0.20", optional = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 # For src/secret_input.rs's real termios ECHO-off guard (docs/998-roadmap.md "Phase 2:
 # cloud providers") -- already pinned at the workspace level (hyperion-init/hyperion-cgroups/
 # hyperion-trust-boundary/hyperion-supervisor already depend on it), so this is zero new external
@@ -52,3 +57,7 @@ openai-compat = ["hyperion-ai-runtime/openai-compat"]
 # separate feature here: it's reached via the existing `openai-compat` feature's own backend.
 anthropic = ["hyperion-ai-runtime/anthropic"]
 gemini = ["hyperion-ai-runtime/gemini"]
+# Real, feature-gated mDNS/DNS-SD advertise+discover (docs/998-roadmap.md's Social pillar) --
+# same reasoning as `real-http` above: a real release image opts in explicitly; every host-side
+# dev/test build of this console stays network-free by default.
+mdns = ["dep:mdns-sd"]
