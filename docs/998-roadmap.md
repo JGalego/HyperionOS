@@ -2135,12 +2135,18 @@ lost meaning, not just wasted time. CLAUDE.md's own principles (User Control, Ex
 Progressive Complexity) already answer *some* of this well. These items are the parts that don't
 have a real architectural home yet.
 
-- **No forced "think" checkpoint before intent decomposition.** Today: utterance → Intent Engine →
-  decomposition happens with zero friction, by design (docs/05). Missing: an analogous, human-owned
-  pause *before* Hyperion decides what a goal means — not a confirmation dialog for a risky action
-  (that already exists, see `hyperion-capability`'s consent gate), but a moment for the human's own
-  reasoning to run first. Likely home: `hyperion-intent` or `hyperion-console`, as an opt-in
-  session mode, not a default that adds friction to every goal.
+- **Forced "think" checkpoint before intent decomposition — landed (2026-07-16).** Today (before
+  this pass): utterance → Intent Engine → decomposition happened with zero friction, by design
+  (docs/05). `IntentEngine::set_think_mode` opts a session into a real, human-owned pause *before*
+  Hyperion decides what a goal means — not a confirmation dialog for a risky action (that already
+  existed, see `hyperion-capability`'s consent gate), but a genuine moment for the human's own
+  reasoning to run first: `handle_utterance` withholds decomposition entirely
+  (`HandleOutcome::PendingThink`) until an explicit `IntentEngine::proceed_with_decomposition`
+  call. `hyperion-console`'s `/think on|off`/`/think-proceed` meta-commands are the real,
+  human-facing surface — proven end to end: a paused utterance produces no decomposition at all
+  (zero leaves) until `/think-proceed`, at which point the exact same decomposition happens as if
+  think mode had been off the whole time. Opt-in and per-session, matching this item's own explicit
+  constraint — a session that never enables it behaves exactly as before.
 - **No declared judgment/taste/empathy/context boundary, distinct from "risky."** The existing
   consent gate triggers on irreversibility/cost/security — a different axis from "this decision is
   a matter of taste or empathy and deserves more human involvement regardless of how reversible it

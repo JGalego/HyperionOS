@@ -144,6 +144,11 @@ pub struct ConsoleSession {
     /// present a real, verifiable public key and sign its own real replies with it -- see
     /// [`Self::verifying_key`]/[`Self::sign`].
     keystore: Keystore,
+    /// docs/998-roadmap.md's Backlog "Protect the Human" item: the most recent real, paused root
+    /// Intent from a `HandleOutcome::PendingThink` (this session's think mode is on -- see
+    /// [`Self::handle_meta_command`]'s `/think` commands), if any -- what `/think-proceed`
+    /// resolves against, since a human wouldn't type a raw `NodeId`.
+    pending_think_root: Option<NodeId>,
 }
 
 /// The real prompt and capability this session is waiting to re-invoke once a live
@@ -400,6 +405,7 @@ impl ConsoleSession {
             session_id: "console".to_string(),
             last_plan_session_id: None,
             keystore,
+            pending_think_root: None,
         })
     }
 
@@ -729,6 +735,58 @@ impl ConsoleSession {
             return Some(Self::help_text());
         }
 
+        // docs/998-roadmap.md's Backlog "Protect the Human" item: an opt-in, per-session pause
+        // before Hyperion decomposes a goal -- "a moment for the human's own reasoning to run
+        // first," never a default. `/think`/`/think on`/`/think off` toggle it;
+        // `/think-proceed` commits to the most recent real pending decomposition once that
+        // reasoning has run.
+        if lower.starts_with("/think-proceed") {
+            let Some(root) = self.pending_think_root.take() else {
+                return Some(vec![
+                    "Nothing is paused waiting on \"/think-proceed\" right now.".to_string(),
+                ]);
+            };
+            return Some(
+                match self.intent_engine.proceed_with_decomposition(
+                    &self.monitor,
+                    &self.token,
+                    root,
+                ) {
+                    Ok(_) => vec!["Proceeding -- decomposing that goal now.".to_string()],
+                    Err(e) => vec![format!("I couldn't proceed with that: {e}")],
+                },
+            );
+        }
+        if lower.starts_with("/think") {
+            let rest = trimmed["/think".len()..].trim();
+            return Some(match rest {
+                "" => vec![format!(
+                    "Think mode is currently {} for this session.",
+                    if self.intent_engine.is_think_mode(&self.session_id) {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                )],
+                "on" => {
+                    self.intent_engine.set_think_mode(&self.session_id, true);
+                    vec![
+                        "Think mode is on -- I'll pause before deciding what a new goal means \
+                         until you say \"/think-proceed\"."
+                            .to_string(),
+                    ]
+                }
+                "off" => {
+                    self.intent_engine.set_think_mode(&self.session_id, false);
+                    self.pending_think_root = None;
+                    vec!["Think mode is off.".to_string()]
+                }
+                other => vec![format!(
+                    "\"/think {other}\" isn't a mode I know -- try \"/think on\" or \"/think off\"."
+                )],
+            });
+        }
+
         if lower.starts_with("/recall") {
             let text = trimmed["/recall".len()..].trim();
             return Some(self.graph_explorer.recall(&self.monitor, &self.token, text));
@@ -973,6 +1031,12 @@ impl ConsoleSession {
             "  /graph dot                                  the same, as Graphviz DOT -- pipe to \
              \"dot -Tsvg\" to draw it"
                 .to_string(),
+            "  /think on|off                                pause before deciding what a new \
+             goal means, until you say \"/think-proceed\" (bare, to check the current mode)"
+                .to_string(),
+            "  /think-proceed                              commit to deciding what the paused \
+             goal means"
+                .to_string(),
             "  /help                                        show this message".to_string(),
         ]
     }
@@ -1087,6 +1151,14 @@ impl ConsoleSession {
 
         let root = match outcome {
             HandleOutcome::Submitted(root) => root,
+            HandleOutcome::PendingThink(root) => {
+                self.pending_think_root = Some(root);
+                return vec![
+                    "Pausing before I decide what that means -- take a moment, then say \
+                     \"/think-proceed\" when you're ready."
+                        .to_string(),
+                ];
+            }
             HandleOutcome::NeedsClarification {
                 mention,
                 candidates,

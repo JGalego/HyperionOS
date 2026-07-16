@@ -43,12 +43,21 @@ pub enum SubmitIntentResponse {
         mention: String,
         candidates: Vec<NodeId>,
     },
+    /// docs/998-roadmap.md's Backlog "Protect the Human" item, surfaced through the gateway: the
+    /// caller's session is in `hyperion-intent`'s real think mode, so `intent_id` names a real,
+    /// paused root Intent — call `hyperion_intent::IntentEngine::proceed_with_decomposition`
+    /// directly (this gateway has no route for it yet; see this crate's doc comment) once the
+    /// human's own reasoning has run.
+    PendingThink {
+        intent_id: NodeId,
+    },
 }
 
 impl From<HandleOutcome> for SubmitIntentResponse {
     fn from(outcome: HandleOutcome) -> Self {
         match outcome {
             HandleOutcome::Submitted(id) => SubmitIntentResponse::Submitted { intent_id: id },
+            HandleOutcome::PendingThink(id) => SubmitIntentResponse::PendingThink { intent_id: id },
             HandleOutcome::NeedsClarification {
                 mention,
                 candidates,

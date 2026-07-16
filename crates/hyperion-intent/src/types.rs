@@ -73,4 +73,10 @@ pub enum HandleOutcome {
         mention: String,
         candidates: Vec<NodeId>,
     },
+    /// docs/998-roadmap.md's Backlog "Protect the Human" item: a root Intent that a matched
+    /// template *would* decompose, but didn't — the session named by
+    /// [`crate::IntentEngine::set_think_mode`] is opted into a real, human-owned pause "before
+    /// Hyperion decides what a goal means," so decomposition waits on an explicit
+    /// [`crate::IntentEngine::proceed_with_decomposition`] call instead of happening immediately.
+    PendingThink(NodeId),
 }

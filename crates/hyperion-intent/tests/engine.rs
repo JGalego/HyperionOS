@@ -200,9 +200,7 @@ fn ambiguous_explicit_mention_escalates_instead_of_guessing() {
         .unwrap();
     match outcome {
         HandleOutcome::NeedsClarification { candidates, .. } => assert!(candidates.len() >= 2),
-        HandleOutcome::Submitted(_) => {
-            panic!("two equally-plausible documents must escalate, not guess")
-        }
+        other => panic!("two equally-plausible documents must escalate, not guess, got: {other:?}"),
     }
 }
 

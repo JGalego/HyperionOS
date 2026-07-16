@@ -73,6 +73,15 @@
 //!   this crate's decomposition as one of its still-uninstrumented
 //!   examples; that example is now closed (its own gap — retrofitting
 //!   every other Phase 3-7 crate's decision points — remains open).
+//!
+//! Real (2026-07-16, docs/998-roadmap.md's Backlog "Protect the Human" item): the "no forced
+//! 'think' checkpoint before intent decomposition" gap that item itself named as missing —
+//! [`engine::IntentEngine::set_think_mode`] opts a session into a real, human-owned pause "before
+//! Hyperion decides what a goal means," and [`engine::IntentEngine::handle_utterance`] really
+//! withholds decomposition for that session (returning [`types::HandleOutcome::PendingThink`])
+//! until an explicit [`engine::IntentEngine::proceed_with_decomposition`] call — never a default,
+//! per that item's own explicit constraint. `hyperion-console`'s `/think on|off`/`/think-proceed`
+//! meta-commands are the real, human-facing surface for it.
 
 mod engine;
 mod templates;

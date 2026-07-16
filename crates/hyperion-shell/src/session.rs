@@ -298,6 +298,21 @@ impl IntentSink for EmbeddedSession {
 
         let root = match outcome {
             HandleOutcome::Submitted(root) => root,
+            // This crate mints a fresh, unique `session_id` per turn (`turn_tag`, above), so
+            // `hyperion-intent`'s think mode -- opt-in *per session* -- has no persistent session
+            // here to ever be toggled on for; this arm exists only so the match stays exhaustive,
+            // not because this crate's own pipeline can actually produce it today.
+            HandleOutcome::PendingThink(_) => {
+                return TurnOutcome {
+                    graph: None,
+                    tree: None,
+                    narration: vec![
+                        "That paused before deciding what it means, but this session has no way \
+                         to resume it -- try again without think mode."
+                            .to_string(),
+                    ],
+                }
+            }
             HandleOutcome::NeedsClarification {
                 mention,
                 candidates,

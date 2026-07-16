@@ -75,6 +75,23 @@ pub struct IntentEngine {
     /// roster — the same optional-real-backend shape `AgentRuntime`/`CoordinationSession`
     /// already use for their own `Option<Arc<PluginRegistry>>`.
     plugins: Option<Arc<PluginRegistry>>,
+    /// docs/998-roadmap.md's Backlog "Protect the Human" item: sessions opted into a real,
+    /// human-owned pause before decomposition — see [`Self::set_think_mode`]. Purely local session
+    /// state, like `active_graphs`; not a capability-gated action.
+    think_mode_sessions: Mutex<HashSet<String>>,
+    /// A matched template [`Self::handle_utterance`] deliberately withheld from decomposition
+    /// because its session is in think mode, keyed by the pending root — see
+    /// [`Self::proceed_with_decomposition`].
+    pending_decompositions: Mutex<HashMap<NodeId, PendingDecomposition>>,
+}
+
+/// What [`IntentEngine::proceed_with_decomposition`] needs to finish what
+/// [`IntentEngine::handle_utterance`] started once think mode is satisfied — exactly the
+/// arguments `IntentEngine::decompose_and_record` takes beyond the root Intent itself.
+struct PendingDecomposition {
+    template: Template,
+    urgent: bool,
+    now_ts: u64,
 }
 
 impl IntentEngine {
@@ -97,7 +114,61 @@ impl IntentEngine {
             explanations: ExplanationStore::new(),
             next_action_id: AtomicU64::new(1),
             plugins,
+            think_mode_sessions: Mutex::new(HashSet::new()),
+            pending_decompositions: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Opts `session_id` into (or back out of) docs/998-roadmap.md's Backlog "Protect the Human"
+    /// pause: while enabled, a matched template's decomposition in [`Self::handle_utterance`]
+    /// waits for an explicit [`Self::proceed_with_decomposition`] call instead of happening
+    /// immediately. Deliberately opt-in and per-session, matching that item's own explicit
+    /// constraint — "not a default that adds friction to every goal."
+    pub fn set_think_mode(&self, session_id: &str, enabled: bool) {
+        let mut sessions = self.think_mode_sessions.lock().unwrap();
+        if enabled {
+            sessions.insert(session_id.to_string());
+        } else {
+            sessions.remove(session_id);
+        }
+    }
+
+    /// Whether `session_id` is currently in think mode — see [`Self::set_think_mode`].
+    pub fn is_think_mode(&self, session_id: &str) -> bool {
+        self.think_mode_sessions
+            .lock()
+            .unwrap()
+            .contains(session_id)
+    }
+
+    /// The real, explicit second step for a session in think mode: commits to decomposing `root`
+    /// (the pending Intent [`Self::handle_utterance`] created but deliberately did not decompose)
+    /// only once the caller — the human's own reasoning, not Hyperion's — actually asks it to
+    /// proceed. [`IntentError::NotFound`] if `root` names no pending decomposition (already
+    /// decided, or never paused to begin with).
+    pub fn proceed_with_decomposition(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        root: NodeId,
+    ) -> Result<HandleOutcome, IntentError> {
+        let pending = self
+            .pending_decompositions
+            .lock()
+            .unwrap()
+            .remove(&root)
+            .ok_or(IntentError::NotFound)?;
+        let mut root_intent = self.get_intent(monitor, token, root)?;
+        self.decompose_and_record(
+            monitor,
+            token,
+            root,
+            &mut root_intent,
+            &pending.template,
+            pending.urgent,
+            pending.now_ts,
+        )?;
+        Ok(HandleOutcome::Submitted(root))
     }
 
     /// docs/18's "queryable Explanation Record" surface for this engine's
@@ -251,45 +322,24 @@ impl IntentEngine {
         let root = self.put_intent(monitor, token, None, &root_intent)?;
 
         if let Some(t) = &template {
-            let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
-            let explanation_id = self.explanations.begin(
-                monitor,
-                token,
-                action_id,
-                root.0,
-                0,
-                &root_intent.predicate,
-                vec![],
-                now_ts,
-            )?;
-
-            let children = self.decompose(monitor, token, root, t, urgent, now_ts)?;
-
-            for (i, (&leaf_id, leaf)) in children.iter().zip(t.leaves.iter()).enumerate() {
-                self.explanations.append_step(
-                    monitor,
-                    token,
-                    explanation_id,
-                    ReasoningStep {
-                        step_index: i as u32,
-                        description: format!("decomposed into '{}'", leaf.predicate),
-                        capability_ref: Some(leaf.predicate.to_string()),
-                        inputs_ref: vec![root],
-                        output_ref: Some(leaf_id),
+            if self.is_think_mode(session_id) {
+                self.pending_decompositions.lock().unwrap().insert(
+                    root,
+                    PendingDecomposition {
+                        template: t.clone(),
+                        urgent,
+                        now_ts,
                     },
-                    Vec::new(),
-                )?;
+                );
+                self.active_graphs
+                    .lock()
+                    .unwrap()
+                    .entry(session_id.to_string())
+                    .or_default()
+                    .push(root);
+                return Ok(HandleOutcome::PendingThink(root));
             }
-            self.explanations.transition(
-                monitor,
-                token,
-                explanation_id,
-                ControlState::Completed,
-            )?;
-
-            root_intent.id = root;
-            root_intent.children = children;
-            self.put_intent(monitor, token, Some(root), &root_intent)?;
+            self.decompose_and_record(monitor, token, root, &mut root_intent, t, urgent, now_ts)?;
         }
 
         self.active_graphs
@@ -299,6 +349,59 @@ impl IntentEngine {
             .or_default()
             .push(root);
         Ok(HandleOutcome::Submitted(root))
+    }
+
+    /// The decompose-then-explain-then-persist sequence shared by
+    /// [`Self::handle_utterance`]'s immediate path and
+    /// [`Self::proceed_with_decomposition`]'s deferred one — see this crate's doc comment on the
+    /// think-mode pause.
+    #[allow(clippy::too_many_arguments)]
+    fn decompose_and_record(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        root: NodeId,
+        root_intent: &mut Intent,
+        template: &Template,
+        urgent: bool,
+        now_ts: u64,
+    ) -> Result<(), IntentError> {
+        let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
+        let explanation_id = self.explanations.begin(
+            monitor,
+            token,
+            action_id,
+            root.0,
+            0,
+            &root_intent.predicate,
+            vec![],
+            now_ts,
+        )?;
+
+        let children = self.decompose(monitor, token, root, template, urgent, now_ts)?;
+
+        for (i, (&leaf_id, leaf)) in children.iter().zip(template.leaves.iter()).enumerate() {
+            self.explanations.append_step(
+                monitor,
+                token,
+                explanation_id,
+                ReasoningStep {
+                    step_index: i as u32,
+                    description: format!("decomposed into '{}'", leaf.predicate),
+                    capability_ref: Some(leaf.predicate.to_string()),
+                    inputs_ref: vec![root],
+                    output_ref: Some(leaf_id),
+                },
+                Vec::new(),
+            )?;
+        }
+        self.explanations
+            .transition(monitor, token, explanation_id, ControlState::Completed)?;
+
+        root_intent.id = root;
+        root_intent.children = children;
+        self.put_intent(monitor, token, Some(root), root_intent)?;
+        Ok(())
     }
 
     /// docs/05 §Algorithms 2/3: flat HTN decomposition (see this crate's
