@@ -4,6 +4,7 @@
 
 use hyperion_release_gate::{
     BenchmarkBaseline, BenchmarkRegistry, BenchmarkResult, GateAction, GateOutcome, RegressionGate,
+    RegressionThreshold,
 };
 
 fn result(p99_ms: u32) -> BenchmarkResult {
@@ -31,8 +32,9 @@ fn a_result_within_threshold_of_baseline_passes() {
     registry.set_gate(
         "boot.cold",
         RegressionGate {
-            threshold_pct: 5.0,
+            threshold: RegressionThreshold::Percent(5.0),
             action: GateAction::BlockRelease,
+            baseline_window_builds: 0,
         },
     );
 
@@ -47,8 +49,9 @@ fn a_result_beyond_threshold_blocks_when_the_gate_action_is_block_release() {
     registry.set_gate(
         "boot.cold",
         RegressionGate {
-            threshold_pct: 5.0,
+            threshold: RegressionThreshold::Percent(5.0),
             action: GateAction::BlockRelease,
+            baseline_window_builds: 0,
         },
     );
 
@@ -64,8 +67,9 @@ fn the_same_breach_only_warns_when_the_gate_action_is_warn() {
     registry.set_gate(
         "boot.cold",
         RegressionGate {
-            threshold_pct: 5.0,
+            threshold: RegressionThreshold::Percent(5.0),
             action: GateAction::Warn,
+            baseline_window_builds: 0,
         },
     );
 
@@ -80,8 +84,9 @@ fn a_different_hardware_tier_never_compares_against_another_tiers_baseline() {
     registry.set_gate(
         "boot.cold",
         RegressionGate {
-            threshold_pct: 5.0,
+            threshold: RegressionThreshold::Percent(5.0),
             action: GateAction::BlockRelease,
+            baseline_window_builds: 0,
         },
     );
 

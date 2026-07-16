@@ -2508,3 +2508,24 @@ next step on any of these is a design pass, not code.
   scoring per distinct `(agent_id, capability_ref)` pair; a new `tests/calibration.rs` (5 tests)
   proves the same behaviors through the real `ExplanationStore` API end to end, not just the pure
   scoring function in isolation.
+
+- **`hyperion-release-gate`'s sigma-based statistical-significance regression testing, landed
+  (2026-07-16)** (docs/36 §1/§2's own named gap: "`RegressionGate` is a flat percentage threshold;
+  docs/36's `{sigma: f32}` variant needs a sample-variance history this crate doesn't maintain").
+  `RegressionGate.threshold_pct: f32` becomes a real `RegressionThreshold` enum —
+  `Percent(f32)` (this crate's original mechanism, unchanged behavior) or `Sigma(f32)` (new, real).
+  `BenchmarkRegistry` gains a real, per-`(spec_id, hardware_profile)` rolling result window
+  (`RegressionGate.baseline_window_builds` trailing `p99_ms` values — docs/36 §1's own
+  `baseline_window: {builds: u32}`), bounded so it never grows unboundedly across a long-running
+  process. A new `evaluate_sigma_gate` computes a real z-score — `(result - mean) / stddev` over
+  the window's own real, computed mean and population standard deviation — gated the same way
+  `evaluate_gate`'s percent path already was; fewer than 2 real prior results has nothing real to
+  compute a variance against yet, `Pass`, matching the `Percent` path's own "no baseline yet"
+  precedent. A real, exactly-zero-variance history (every prior result identical) with a result
+  that genuinely differs is handled as maximally significant rather than a division-by-zero crash.
+  Proven end to end in a new `tests/sigma_gate.rs` (8 tests): too few samples passes; a result
+  within real historical variance passes; one genuinely far outside it blocks (and separately,
+  only warns under a `Warn` gate); a real zero-variance history correctly flags any real deviation
+  and correctly passes an identical repeat; the rolling window is really bounded (old, evicted
+  results provably stop influencing the score); and different hardware tiers never share a
+  window, matching this crate's own pre-existing same-tier-only invariant for `Percent` gates.

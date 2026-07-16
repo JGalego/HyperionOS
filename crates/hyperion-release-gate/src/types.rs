@@ -65,14 +65,31 @@ pub enum GateAction {
     QuarantineAndRerun,
 }
 
-/// docs/36 §1's `RegressionGate`, `baseline_window`/`threshold: {sigma}`
-/// narrowed to a flat percentage — this crate has no sample-variance
-/// history to compute a sigma-based significance test against (see this
-/// crate's doc comment).
+/// docs/36 §1's `RegressionGate.threshold: {pct: f32} | {sigma: f32}` — both variants real.
+#[derive(Debug, Clone, Copy)]
+pub enum RegressionThreshold {
+    /// This crate's original mechanism: a flat percent delta against a single, caller-set
+    /// baseline point ([`BenchmarkRegistry::set_baseline`]).
+    Percent(f32),
+    /// docs/36 §1/§2's real statistical-significance test: flags a regression only when a
+    /// result's own z-score against a rolling baseline window's real, computed mean/standard
+    /// deviation exceeds this many real standard deviations — "a single noisy run cannot block a
+    /// release," per docs/36 §2's own algorithm. Needs at least two real prior results in the
+    /// window to compute a variance against at all; fewer than that has nothing to regress
+    /// against yet, same reasoning as a `Percent` gate with no baseline set.
+    Sigma(f32),
+}
+
+/// docs/36 §1's `RegressionGate`.
 #[derive(Debug, Clone, Copy)]
 pub struct RegressionGate {
-    pub threshold_pct: f32,
+    pub threshold: RegressionThreshold,
     pub action: GateAction,
+    /// docs/36 §1's `baseline_window: {builds: u32}` — how many trailing real results
+    /// [`RegressionThreshold::Sigma`] computes its real mean/variance over. Unused by
+    /// [`RegressionThreshold::Percent`], which compares against one caller-set baseline point
+    /// instead of a rolling window at all.
+    pub baseline_window_builds: u32,
 }
 
 #[derive(Debug, Clone, Copy)]

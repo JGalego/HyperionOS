@@ -12,9 +12,11 @@
 //!
 //! Real: [`benchmark::evaluate_gate`] is docs/36 §2's algorithm exactly
 //! — percent delta against a same-`(spec_id, hardware_profile)`-keyed
-//! baseline, gated only if the delta breaches `threshold_pct`, with the
+//! baseline, gated only if the delta breaches the configured threshold, with the
 //! configured [`types::GateAction`] deciding
-//! block/warn/quarantine-and-rerun; [`benchmark::BenchmarkRegistry`]'s
+//! block/warn/quarantine-and-rerun; [`benchmark::evaluate_sigma_gate`] is docs/36 §1/§2's real
+//! statistical-significance test — a real z-score against a real, computed rolling-window
+//! mean/standard deviation, gated the same way; [`benchmark::BenchmarkRegistry`]'s
 //! baseline lookup is structurally same-tier-only — "never cross-tier
 //! compare" holds because there is no code path that could look up a
 //! different profile's baseline. [`release::evaluate_release`] is
@@ -48,10 +50,13 @@
 //!   workspace's other crates' own test suites (most concretely,
 //!   `hyperion-threat-model`'s eight T1-T8 regression files for
 //!   `SuiteKind::ThreatRegression`).
-//! - **Sigma-based statistical-significance regression testing.**
-//!   [`types::RegressionGate`] is a flat percentage threshold; docs/36's
-//!   `{sigma: f32}` variant needs a sample-variance history this crate
-//!   doesn't maintain.
+//! - ~~**Sigma-based statistical-significance regression testing.**~~ — now real:
+//!   [`types::RegressionThreshold::Sigma`] gates on a real z-score against
+//!   [`benchmark::BenchmarkRegistry`]'s own real, per-`(spec_id, hardware_profile)` rolling
+//!   result window (`RegressionGate.baseline_window_builds` trailing real `p99_ms` values, docs/36
+//!   §1's own `baseline_window: {builds: u32}`), computed via [`benchmark::evaluate_sigma_gate`].
+//!   [`types::RegressionThreshold::Percent`] (this crate's original mechanism) is unaffected and
+//!   still compares against a single caller-set [`types::BenchmarkBaseline`] point instead.
 //! - **A real hardware matrix / `hardware_profile_detect()`.**
 //!   [`types::HardwareProfileId`] is a bare string a caller supplies —
 //!   no real SBC/laptop/workstation/enterprise silicon exists to detect.
@@ -68,10 +73,10 @@ mod benchmark;
 mod release;
 mod types;
 
-pub use benchmark::{evaluate_gate, BenchmarkRegistry};
+pub use benchmark::{evaluate_gate, evaluate_sigma_gate, BenchmarkRegistry};
 pub use release::{evaluate_release, record_release_decision, verify_completeness};
 pub use types::{
     BenchmarkBaseline, BenchmarkCategory, BenchmarkResult, BenchmarkSpec, BudgetTree, GateAction,
-    GateOutcome, HardwareProfileId, HardwareReleaseCriteria, RegressionGate, ReleaseDecision,
-    ReleaseGateError, ReleaseGateReport, SuiteKind, SuiteReport, Verdict,
+    GateOutcome, HardwareProfileId, HardwareReleaseCriteria, RegressionGate, RegressionThreshold,
+    ReleaseDecision, ReleaseGateError, ReleaseGateReport, SuiteKind, SuiteReport, Verdict,
 };
