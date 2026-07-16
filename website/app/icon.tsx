@@ -2,6 +2,9 @@ import { ImageResponse } from "next/og";
 
 export const size = { width: 64, height: 64 };
 export const contentType = "image/png";
+// GitHub Pages only serves static files -- no server to render this on demand. Same real, static
+// output either way (nothing here varies per request).
+export const dynamic = "force-static";
 
 export default function Icon() {
   const accent = "#d9a54a";

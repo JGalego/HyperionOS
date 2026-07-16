@@ -7,6 +7,11 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname),
   },
+  // GitHub Pages only serves static files -- no Node server for SSR/ISR or next/image's own
+  // optimizer. `output: "export"` builds this whole site to plain HTML/CSS/JS in `out/`, which
+  // `.github/workflows/deploy-pages.yml` then publishes as-is. Served from a real custom domain
+  // (try-hyperion.org, not a github.io/<repo> subpath), so no basePath is needed.
+  output: "export",
 };
 
 export default nextConfig;

@@ -3,6 +3,9 @@ import { site } from "@/content/site";
 
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
+// GitHub Pages only serves static files -- no server to render this on demand. Same real, static
+// output either way (nothing here varies per request).
+export const dynamic = "force-static";
 
 export default function Image() {
   return new ImageResponse(
