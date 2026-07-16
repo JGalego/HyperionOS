@@ -2188,11 +2188,19 @@ have a real architectural home yet.
   user-invoked, not automatically prompted after every goal (deliberately — CLAUDE.md's Progressive
   Complexity principle, and the item's own "optional" framing), and nothing yet aggregates
   reflections into a queryable trend.
-- **No teaching mode.** The model-role catalog (planning/coding/reasoning/vision/etc., docs/23) has
-  no role oriented around building the *user's* competence rather than producing an artifact —
-  nothing that explains the underlying principle instead of just the output. Likely home: a new
-  model role plus a capability that a user can explicitly invoke ("teach me this, don't just do
-  it").
+- **Teaching mode — the explicit-invocation half landed (2026-07-16).** The model-role catalog
+  (planning/coding/reasoning/vision/etc., docs/23) had no role oriented around building the
+  *user's* competence rather than producing an artifact — nothing that explains the underlying
+  principle instead of just the output. `hyperion-console`'s new `/teach <topic>` meta-command is
+  the real, explicit invocation this item asks for: a prompt shaped to ask for the reasoning behind
+  an answer, not just the answer, dispatched through the exact same
+  `current_backend.capability_ref()` path (and real cloud-consent gate) `run_undecomposed_goal`
+  already established. Deliberately *not* built as a new `hyperion_ai_runtime::ModelClass` variant
+  — this workspace has no genuinely distinct teaching backend anywhere to register one under, and
+  minting a class nothing could ever resolve against would be real-looking, never-exercised API
+  surface (the same discipline this workspace already applies elsewhere: exercise the real thing,
+  never fake it). A real, separate `ModelClass::Teaching` is honest future work once a genuinely
+  different backend for it exists — named here, not built prematurely.
 
 Each of the above is a backlog item, not a design — none has interfaces, contracts, or a chosen
 approach yet. Per CLAUDE.md's own engineering principle ("design APIs before implementation"), the

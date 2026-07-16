@@ -755,6 +755,22 @@ impl ConsoleSession {
             return Some(Self::help_text());
         }
 
+        // docs/998-roadmap.md's Backlog "Protect the Human" item: "no teaching mode... nothing
+        // that explains the underlying principle instead of just the output." `/teach <topic>` is
+        // the real, explicit invocation that item asks for ("a capability that a user can
+        // explicitly invoke"). See `Self::run_teach`'s own doc comment for why this deliberately
+        // reuses the existing dispatch/consent path rather than minting a new Capability.
+        if lower.starts_with("/teach") {
+            let topic = trimmed["/teach".len()..].trim();
+            if topic.is_empty() {
+                return Some(vec![
+                    "\"/teach\" needs a topic, e.g. \"/teach how DNS resolution works\"."
+                        .to_string(),
+                ]);
+            }
+            return Some(self.run_teach(topic));
+        }
+
         // docs/998-roadmap.md's Backlog "Protect the Human" item: an opt-in, per-session pause
         // before Hyperion decomposes a goal -- "a moment for the human's own reasoning to run
         // first," never a default. `/think`/`/think on`/`/think off` toggle it;
@@ -1104,6 +1120,9 @@ impl ConsoleSession {
             "  /meaningful yes|no                          reflect on whether the last goal \
              actually mattered (bare, to see what it would ask)"
                 .to_string(),
+            "  /teach <topic>                              explain the underlying principle \
+             behind something, not just the answer, e.g. \"/teach how DNS resolution works\""
+                .to_string(),
             "  /help                                        show this message".to_string(),
         ]
     }
@@ -1379,6 +1398,57 @@ impl ConsoleSession {
     /// utterance-shape check (not a general NLU pipeline), matching the same
     /// deterministic-keyword-matching convention `hyperion-intent`'s own `URGENCY_KEYWORDS`/
     /// `CANCEL_KEYWORDS` already use.
+    /// docs/998-roadmap.md's Backlog "Protect the Human" item: "no teaching mode... nothing that
+    /// explains the underlying principle instead of just the output... a new model role plus a
+    /// capability that a user can explicitly invoke." The explicit-invocation half is real: this
+    /// is `/teach <topic>`'s own dispatch, with a prompt asking for the reasoning behind an
+    /// answer, not just the answer. The "new model role" half is deliberately *not* built as a new
+    /// `hyperion_ai_runtime::ModelClass` variant: no genuinely distinct teaching backend exists
+    /// anywhere in this workspace to register under one, and minting a class nothing can ever
+    /// resolve against would be real-looking, never-exercised API surface -- exactly what this
+    /// workspace's own testing discipline (spawn/exercise the real thing, don't fake it) rules
+    /// out elsewhere. Reuses the exact same `self.current_backend.capability_ref()` dispatch (and
+    /// real cloud-consent gate) [`Self::run_undecomposed_goal`] already established, rather than
+    /// a new Capability string: a second capability here would either duplicate that consent gate
+    /// or -- worse -- silently bypass it while still calling the very same active `ai_runtime`
+    /// backend, including a real, paid cloud one.
+    fn run_teach(&mut self, topic: &str) -> Vec<String> {
+        let capability_ref = self.current_backend.capability_ref();
+        let prompt = format!(
+            "Teach me about {topic}. Explain the underlying principle and the reasoning behind \
+             it, not just a final answer -- help me understand this well enough to do it myself \
+             next time, the way a good teacher would."
+        );
+        let args = serde_json::json!({ "prompt": prompt.clone() });
+        match self.agent_runtime.invoke(
+            &self.monitor,
+            &self.token,
+            self.assistant_instance_id,
+            capability_ref,
+            args,
+        ) {
+            Ok(InvokeOutcome::Result(value)) => {
+                let text = value.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                vec![text.to_string()]
+            }
+            Ok(InvokeOutcome::Denied) => vec!["denied".to_string()],
+            Ok(InvokeOutcome::PendingConsent) => {
+                let provider_label = self.current_backend.label();
+                self.pending_consent = Some(PendingCloudConsent {
+                    capability_ref: capability_ref.to_string(),
+                    prompt,
+                });
+                vec![format!(
+                    "This would send your message to a real, paid, external {provider_label} \
+                     API -- proceed? (yes/no)"
+                )]
+            }
+            Ok(InvokeOutcome::QuotaExceeded) => vec!["over quota right now".to_string()],
+            Ok(InvokeOutcome::Failed(reason)) => vec![format!("failed -- {reason}")],
+            Err(e) => vec![format!("failed -- {e}")],
+        }
+    }
+
     fn run_undecomposed_goal(
         &mut self,
         root: NodeId,
