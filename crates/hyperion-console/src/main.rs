@@ -108,11 +108,11 @@ fn main() {
     // fragile `printf '%s\n' "..." | hyperion-console` pattern that pattern's own file had no
     // real way to check in with secrets still injected only at run time.
     if let Some(scenario_path) = std::env::args().nth(1) {
-        run_scenario_file(&scenario_path, &session);
+        run_scenario_file(&scenario_path, &session, &data_dir);
         return;
     }
 
-    run_interactive(&session);
+    run_interactive(&session, &data_dir);
 }
 
 /// What a real, typed line meant to control the *process* itself, rather than being a normal
@@ -137,10 +137,15 @@ enum ControlOutcome {
 const DEFAULT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Recognizes `/mcp-server [port]`, `/a2a-server [port]`, `/mcp-discover [seconds]`,
-/// `/a2a-discover [seconds]`, `/standby`, `/mcp-call`, and `/a2a-call` -- see each real handler's
-/// own doc comment. Returns [`ControlOutcome::NotRecognized`] for everything else, so the normal
-/// utterance pipeline runs unchanged.
-fn try_control_command(trimmed: &str, session: &Arc<Mutex<ConsoleSession>>) -> ControlOutcome {
+/// `/a2a-discover [seconds]`, `/standby`, `/mcp-call`, `/a2a-call`, `/trust list`, and
+/// `/trust forget <peer>` -- see each real handler's own doc comment. Returns
+/// [`ControlOutcome::NotRecognized`] for everything else, so the normal utterance pipeline runs
+/// unchanged.
+fn try_control_command(
+    trimmed: &str,
+    session: &Arc<Mutex<ConsoleSession>>,
+    data_dir: &str,
+) -> ControlOutcome {
     let lower = trimmed.to_ascii_lowercase();
 
     if let Some(rest) = lower.strip_prefix("/mcp-server") {
@@ -168,10 +173,53 @@ fn try_control_command(trimmed: &str, session: &Arc<Mutex<ConsoleSession>>) -> C
         return ControlOutcome::Handled(vec![mcp_call(rest.trim())]);
     }
     if let Some(rest) = trimmed.strip_prefix("/a2a-call ") {
-        return ControlOutcome::Handled(vec![a2a_call(rest.trim())]);
+        return ControlOutcome::Handled(vec![a2a_call(rest.trim(), data_dir)]);
+    }
+    if let Some(rest) = lower.strip_prefix("/trust") {
+        return ControlOutcome::Handled(vec![trust_command(rest.trim(), data_dir)]);
     }
 
     ControlOutcome::NotRecognized
+}
+
+fn peer_trust_path(data_dir: &str) -> std::path::PathBuf {
+    std::path::Path::new(data_dir).join("peer_trust.json")
+}
+
+/// `/trust list` -- lists every real, currently-trusted `(peer, key)` pair (see
+/// [`hyperion_console::peer_trust::PeerTrustStore::trusted_peers`]). `/trust forget <peer>` --
+/// the user's own real, explicit override once a key-mismatch warning has been investigated
+/// (see [`hyperion_console::peer_trust::PeerTrustStore::forget`]'s own doc comment on why this
+/// exists at all).
+fn trust_command(rest: &str, data_dir: &str) -> String {
+    let mut store = match hyperion_console::peer_trust::PeerTrustStore::open_or_create(
+        peer_trust_path(data_dir),
+    ) {
+        Ok(store) => store,
+        Err(e) => return format!("I couldn't open the real peer trust store: {e}"),
+    };
+
+    if rest.is_empty() || rest == "list" {
+        let peers = store.trusted_peers();
+        if peers.is_empty() {
+            return "No peers trusted yet.".to_string();
+        }
+        let mut lines = vec!["Trusted peers:".to_string()];
+        for (peer_id, key_hex) in peers {
+            lines.push(format!("  {peer_id} -- {key_hex}"));
+        }
+        return lines.join("\n");
+    }
+
+    if let Some(peer_id) = rest.strip_prefix("forget ") {
+        return match store.forget(peer_id.trim()) {
+            Ok(true) => format!("Forgot {peer_id}'s trusted identity."),
+            Ok(false) => format!("{peer_id} wasn't trusted to begin with."),
+            Err(e) => format!("I couldn't update the real peer trust store: {e}"),
+        };
+    }
+
+    format!("\"/trust {rest}\" isn't a command I know -- try \"/trust list\" or \"/trust forget <peer>\".")
 }
 
 /// Real background advertisement of `service_type` on `port` under `instance_name` -- degrades,
@@ -347,8 +395,9 @@ fn mcp_call(rest: &str) -> String {
 }
 
 /// `/a2a-call <host> <port> <message text>` -- the real outbound half: sends a real message to a
-/// real, already-known A2A endpoint's `SendMessage` method.
-fn a2a_call(rest: &str) -> String {
+/// real, already-known A2A endpoint's `SendMessage` method, checked against a real, persisted
+/// peer identity (see [`a2a::send_message`]'s own doc comment).
+fn a2a_call(rest: &str, data_dir: &str) -> String {
     let mut parts = rest.splitn(3, ' ');
     let (Some(host), Some(port_str), Some(text)) = (parts.next(), parts.next(), parts.next())
     else {
@@ -359,7 +408,13 @@ fn a2a_call(rest: &str) -> String {
     let Ok(port) = port_str.parse::<u16>() else {
         return format!("\"{port_str}\" isn't a real port number.");
     };
-    match a2a::send_message(host, port, text) {
+    let mut trust_store = match hyperion_console::peer_trust::PeerTrustStore::open_or_create(
+        peer_trust_path(data_dir),
+    ) {
+        Ok(store) => store,
+        Err(e) => return format!("I couldn't open the real peer trust store: {e}"),
+    };
+    match a2a::send_message(host, port, text, &mut trust_store) {
         Ok(reply) => reply,
         Err(e) => format!("I couldn't send that A2A message: {e}"),
     }
@@ -374,7 +429,7 @@ fn a2a_call(rest: &str) -> String {
 /// this echo exactly as [`hyperion_console::secret_input::RawEchoOff`] keeps it off a real
 /// terminal. No banner, no trailing interactive prompt: a scenario file's output is meant to be a
 /// reviewable transcript, not a chat session.
-fn run_scenario_file(path: &str, session: &Arc<Mutex<ConsoleSession>>) {
+fn run_scenario_file(path: &str, session: &Arc<Mutex<ConsoleSession>>, data_dir: &str) {
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(e) => {
@@ -401,7 +456,7 @@ fn run_scenario_file(path: &str, session: &Arc<Mutex<ConsoleSession>>) {
         }
 
         if !awaiting_secret {
-            match try_control_command(&utterance, session) {
+            match try_control_command(&utterance, session, data_dir) {
                 ControlOutcome::Exit => return,
                 ControlOutcome::Handled(lines) => {
                     for line in lines {
@@ -474,7 +529,7 @@ fn expand_env_vars(line: &str) -> String {
 
 /// The real, live stdin/stdout chat loop -- unchanged from before scenario files existed, just
 /// pulled into its own function so [`main`] can choose it or [`run_scenario_file`].
-fn run_interactive(session: &Arc<Mutex<ConsoleSession>>) {
+fn run_interactive(session: &Arc<Mutex<ConsoleSession>>, data_dir: &str) {
     // Only for a real interactive terminal -- a screen reader, a pipe, or a redirected/scripted
     // caller gets straight to the one line that actually matters, not decorative noise before it.
     if io::stdout().is_terminal() {
@@ -521,7 +576,7 @@ fn run_interactive(session: &Arc<Mutex<ConsoleSession>>) {
         }
 
         if !awaiting_secret {
-            match try_control_command(utterance, session) {
+            match try_control_command(utterance, session, data_dir) {
                 ControlOutcome::Exit => break,
                 ControlOutcome::Handled(lines) => {
                     for line in lines {

@@ -1955,8 +1955,9 @@ mean here):
   own real network stack): a running `/mcp-server` really resolves its own real advertised
   address(es) via `/mcp-discover`, including across multiple real interfaces/address families on
   a multi-homed host; scanning with nothing advertising finds nothing; the no-feature build
-  degrades honestly for both directions. Discovery only, not identity/trust (see deferred, below)
-  — and not yet consumed by `hyperion-device`'s own separate "real discovery protocols
+  degrades honestly for both directions. Discovery only, not identity/trust on its own (see the
+  identity slice below, landed the same pass) — and not yet consumed by `hyperion-device`'s own
+  separate "real discovery protocols
   (mDNS/BLE/Matter/cloud-relay)" gap for *device pairing*, which is a distinct concern from this
   console-level *peer* discovery and remains its own, separate future step.
 - **`/standby`** — blocks on a real read of this process's own stdin until the user provides real
@@ -1967,15 +1968,26 @@ mean here):
 - Both servers share one real `Arc<Mutex<ConsoleSession>>` with the console's own interactive/
   scenario-file loop — a real MCP/A2A tool call and a real typed utterance affect (and can observe)
   the very same conversation, not two divergent copies.
-
-**Deliberately still deferred:**
-
-- **Real cross-instance discovery, identity, and trust.** Every existing multi-device concept in
-  this workspace (`hyperion-federation`, `hyperion-device`) models *one user's own devices* inside
-  one process — there is no concept anywhere of a *different* user/instance as a peer yet. This is
-  a real, separate identity model, not a small extension of what exists — **discovery** (below) is
-  landed; **identity/trust** is not. `/mcp-call`/`/a2a-call` still work only because the caller
-  already knows the exact host/port to name — discovering a peer doesn't yet mean trusting it.
+- **Real A2A peer identity via trust-on-first-use, landed (2026-07-16).** The *identity* half of
+  "real cross-instance discovery, identity, and trust" (discovery itself landed earlier this same
+  pass, above). `ConsoleSession` now retains its own real, persistent Ed25519 device identity
+  (previously created transiently in `open` and dropped); `/a2a-server`'s Agent Card carries its
+  real, hex-encoded public key, and every `SendMessage` reply is really signed with it. `/a2a-call`
+  really verifies that signature against the claimed key (proof the responder genuinely holds the
+  matching private key) and checks the key against a real, persisted
+  `hyperion_console::peer_trust::PeerTrustStore` keyed by `host:port` — the same well-established
+  model SSH's own `known_hosts` uses: first contact records the key; a later contact with a
+  *different* key is a hard, surfaced failure (the reply is never shown), not silently trusted or
+  silently overwritten. New `/trust list`/`/trust forget <peer>` commands make the trust store
+  real inspectable/reversible state, not an invisible one-way ratchet. A real, non-Hyperion A2A
+  server with no `publicKey` claim is neither penalized nor silently trusted — this check simply
+  doesn't apply to it, the same "unknown host" fallback SSH itself uses. Proven end to end,
+  including a real impersonation scenario: two real, differently-keyed `hyperion-console`
+  processes answering the same `host:port` in sequence — the second one's real reply is refused
+  with a real warning, and only shown after an explicit `/trust forget`. **Still not done:** MCP's
+  own `/mcp-call` has no equivalent identity check yet (natural next step, same shape); this is
+  identity *continuity*, not *authorization* — nothing here decides whether a peer *should* be
+  talked to, only whether it's still the same one as last time.
 - **The rest of each real spec.** MCP: resources, prompts, notifications, the SSE-streaming half
   of "Streamable HTTP," stdio transport. A2A: `GetTask`/`ListTasks`/streaming/push notifications
   (no real task store exists here — every dispatch completes synchronously before `SendMessage`

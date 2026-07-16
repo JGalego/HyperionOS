@@ -7,10 +7,19 @@
 //! session never streams). `GetTask`/`ListTasks`/streaming/push notifications are not
 //! implemented -- there's no real task store here, since every real dispatch through
 //! [`ConsoleSession::handle_utterance`] already completes synchronously before this returns.
+//!
+//! **Real identity (docs/998-roadmap.md's Social pillar, "identity" half):** the Agent Card now
+//! carries this session's own real, hex-encoded Ed25519 [`ConsoleSession::verifying_key`], and
+//! every `SendMessage` reply is really signed over with [`ConsoleSession::sign`]. A real caller
+//! ([`send_message`]) verifies that signature against the presented key (proving whoever replied
+//! genuinely holds the matching private key) and checks the key against a real, persisted
+//! [`hyperion_console::peer_trust::PeerTrustStore`] (proving it's the *same* key this caller has
+//! always seen for this peer) before ever showing the reply text.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use hyperion_console::peer_trust::{decode_hex, encode_hex, PeerTrustStore, TrustOutcome};
 use hyperion_console::ConsoleSession;
 use serde_json::{json, Value};
 
@@ -25,10 +34,13 @@ pub fn spawn_server(
     session: Arc<Mutex<ConsoleSession>>,
     port: u16,
 ) -> std::io::Result<RunningServer> {
+    let verifying_key_hex = encode_hex(&session.lock().unwrap().verifying_key().to_bytes());
     http_server::spawn(port, move |method, path, body| match (method, path) {
-        ("GET", "/.well-known/agent-card.json") => {
-            (200, "application/json", agent_card().to_string())
-        }
+        ("GET", "/.well-known/agent-card.json") => (
+            200,
+            "application/json",
+            agent_card(&verifying_key_hex).to_string(),
+        ),
         ("POST", _) => (200, "application/json", handle_request(&session, body)),
         _ => (
             404,
@@ -38,7 +50,7 @@ pub fn spawn_server(
     })
 }
 
-fn agent_card() -> Value {
+fn agent_card(verifying_key_hex: &str) -> Value {
     json!({
         "id": "hyperion-console",
         "name": "Hyperion",
@@ -56,6 +68,9 @@ fn agent_card() -> Value {
                 "description": "A real utterance through Hyperion's real Intent Engine and Agent dispatch.",
             },
         ],
+        // Not part of the real A2A spec -- an additive, real proof of identity this Agent Card
+        // also happens to be a convenient place to publish (see this module's own doc comment).
+        "publicKey": verifying_key_hex,
     })
 }
 
@@ -81,9 +96,11 @@ fn handle_request(session: &Arc<Mutex<ConsoleSession>>, body: &str) -> String {
                 .and_then(|t| t.as_str())
                 .unwrap_or_default();
 
-            let reply = {
+            let (reply, signature_hex) = {
                 let mut session = session.lock().unwrap();
-                session.handle_utterance(text).join("\n")
+                let reply = session.handle_utterance(text).join("\n");
+                let signature = encode_hex(&session.sign(reply.as_bytes()).to_bytes());
+                (reply, signature)
             };
 
             let task_id = format!("task-{}", NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed));
@@ -101,6 +118,8 @@ fn handle_request(session: &Arc<Mutex<ConsoleSession>>, body: &str) -> String {
                         },
                         "timestamp": rfc3339_utc(unix_seconds_now()),
                     },
+                    // Not part of the real A2A spec -- see this module's own doc comment.
+                    "signature": signature_hex,
                 }),
             )
         }
@@ -155,10 +174,26 @@ fn rfc3339_utc(unix_seconds: u64) -> String {
 /// method -- another Hyperion instance's own `/a2a-server`, or any other real A2A-over-HTTP
 /// server. Not discovery (the caller names the host/port), though it does fetch the real Agent
 /// Card first (proving the endpoint really speaks A2A before sending it anything).
-pub fn send_message(host: &str, port: u16, text: &str) -> Result<String, String> {
+///
+/// **Real identity check**, only when the peer's own Agent Card advertises one (a real,
+/// non-Hyperion A2A server that doesn't carry this proprietary extension is neither penalized
+/// nor silently trusted -- it's simply outside what this check can verify, exactly like SSH
+/// falls back to "unknown host" rather than refusing to ever talk to a server with no host key
+/// at all): the reply's own real signature must verify against the card's claimed public key
+/// (proof the responder genuinely holds the matching private key), and that key must match
+/// `trust_store`'s own record for `host:port` (proof it's the *same* peer as last time -- see
+/// [`hyperion_console::peer_trust`]'s own doc comment). A key that verifies but doesn't match the
+/// trust store's record is a hard failure: the reply is never returned, only the warning.
+pub fn send_message(
+    host: &str,
+    port: u16,
+    text: &str,
+    trust_store: &mut PeerTrustStore,
+) -> Result<String, String> {
     let card_body = crate::http_client::get(host, port, "/.well-known/agent-card.json")?;
-    let _card: Value = serde_json::from_str(&card_body)
+    let card: Value = serde_json::from_str(&card_body)
         .map_err(|e| format!("that endpoint's Agent Card wasn't valid JSON: {e}"))?;
+    let claimed_key_hex = card.get("publicKey").and_then(|k| k.as_str());
 
     let request = json!({
         "jsonrpc": "2.0",
@@ -179,7 +214,7 @@ pub fn send_message(host: &str, port: u16, text: &str) -> Result<String, String>
     if let Some(error) = response.get("error") {
         return Err(format!("the remote server returned a real error: {error}"));
     }
-    let text = response
+    let reply = response
         .get("result")
         .and_then(|r| r.get("status"))
         .and_then(|s| s.get("message"))
@@ -189,5 +224,61 @@ pub fn send_message(host: &str, port: u16, text: &str) -> Result<String, String>
         .and_then(|t| t.as_str())
         .unwrap_or(&response_body)
         .to_string();
-    Ok(text)
+
+    let Some(claimed_key_hex) = claimed_key_hex else {
+        // No identity claim to check at all -- a real, non-Hyperion A2A server. Same trust model
+        // as before this slice existed.
+        return Ok(reply);
+    };
+    let signature_hex = response
+        .get("result")
+        .and_then(|r| r.get("signature"))
+        .and_then(|s| s.as_str());
+    let Some(signature_hex) = signature_hex else {
+        return Err(format!(
+            "{host}:{port} claims identity {claimed_key_hex} in its Agent Card but its reply \
+             carried no signature to prove it -- refusing to trust an unproven claim"
+        ));
+    };
+
+    let verifying_key_bytes = decode_hex(claimed_key_hex)
+        .ok_or_else(|| format!("{host}:{port}'s claimed public key isn't valid hex"))?;
+    let verifying_key = hyperion_crypto::VerifyingKey::try_from(verifying_key_bytes.as_slice())
+        .map_err(|e| {
+            format!("{host}:{port}'s claimed public key isn't a valid Ed25519 key: {e}")
+        })?;
+    let signature_bytes = decode_hex(signature_hex)
+        .ok_or_else(|| format!("{host}:{port}'s reply signature isn't valid hex"))?;
+    let signature =
+        hyperion_crypto::Signature::try_from(signature_bytes.as_slice()).map_err(|e| {
+            format!("{host}:{port}'s reply signature isn't a valid Ed25519 signature: {e}")
+        })?;
+
+    if !hyperion_crypto::verify(reply.as_bytes(), &signature, &verifying_key) {
+        return Err(format!(
+            "{host}:{port}'s reply signature does NOT verify against its own claimed public \
+             key -- this reply may not really be from the identity it claims. Refusing to \
+             show it."
+        ));
+    }
+
+    let peer_id = format!("{host}:{port}");
+    match trust_store
+        .verify_or_trust(&peer_id, claimed_key_hex)
+        .map_err(|e| format!("couldn't check {peer_id}'s trust record: {e}"))?
+    {
+        TrustOutcome::FirstTrust => Ok(format!(
+            "{reply}\n\n(Trusting {peer_id}'s identity for the first time: {claimed_key_hex}.)"
+        )),
+        TrustOutcome::Trusted => Ok(reply),
+        TrustOutcome::KeyMismatch {
+            previously_trusted_key_hex,
+        } => Err(format!(
+            "WARNING: {peer_id} just presented a DIFFERENT identity than before!\n  \
+             previously trusted: {previously_trusted_key_hex}\n  just presented: \
+             {claimed_key_hex}\nThis could mean the peer was reinstalled, or that something \
+             else is impersonating it. Refusing to show its reply. If you're sure this is \
+             expected, use \"/trust forget {peer_id}\" and try again."
+        )),
+    }
 }

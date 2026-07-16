@@ -32,6 +32,7 @@
 //!   separate, follow-on work, most naturally motivated once M8 gives it something real to call.
 
 mod graph_explorer;
+pub mod peer_trust;
 pub mod secret_input;
 mod session;
 

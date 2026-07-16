@@ -136,6 +136,14 @@ pub struct ConsoleSession {
     /// by task name alone. `None` until this session's first real decomposed plan runs; `/redo`
     /// gives an honest "nothing to redo yet" reply until then rather than guessing a session.
     last_plan_session_id: Option<u64>,
+    /// This session's own real, persistent Ed25519 device identity (docs/998-roadmap.md's
+    /// Social pillar: "real cross-instance discovery, identity, and trust" gap, *identity* half)
+    /// -- previously created in [`Self::open`] only transiently (to sign a model descriptor and
+    /// derive the cloud-secret encryption key) and then dropped, with no way for anything else to
+    /// sign or present this session's own identity. Retained here so a real A2A/MCP server can
+    /// present a real, verifiable public key and sign its own real replies with it -- see
+    /// [`Self::verifying_key`]/[`Self::sign`].
+    keystore: Keystore,
 }
 
 /// The real prompt and capability this session is waiting to re-invoke once a live
@@ -391,7 +399,23 @@ impl ConsoleSession {
             workspace: WorkspaceCompiler::new(),
             session_id: "console".to_string(),
             last_plan_session_id: None,
+            keystore,
         })
+    }
+
+    /// This session's own real, public Ed25519 verifying key -- what a peer's real A2A/MCP
+    /// server presents in its own Agent Card/`initialize` response as real, checkable proof of
+    /// identity (see [`Self::sign`] for the other half).
+    pub fn verifying_key(&self) -> hyperion_crypto::VerifyingKey {
+        self.keystore.verifying_key()
+    }
+
+    /// A real Ed25519 signature over `bytes`, using this session's own device identity -- what a
+    /// real A2A/MCP server signs its own reply payload with, so a caller holding the matching
+    /// [`Self::verifying_key`] can really verify the reply came from the entity that presented
+    /// that key, not just trust an unauthenticated claim.
+    pub fn sign(&self, bytes: &[u8]) -> hyperion_crypto::Signature {
+        self.keystore.sign(bytes)
     }
 
     /// Real model selection for this session's own `assistant.respond` calls (see
