@@ -19,7 +19,8 @@ use crate::router_bridge::{
     build_invocation, consequence_tier_for, to_confidence_and_alternatives, to_router_descriptor,
 };
 use crate::types::{
-    ApiError, ApiScope, InvokeRequest, InvokeResponse, SubmitIntentRequest, SubmitIntentResponse,
+    ApiError, ApiScope, InvokeRequest, InvokeResponse, SkillDelegationSignal, SubmitIntentRequest,
+    SubmitIntentResponse,
 };
 
 /// docs/26 — the API Gateway: "a thin, uniform gateway in front of five
@@ -238,6 +239,80 @@ impl ApiGateway {
         filter: impl Fn(&hyperion_observability::AuditLogEntry) -> bool,
     ) -> Result<Vec<hyperion_observability::AuditLogEntry>, ApiError> {
         Ok(self.audit.query(monitor, token, filter)?)
+    }
+
+    /// Real answer to docs/998-roadmap.md's Backlog "Protect the Human" item — "no signal exists
+    /// for 'you've delegated this kind of task N times this month, want to do the next one
+    /// yourself?'" `hyperion-memory`'s procedural tier already tracks repeated task delegation
+    /// (`MemoryEngine::count_procedural_delegations`); this bridges that real count to a real,
+    /// explainable signal via `hyperion-explainability` — the "surfaced... rather than only used
+    /// internally" home the backlog item itself names, and the reason this bridge lives here
+    /// rather than in `hyperion-memory` itself: that crate deliberately doesn't depend on
+    /// `hyperion-explainability` (`hyperion-explainability` → `hyperion-recovery` →
+    /// `hyperion-memory` already exists, so the reverse edge would be a real dependency cycle —
+    /// this gateway, which already depends on both, is the same kind of decoupling seam
+    /// `crate::router_bridge` uses). Deliberately advisory, never enforcing: this never blocks or
+    /// refuses `entity_key`'s capability, only records why a caller (e.g. a future console/
+    /// workspace prompt) *might* want to ask the user "want to do the next one yourself?" — see
+    /// CLAUDE.md's User Control principle. Honest scope boundary: no UI actually asks that
+    /// question yet; this closes the *signal*, not the end-to-end user-facing prompt.
+    #[allow(clippy::too_many_arguments)]
+    pub fn check_skill_delegation_signal(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        entity_key: &str,
+        since_ts: u64,
+        threshold: usize,
+        triggering_intent_id: u64,
+        agent_id: u64,
+        now: u64,
+    ) -> Result<Option<SkillDelegationSignal>, ApiError> {
+        self.authorize(monitor, token, ApiScope::MemoryQuery)?;
+        let delegation = self
+            .memory
+            .count_procedural_delegations(monitor, token, entity_key, since_ts)?;
+        if delegation.count < threshold {
+            return Ok(None);
+        }
+
+        let action_id = self.next_action_id.fetch_add(1, Ordering::Relaxed);
+        let explanation_id = self.explainability.begin(
+            monitor,
+            token,
+            action_id,
+            triggering_intent_id,
+            agent_id,
+            entity_key,
+            vec![],
+            now,
+        )?;
+        self.explainability.append_step(
+            monitor,
+            token,
+            explanation_id,
+            ReasoningStep {
+                step_index: 0,
+                description: format!(
+                    "delegated \"{entity_key}\" {} times since {since_ts} (threshold {threshold}) \
+                     -- consider doing the next one yourself",
+                    delegation.count
+                ),
+                capability_ref: Some(entity_key.to_string()),
+                inputs_ref: Vec::new(),
+                output_ref: None,
+            },
+            vec![],
+        )?;
+        self.explainability
+            .transition(monitor, token, explanation_id, ControlState::Completed)?;
+
+        Ok(Some(SkillDelegationSignal {
+            entity_key: entity_key.to_string(),
+            count: delegation.count,
+            threshold,
+            explanation_id,
+        }))
     }
 
     /// docs/26 §4's `invokeCapability`: look up the Contract's competing
@@ -634,5 +709,108 @@ mod tests {
             outputs.get("results").is_some(),
             "expected the real web.search stub's own shape, got: {outputs:?}"
         );
+    }
+
+    #[test]
+    fn a_delegation_count_below_threshold_yields_no_signal() {
+        let (monitor, token, gateway, _impl_id) = gateway_with_registered_slm();
+        gateway
+            .grant_scopes(
+                &monitor,
+                &token,
+                [ApiScope::MemoryQuery].into_iter().collect(),
+            )
+            .unwrap();
+
+        gateway
+            .memory
+            .remember(
+                &monitor,
+                &token,
+                hyperion_memory::MemoryTier::Procedural,
+                serde_json::json!({"entity_key": "export.png"}),
+                None,
+                0.5,
+                false,
+                Vec::new(),
+            )
+            .unwrap();
+
+        let signal = gateway
+            .check_skill_delegation_signal(&monitor, &token, "export.png", 0, 3, 1, 1, 1_000)
+            .unwrap();
+        assert!(
+            signal.is_none(),
+            "one delegation must not cross a threshold of three"
+        );
+    }
+
+    #[test]
+    fn a_delegation_count_at_threshold_yields_a_real_explainable_signal() {
+        let (monitor, token, gateway, _impl_id) = gateway_with_registered_slm();
+        gateway
+            .grant_scopes(
+                &monitor,
+                &token,
+                [ApiScope::MemoryQuery].into_iter().collect(),
+            )
+            .unwrap();
+
+        for _ in 0..3 {
+            gateway
+                .memory
+                .remember(
+                    &monitor,
+                    &token,
+                    hyperion_memory::MemoryTier::Procedural,
+                    serde_json::json!({"entity_key": "export.png"}),
+                    None,
+                    0.5,
+                    false,
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        let signal = gateway
+            .check_skill_delegation_signal(&monitor, &token, "export.png", 0, 3, 1, 1, 1_000)
+            .expect("scope is granted, memory query must succeed")
+            .expect("three delegations must cross a threshold of three");
+        assert_eq!(signal.count, 3);
+        assert_eq!(signal.threshold, 3);
+        assert_eq!(signal.entity_key, "export.png");
+
+        let record = gateway
+            .explainability
+            .get(signal.explanation_id)
+            .expect("a real Explanation Record must exist for this signal");
+        assert_eq!(record.control_state, ControlState::Completed);
+        assert!(
+            record.reasoning_chain[0]
+                .description
+                .contains("delegated \"export.png\" 3 times"),
+            "got: {:?}",
+            record.reasoning_chain[0].description
+        );
+    }
+
+    #[test]
+    fn check_skill_delegation_signal_requires_the_memory_query_scope() {
+        let (monitor, token, gateway, _impl_id) = gateway_with_registered_slm();
+        // No grant_scopes call at all -- this token has no scopes recorded yet.
+        let result = gateway.check_skill_delegation_signal(
+            &monitor,
+            &token,
+            "export.png",
+            0,
+            1,
+            1,
+            1,
+            1_000,
+        );
+        assert!(matches!(
+            result,
+            Err(ApiError::InsufficientScope(ApiScope::MemoryQuery))
+        ));
     }
 }

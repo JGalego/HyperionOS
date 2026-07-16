@@ -11,6 +11,11 @@ use hyperion_security::{IntentProvenanceChain, InterventionLevel, SensitivityHin
 pub enum ApiScope {
     IntentSubmit,
     MemoryWrite,
+    /// Gates [`crate::gateway::ApiGateway::check_skill_delegation_signal`] — the one read this
+    /// crate does over Procedural memory today. No generic `memory.query` endpoint exists yet
+    /// (unlike `KgQuery`'s Knowledge Graph counterpart); this scope is scoped to that one real
+    /// read, not a general memory-query capability.
+    MemoryQuery,
     KgQuery,
     KgWrite,
     CapabilityInvoke,
@@ -115,6 +120,21 @@ pub struct InvokeRequest {
 pub struct InvokeResponse {
     pub outputs: serde_json::Value,
     pub implementation_used: PluginId,
+    pub explanation_id: ExplanationId,
+}
+
+/// docs/998-roadmap.md's Backlog "Protect the Human" item: "no signal exists for 'you've
+/// delegated this kind of task N times this month, want to do the next one yourself?'" — returned
+/// by [`crate::gateway::ApiGateway::check_skill_delegation_signal`] only once the real count
+/// crosses the caller-supplied threshold; `None` below it. Deliberately advisory, never enforced —
+/// CLAUDE.md's own User Control principle ("Hyperion assists. It does not control.") means this
+/// never blocks or refuses `entity_key`'s capability, only records a real, explainable reason a
+/// caller *might* want to ask the user that question.
+#[derive(Debug, Clone)]
+pub struct SkillDelegationSignal {
+    pub entity_key: String,
+    pub count: usize,
+    pub threshold: usize,
     pub explanation_id: ExplanationId,
 }
 

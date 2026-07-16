@@ -489,6 +489,44 @@ impl MemoryEngine {
         Ok(ExtractionReceipt { promoted })
     }
 
+    /// docs/998-roadmap.md's Backlog "Protect the Human" item: "no signal exists for 'you've
+    /// delegated this kind of task N times this month, want to do the next one yourself?'" —
+    /// `hyperion-memory`'s procedural tier was already named as the likely home for this ("it
+    /// already tracks repeated task patterns"). Counts non-erased Procedural records whose
+    /// caller-supplied `content.entity_key` matches `entity_key` and whose `created_at` falls at
+    /// or after `since_ts` — the same explicit-`entity_key` grouping convention
+    /// [`Self::run_extraction_pass`] already established, reused here instead of inventing a
+    /// second one. Deliberately returns a plain count, not a decision: whether/how a caller acts
+    /// on it (e.g. surfacing "want to do the next one yourself?") is not this crate's call — see
+    /// `hyperion-api-gateway::check_skill_delegation_signal` for the real, explainable bridge that
+    /// consumes it.
+    pub fn count_procedural_delegations(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        entity_key: &str,
+        since_ts: u64,
+    ) -> Result<crate::types::DelegationCount, MemoryError> {
+        let records = self.query(
+            monitor,
+            token,
+            &MemoryFilter {
+                tier: Some(MemoryTier::Procedural),
+                time_range: Some((since_ts, u64::MAX)),
+                ..Default::default()
+            },
+        )?;
+        let count = records
+            .iter()
+            .filter(|r| r.content.get("entity_key").and_then(|v| v.as_str()) == Some(entity_key))
+            .count();
+        Ok(crate::types::DelegationCount {
+            entity_key: entity_key.to_string(),
+            count,
+            window_start: since_ts,
+        })
+    }
+
     /// docs/09 §5.2's inferred-edge background job, the `co-occurs-with`
     /// half: sourced from this crate's own real `MemoryRecord.provenance`
     /// (every Knowledge Graph object a memory record actually names),

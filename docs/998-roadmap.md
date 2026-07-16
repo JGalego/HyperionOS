@@ -2147,12 +2147,19 @@ have a real architectural home yet.
   is" (e.g., branding a startup vs. filing its paperwork, dispatched identically today). Likely
   home: a new classification on `AgentManifest`/`CapabilityManifest` alongside trust tier, or a new
   field in `hyperion-coordination`'s task assignment.
-- **No cache-protection throttle for the human's own skill.** `hyperion-memory`'s tiered design
-  already protects the *system's* memory ("your brain has a cache, don't empty it completely" —
-  the deck's own framing). Nothing protects the *user's*: no signal exists for "you've delegated
-  this kind of task N times this month, want to do the next one yourself?" Likely home:
-  `hyperion-memory`'s procedural tier (it already tracks repeated task patterns) surfaced back
-  through `hyperion-explainability` rather than only used internally.
+- **Cache-protection throttle for the human's own skill — the signal half landed (2026-07-16).**
+  `hyperion-memory`'s tiered design already protected the *system's* memory ("your brain has a
+  cache, don't empty it completely" — the deck's own framing); nothing protected the *user's*.
+  `MemoryEngine::count_procedural_delegations` now really counts how many times a specific kind of
+  task (a caller-supplied `entity_key`) has been delegated within a caller-supplied window, over
+  the Procedural tier; `hyperion-api-gateway::ApiGateway::check_skill_delegation_signal` (a new
+  `MemoryQuery` scope) is the real bridge this item's own suggested home named ("surfaced back
+  through `hyperion-explainability` rather than only used internally") — a threshold-crossing
+  count opens a real, completed Explanation Record naming the count and threshold. Deliberately
+  advisory, never enforcing (CLAUDE.md's User Control principle: "Hyperion assists. It does not
+  control."). Still missing, honestly: no console/workspace surface actually calls this or asks
+  the user "want to do the next one yourself?" yet — this closes the *signal*, not the end-to-end
+  UX.
 - **No "was this meaningful" signal, only "was this fast."** `hyperion-observability` tracks system
   health and latency; nothing tracks whether a completed goal actually mattered to the user, as
   opposed to how quickly it was produced. Likely home: a new, optional per-goal reflection surface

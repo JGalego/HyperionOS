@@ -70,6 +70,16 @@ pub struct MemoryRecord {
     pub dormant: bool,
 }
 
+/// docs/998-roadmap.md's Backlog "Protect the Human" item: "no signal exists for 'you've
+/// delegated this kind of task N times this month, want to do the next one yourself?'" — a real
+/// count, never a decision (see [`crate::engine::MemoryEngine::count_procedural_delegations`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DelegationCount {
+    pub entity_key: String,
+    pub count: usize,
+    pub window_start: u64,
+}
+
 /// docs/08 §4: "not a `MemoryRecord`; RAM-resident only" — never persisted
 /// to the Knowledge Graph, discarded at session close after distillation
 /// (§5.1).

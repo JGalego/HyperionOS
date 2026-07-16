@@ -59,6 +59,15 @@
 //! declares which capability can supply facts about an entity this crate has no local record of,
 //! the same honest, never-bypass-dispatch shape `hyperion-knowledge-graph`'s own
 //! `KnowledgeProvider` lookup already established.
+//!
+//! Real (2026-07-16, docs/998-roadmap.md's Backlog "Protect the Human" item):
+//! [`engine::MemoryEngine::count_procedural_delegations`] is the real count that item names as
+//! missing ("no signal exists for 'you've delegated this kind of task N times... want to do the
+//! next one yourself?'"), reusing this crate's own established explicit-`entity_key` grouping
+//! convention. A plain count, not a decision — `hyperion-api-gateway::check_skill_delegation_signal`
+//! is the real bridge that turns a threshold-crossing count into an explainable signal via
+//! `hyperion-explainability`, since this crate deliberately doesn't depend on that crate (see
+//! that bridge's own doc comment for why: a real dependency cycle would result otherwise).
 
 mod decay;
 mod engine;
@@ -68,4 +77,4 @@ mod types;
 pub use decay::{decay_score, THETA_ARCHIVE, THETA_PROMOTE};
 pub use engine::{ErasureReceipt, ExtractionReceipt, MemoryEngine, MemoryError, MemoryFilter};
 pub use providers::{capabilities_for, capability_for};
-pub use types::{MemoryRecord, MemoryTier, WorkingMemory};
+pub use types::{DelegationCount, MemoryRecord, MemoryTier, WorkingMemory};
