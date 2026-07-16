@@ -90,6 +90,8 @@ pub enum Fault {
     InsufficientRights,
     #[error("cannot escalate rights beyond parent capability")]
     CannotEscalate,
+    #[error("wire token signature is missing or does not verify")]
+    SignatureInvalid,
 }
 
 pub(crate) fn min_expiry(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {

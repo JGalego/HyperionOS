@@ -2837,6 +2837,7 @@ name = "hyperion-capability"
 version = "0.2.0"
 dependencies = [
  "bitflags 2.13.0",
+ "hyperion-crypto",
  "proptest",
  "serde",
  "thiserror 2.0.18",

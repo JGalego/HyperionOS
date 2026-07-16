@@ -7,6 +7,7 @@ description = "Hyperion L0 capability security core: unforgeable tokens, attenua
 
 [dependencies]
 bitflags = { workspace = true, features = ["serde"] }
+hyperion-crypto = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 

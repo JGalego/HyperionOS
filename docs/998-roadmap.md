@@ -2529,3 +2529,29 @@ next step on any of these is a design pass, not code.
   and correctly passes an identical repeat; the rolling window is really bounded (old, evicted
   results provably stop influencing the score); and different hardware tiers never share a
   window, matching this crate's own pre-existing same-tier-only invariant for `Percent` gates.
+
+- **`hyperion-capability`'s real `WireToken` replay resistance / signing, landed (2026-07-16)**
+  (docs/03's own named gap: "confidentiality or replay resistance for a token in transit... requires
+  either transport-level access control... or cryptographic signing — the latter is M9's job...
+  not repeated here ahead of its own milestone"). M9 (`hyperion-crypto`, real Ed25519) has existed
+  since earlier this session and is now used here exactly the way `hyperion-plugin-framework`'s
+  manifest signing and `hyperion-ai-runtime`'s model-descriptor signing already established: a new
+  `WireToken.signature: Option<Signature>` field, a new `WireToken::signed(token, keystore)`
+  constructor producing a real signature over every other claimed field's own canonical bytes, and
+  a new `CapabilityMonitor::authenticate_wire_token_signed(wire, verifying_key)` that rejects a
+  missing or invalid signature with a new `Fault::SignatureInvalid` before any liveness/rights
+  check even runs — a forged or replayed-from-elsewhere claim never reaches that check at all. The
+  original, unsigned `WireToken::from`/`CapabilityMonitor::authenticate_wire_token` path is
+  completely unchanged — this crate makes signing possible, it does not make it mandatory
+  workspace-wide; wiring a real caller (`hyperion-ipc`'s `Endpoint`, `hyperion-supervisor`'s
+  spawned-service handoff) to actually use it by default is real, separate follow-up work, not
+  attempted here (both would need a `Keystore`/`VerifyingKey` threaded into state that doesn't hold
+  one today — a real, distinct integration task from the primitive itself). No dependency cycle:
+  `hyperion-crypto` has no reverse dependency on `hyperion-capability`. Proven end to end in 5 new
+  tests: a genuinely signed token authenticates against its own real signer's `VerifyingKey`; an
+  unsigned token is rejected by the signed entry point; a token signed by a real, different device
+  is rejected under the wrong `VerifyingKey`; a field tampered with after signing invalidates the
+  signature; and a genuinely signed but revoked token still fails the real liveness check — a real
+  signature never bypasses the real revocation graph. All 8 of this crate's own pre-existing wire
+  tests still pass unchanged, and the full workspace (every downstream crate depending on
+  `hyperion-capability`) builds and tests clean.

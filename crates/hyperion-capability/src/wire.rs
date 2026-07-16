@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use hyperion_crypto::{Keystore, Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 use crate::monitor::CapabilityMonitor;
@@ -18,16 +19,19 @@ use crate::types::{Fault, ObjectId, RightsMask, TokenId, TrustBoundaryId};
 /// impl at all, so this validating conversion is the *only* path from wire data to a token this
 /// process can act on; there is no shortcut that skips it.
 ///
-/// What this does *not* provide: confidentiality or replay resistance for a token in transit.
-/// If an attacker observes a real, valid `WireToken` on the wire (or the transport itself, e.g.
-/// a shared filesystem socket, isn't itself access-controlled), they can replay those exact
-/// bytes and be authenticated as the original holder, indistinguishably. Closing that requires
-/// either transport-level access control (M2's Landlock/seccomp scoping of who can even reach a
-/// given socket) or cryptographic signing — the latter is M9's job
-/// ("real cryptography... a tampered plugin manifest/update package/audit-ledger entry is
-/// rejected by a real signature"), not repeated here ahead of its own milestone. What *is* closed
-/// here, unconditionally: nobody can claim rights or an object they were never granted for a
-/// `token_id` they don't otherwise control, regardless of what bytes they send.
+/// What this does *not unconditionally* provide: confidentiality for a token in transit (an
+/// unsigned `WireToken` is still exactly as authoritative as any other unauthenticated bytes).
+/// Replay resistance is now real for a caller that opts in: [`WireToken::signed`]/
+/// [`CapabilityMonitor::authenticate_wire_token_signed`] close docs/03's own previously-named
+/// "cryptographic signing... is M9's job" gap — M9 (`hyperion-crypto`, real Ed25519) now exists
+/// and is used here exactly the way `hyperion-plugin-framework`'s manifest signing and
+/// `hyperion-ai-runtime`'s model-descriptor signing already established: a `Signature` over this
+/// struct's own canonical bytes, checked against a real `VerifyingKey` before anything is
+/// reconstructed. A caller still not wired for signing (no shared `VerifyingKey` established yet)
+/// keeps using the original, unsigned [`CapabilityMonitor::authenticate_wire_token`] entry point
+/// — this crate makes signing possible, it does not make it mandatory workspace-wide; wiring a
+/// real caller (`hyperion-ipc`'s `Endpoint`, `hyperion-supervisor`'s spawned-service handoff) to
+/// actually use it by default is real, separate follow-up work, not attempted here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WireToken {
     pub token_id: u64,
@@ -43,6 +47,31 @@ pub struct WireToken {
     /// TTL granularity this system uses, and never makes an expired token look unexpired (transit
     /// time only ever makes the reconstructed deadline earlier than the original, never later).
     pub expiry_millis_remaining: Option<u64>,
+    /// `None` for a `WireToken` built via [`From<&CapabilityToken>`] (this struct's original,
+    /// still-real, still-supported unsigned path) — `Some` only when built via
+    /// [`WireToken::signed`]. A real Ed25519 signature over every other field's own canonical
+    /// bytes ([`canonical_bytes`]), checked by [`CapabilityMonitor::authenticate_wire_token_signed`].
+    pub signature: Option<Signature>,
+}
+
+/// The exact bytes a real [`WireToken`] signature is produced/verified over — every claimed
+/// field except `signature` itself, so a tampered `rights`/`object_id`/`generation`/etc. (or a
+/// signature copied onto a different token's claim) fails verification.
+fn canonical_bytes(wire: &WireToken) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&wire.token_id.to_le_bytes());
+    bytes.extend_from_slice(&wire.object_id.to_le_bytes());
+    bytes.extend_from_slice(&wire.rights.bits().to_le_bytes());
+    bytes.extend_from_slice(&wire.generation.to_le_bytes());
+    bytes.extend_from_slice(&wire.origin.to_le_bytes());
+    match wire.expiry_millis_remaining {
+        Some(ms) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&ms.to_le_bytes());
+        }
+        None => bytes.push(0),
+    }
+    bytes
 }
 
 impl From<&CapabilityToken> for WireToken {
@@ -56,7 +85,23 @@ impl From<&CapabilityToken> for WireToken {
             expiry_millis_remaining: token
                 .expiry()
                 .map(|e| e.saturating_duration_since(Instant::now()).as_millis() as u64),
+            signature: None,
         }
+    }
+}
+
+impl WireToken {
+    /// As [`From<&CapabilityToken>`], but real Ed25519-signed over this token's own canonical
+    /// bytes with `keystore` — the replay-resistant path [`CapabilityMonitor::
+    /// authenticate_wire_token_signed`] requires. The signing device's real identity is
+    /// `keystore.verifying_key()`; a receiver must already hold (or otherwise establish) that
+    /// same real key to verify it, the same trust-establishment this workspace's other real
+    /// signing call sites (`hyperion-plugin-framework`'s manifests, `hyperion-ai-runtime`'s model
+    /// descriptors) already require.
+    pub fn signed(token: &CapabilityToken, keystore: &Keystore) -> Self {
+        let mut wire = WireToken::from(token);
+        wire.signature = Some(keystore.sign(&canonical_bytes(&wire)));
+        wire
     }
 }
 
@@ -66,8 +111,31 @@ impl CapabilityMonitor {
     /// check `check_rights_ok_result` would, before returning anything. A `WireToken` whose
     /// claimed `rights`/`object_id` don't match this monitor's own record for its `token_id`, or
     /// whose `generation` is stale, or that's expired, is rejected here — never handed back as
-    /// something the caller must remember to check later.
+    /// something the caller must remember to check later. Does not check `signature` at all —
+    /// see [`Self::authenticate_wire_token_signed`] for the replay-resistant variant that does.
     pub fn authenticate_wire_token(&self, wire: &WireToken) -> Result<CapabilityToken, Fault> {
+        self.reconstruct_and_check(wire)
+    }
+
+    /// As [`Self::authenticate_wire_token`], additionally requiring a real, valid Ed25519
+    /// signature over `wire`'s own canonical bytes against `verifying_key` — closing docs/03's
+    /// own previously-named "cryptographic signing" gap for a caller that has a real
+    /// `VerifyingKey` to check against. A missing or invalid signature is rejected with
+    /// [`Fault::SignatureInvalid`] before any liveness/rights check even runs — a forged or
+    /// replayed-from-elsewhere claim never reaches that check at all.
+    pub fn authenticate_wire_token_signed(
+        &self,
+        wire: &WireToken,
+        verifying_key: &VerifyingKey,
+    ) -> Result<CapabilityToken, Fault> {
+        let signature = wire.signature.as_ref().ok_or(Fault::SignatureInvalid)?;
+        if !hyperion_crypto::verify(&canonical_bytes(wire), signature, verifying_key) {
+            return Err(Fault::SignatureInvalid);
+        }
+        self.reconstruct_and_check(wire)
+    }
+
+    fn reconstruct_and_check(&self, wire: &WireToken) -> Result<CapabilityToken, Fault> {
         let token = CapabilityToken::from_wire_parts(
             TokenId(wire.token_id),
             ObjectId(wire.object_id),
@@ -143,6 +211,7 @@ mod tests {
             generation: 0,
             origin: 1,
             expiry_millis_remaining: None,
+            signature: None,
         };
 
         assert_eq!(
@@ -165,5 +234,91 @@ mod tests {
 
         let restored = m.authenticate_wire_token(&wire).unwrap();
         assert!(!restored.is_expired());
+    }
+
+    #[test]
+    fn a_genuinely_signed_token_authenticates_against_the_real_signing_keystores_own_key() {
+        let mut m = CapabilityMonitor::new();
+        let root = m.mint_root(
+            RightsMask::READ | RightsMask::WRITE,
+            TrustBoundaryId(1),
+            None,
+        );
+        let keystore = Keystore::ephemeral();
+
+        let wire = WireToken::signed(&root, &keystore);
+        let restored = m
+            .authenticate_wire_token_signed(&wire, &keystore.verifying_key())
+            .expect("a genuinely signed token must authenticate against its own real signer");
+
+        assert_eq!(restored.object_id(), root.object_id());
+        assert_eq!(restored.rights(), root.rights());
+    }
+
+    #[test]
+    fn an_unsigned_wire_token_is_rejected_by_the_signed_entry_point() {
+        let mut m = CapabilityMonitor::new();
+        let root = m.mint_root(RightsMask::READ, TrustBoundaryId(1), None);
+        let keystore = Keystore::ephemeral();
+
+        let wire = WireToken::from(&root); // no signature at all
+        assert_eq!(
+            m.authenticate_wire_token_signed(&wire, &keystore.verifying_key())
+                .unwrap_err(),
+            Fault::SignatureInvalid
+        );
+    }
+
+    #[test]
+    fn a_replayed_token_signed_by_a_different_real_device_is_rejected() {
+        let mut m = CapabilityMonitor::new();
+        let root = m.mint_root(RightsMask::READ, TrustBoundaryId(1), None);
+        let attacker_keystore = Keystore::ephemeral();
+        let real_keystore = Keystore::ephemeral();
+
+        // A real signature genuinely produced by some other real device's own key -- not a
+        // tampered field, a wholly different (but real) signer.
+        let wire = WireToken::signed(&root, &attacker_keystore);
+
+        assert_eq!(
+            m.authenticate_wire_token_signed(&wire, &real_keystore.verifying_key())
+                .unwrap_err(),
+            Fault::SignatureInvalid,
+            "a signature genuinely valid under a different real key must never verify here"
+        );
+    }
+
+    #[test]
+    fn a_tampered_field_on_an_otherwise_genuinely_signed_token_is_rejected() {
+        let mut m = CapabilityMonitor::new();
+        let root = m.mint_root(RightsMask::READ, TrustBoundaryId(1), None);
+        let keystore = Keystore::ephemeral();
+
+        let mut wire = WireToken::signed(&root, &keystore);
+        wire.rights = RightsMask::all(); // tampered after signing
+
+        assert_eq!(
+            m.authenticate_wire_token_signed(&wire, &keystore.verifying_key())
+                .unwrap_err(),
+            Fault::SignatureInvalid,
+            "a field tampered with after real signing must invalidate the real signature"
+        );
+    }
+
+    #[test]
+    fn a_genuinely_signed_but_revoked_token_still_fails_the_liveness_check() {
+        let mut m = CapabilityMonitor::new();
+        let root = m.mint_root(RightsMask::READ, TrustBoundaryId(1), None);
+        let keystore = Keystore::ephemeral();
+        let wire = WireToken::signed(&root, &keystore);
+
+        m.cap_revoke(&root);
+
+        assert_eq!(
+            m.authenticate_wire_token_signed(&wire, &keystore.verifying_key())
+                .unwrap_err(),
+            Fault::Revoked,
+            "a real, valid signature must not bypass the real revocation-graph check"
+        );
     }
 }
