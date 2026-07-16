@@ -2327,3 +2327,25 @@ have a real architectural home yet.
 Each of the above is a backlog item, not a design — none has interfaces, contracts, or a chosen
 approach yet. Per CLAUDE.md's own engineering principle ("design APIs before implementation"), the
 next step on any of these is a design pass, not code.
+
+- **`hyperion-ai-runtime`'s cancellable streaming, landed (2026-07-16)** (docs/22's own "Cancellable
+  streaming (§Data Structures' `TokenStream`)" item). `LocalAiRuntime::cancel(request_id)` was a
+  literal no-op stub (`pub fn cancel(&self, _request_id: u64) {}`) — this closes it for real. A new
+  `CancellationToken` (wrapping an `Arc<AtomicBool>`) threads through `InferenceBackend::generate`'s
+  signature as a fourth parameter; a new `LocalAiRuntime::infer_cancellable(request_id, ...)`
+  registers a real token under the caller-supplied `request_id` in a real `in_flight: Mutex<
+  HashMap<u64, CancellationToken>>` registry before calling `generate`, and `cancel(request_id)`
+  looks it up and flips it for real. The existing `infer()` is untouched — it delegates to the same
+  internal path with a `CancellationToken::never_cancelled()` that no caller can ever reach, since
+  no `request_id` is ever surfaced for it. Honest split, not uniform: `hyperion_ai_runtime::
+  candle_backend::CandleBackend` is the one real backend in this crate with a genuine per-token
+  loop, so it's the one that actually checks `cancel.is_cancelled()` once per token and stops early,
+  decoding whatever was already sampled; every HTTP-backed backend (`MockBackend`,
+  `OpenAiCompatBackend`, `AnthropicBackend`, `GeminiBackend`) receives the same token but ignores it
+  — a single blocking round trip has no per-chunk boundary to check it at, named in each one's own
+  doc comment rather than faked. Proven end to end: a new synthetic `StepCountingBackend` test
+  (`tests/infer.rs`) proves the runtime's own registry/`cancel()` plumbing reaches the token
+  `generate` sees without needing the `candle` feature; a second, `candle`-feature-gated test
+  (`tests/candle_inference.rs`) proves the real thing — a real `infer_cancellable` call against the
+  real downloaded TinyStories model, cancelled from a concurrent real thread mid-generation,
+  produces genuinely fewer real generated tokens than an uncancelled real run of the same prompt.

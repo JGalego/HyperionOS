@@ -28,7 +28,7 @@ use candle_transformers::models::llama2_c::{Cache, Config, Llama};
 use candle_transformers::models::llama2_c_weights::TransformerWeights;
 use tokenizers::Tokenizer;
 
-use crate::runtime::InferenceBackend;
+use crate::runtime::{CancellationToken, InferenceBackend};
 use crate::types::InferenceRequest;
 
 /// Generous enough to prove a real, multi-token generation happened without making every real
@@ -184,14 +184,24 @@ impl InferenceBackend for CandleBackend {
     /// A real, complete forward-pass-plus-sampling loop: encodes `request.prompt` with the real
     /// tokenizer, runs each generated token through the real model with a fresh KV cache, samples
     /// the next token via [`LogitsProcessor`], and decodes the full real output once generation
-    /// stops (end-of-sequence token, or [`MAX_NEW_TOKENS`]).
+    /// stops (end-of-sequence token, [`MAX_NEW_TOKENS`], or a real `cancel` -- docs/22's own
+    /// previously-named "cancellable streaming" gap, closed for real here: this is the one real
+    /// backend in this workspace with a genuine per-token boundary to check `cancel` at, checked
+    /// once per token before that token's own forward pass runs, so a real cancellation mid-way
+    /// through generation stops it with whatever real tokens were already sampled decoded and
+    /// returned, rather than continuing to [`MAX_NEW_TOKENS`] regardless.
     ///
     /// `model_id` is unused: this crate's own `LocalAiRuntime::infer` already validated a matching
     /// `ModelDescriptor` is registered and resident before ever calling `generate` (see
     /// `runtime.rs`); this backend serves the one real checkpoint it was constructed with,
     /// consistent with `MockBackend`'s own doc comment that a backend can hold "whatever real
     /// per-model state loading real weights needs."
-    fn generate(&self, _model_id: u64, request: &InferenceRequest) -> String {
+    fn generate(
+        &self,
+        _model_id: u64,
+        request: &InferenceRequest,
+        cancel: &CancellationToken,
+    ) -> String {
         let mut cache = match Cache::new(true, &self.config, self.rot_vb.clone()) {
             Ok(cache) => cache,
             Err(e) => return format!("[candle backend error: failed to build a fresh cache: {e}]"),
@@ -208,7 +218,7 @@ impl InferenceBackend for CandleBackend {
         let mut index_pos = 0usize;
 
         for index in 0..MAX_NEW_TOKENS {
-            if tokens.len() >= self.config.seq_len {
+            if cancel.is_cancelled() || tokens.len() >= self.config.seq_len {
                 break;
             }
             let context_size = if index > 0 { 1 } else { tokens.len() };

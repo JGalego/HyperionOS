@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use hyperion_crypto::{Keystore, Signature, VerifyingKey};
 
-use crate::runtime::InferenceBackend;
+use crate::runtime::{CancellationToken, InferenceBackend};
 use crate::types::{InferenceRequest, ModelDescriptor};
 
 /// The exact fields a real signature is produced/verified over — the same fields the
@@ -53,7 +53,12 @@ pub fn verify(descriptor: &ModelDescriptor, verifying_key: &VerifyingKey) -> boo
 pub struct MockBackend;
 
 impl InferenceBackend for MockBackend {
-    fn generate(&self, model_id: u64, request: &InferenceRequest) -> String {
+    fn generate(
+        &self,
+        model_id: u64,
+        request: &InferenceRequest,
+        _cancel: &CancellationToken,
+    ) -> String {
         format!(
             "[mock model {model_id}] echo: {}",
             request.prompt.chars().take(500).collect::<String>()

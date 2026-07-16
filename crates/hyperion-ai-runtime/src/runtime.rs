@@ -1,4 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -19,11 +20,54 @@ fn now() -> u64 {
         .as_secs()
 }
 
+/// docs/22's own previously-named "cancellable streaming" gap, closed for real generation loops
+/// that actually have a per-step boundary to check at: a real, shareable cancellation signal one
+/// thread can flip via [`LocalAiRuntime::cancel`] while another thread's real, in-progress
+/// [`LocalAiRuntime::infer_cancellable`] call (running [`InferenceBackend::generate`] on it) is
+/// still running. Honest scope: only a backend with a genuine token-by-token (or otherwise
+/// interruptible) loop can act on this before its own `generate` call returns —
+/// [`crate::candle_backend::CandleBackend`] is the one real backend in this workspace with such a
+/// loop; every HTTP-backed backend (`OpenAiCompatBackend`/`AnthropicBackend`/`GeminiBackend`) and
+/// [`crate::MockBackend`] still complete their one blocking call before anything could check this,
+/// so they receive it and simply never consult it -- named here, not silently pretended otherwise.
+#[derive(Clone)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    fn new() -> Self {
+        CancellationToken {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// A real, permanently-uncancelled token for a caller (e.g. [`LocalAiRuntime::infer`]'s own
+    /// existing, unchanged entry point) that has no real cancellation id to check against.
+    pub fn never_cancelled() -> Self {
+        Self::new()
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
+
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+}
+
 /// A pluggable execution backend — see this crate's doc comment. Swapping
 /// [`crate::MockBackend`] for a real one is the entire integration surface
-/// a future session needs to touch to run real models.
+/// a future session needs to touch to run real models. `cancel` is real, checkable state (see
+/// [`CancellationToken`]'s own doc comment on which real backends can and can't act on it).
 pub trait InferenceBackend: Send + Sync {
-    fn generate(&self, model_id: u64, request: &InferenceRequest) -> String;
+    fn generate(
+        &self,
+        model_id: u64,
+        request: &InferenceRequest,
+        cancel: &CancellationToken,
+    ) -> String;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -55,6 +99,12 @@ pub struct LocalAiRuntime {
     backend: Mutex<Arc<dyn InferenceBackend>>,
     total_capacity_mb: u32,
     next_request_id: AtomicU64,
+    /// Real, in-progress [`Self::infer_cancellable`] calls, keyed by their own real,
+    /// caller-supplied `request_id` -- what [`Self::cancel`] actually flips. An entry only ever
+    /// exists for the duration of one real `generate` call; removed the instant it returns, so a
+    /// `cancel` for an id that already finished (or was never registered, e.g. a caller of the
+    /// plain [`Self::infer`]) is a real, harmless no-op, never a dangling reference.
+    in_flight: Mutex<HashMap<u64, CancellationToken>>,
 }
 
 impl LocalAiRuntime {
@@ -66,6 +116,7 @@ impl LocalAiRuntime {
             backend: Mutex::new(Arc::from(backend)),
             total_capacity_mb,
             next_request_id: AtomicU64::new(1),
+            in_flight: Mutex::new(HashMap::new()),
         }
     }
 
@@ -180,6 +231,8 @@ impl LocalAiRuntime {
     /// per-boundary KV-cache/batching model). Resolves a variant, loads it
     /// if needed (downgrading first under a constrained
     /// [`PowerMode`], per §5.3), and runs the mock backend synchronously.
+    /// Never cancellable through this entry point -- no `request_id` is ever surfaced to a
+    /// caller to cancel it with. See [`Self::infer_cancellable`] for the real, cancellable path.
     pub fn infer(
         &self,
         monitor: &CapabilityMonitor,
@@ -187,6 +240,53 @@ impl LocalAiRuntime {
         class: ModelClass,
         contract: &CapabilityContract,
         request: &InferenceRequest,
+    ) -> Result<InferenceResult, RuntimeError> {
+        self.infer_with_token(
+            monitor,
+            token,
+            class,
+            contract,
+            request,
+            &CancellationToken::never_cancelled(),
+        )
+    }
+
+    /// As [`Self::infer`], but real caller-supplied `request_id` is registered against a real
+    /// [`CancellationToken`] *before* the real (potentially slow) `InferenceBackend::generate`
+    /// call runs, so a genuinely concurrent caller on another real thread can really cancel it
+    /// mid-generation via [`Self::cancel`] -- closes docs/22's own previously-named "cancellable
+    /// streaming" gap for real, for whichever real backend can act on it (see
+    /// [`CancellationToken`]'s own doc comment for the honest boundary on which ones can).
+    /// `request_id` is the caller's own to choose (and to remember, to cancel with later) --
+    /// this crate mints no id of its own for this path, unlike [`Self::infer`]'s internal,
+    /// never-surfaced one.
+    pub fn infer_cancellable(
+        &self,
+        request_id: u64,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        class: ModelClass,
+        contract: &CapabilityContract,
+        request: &InferenceRequest,
+    ) -> Result<InferenceResult, RuntimeError> {
+        let cancel = CancellationToken::new();
+        self.in_flight
+            .lock()
+            .unwrap()
+            .insert(request_id, cancel.clone());
+        let result = self.infer_with_token(monitor, token, class, contract, request, &cancel);
+        self.in_flight.lock().unwrap().remove(&request_id);
+        result
+    }
+
+    fn infer_with_token(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        class: ModelClass,
+        contract: &CapabilityContract,
+        request: &InferenceRequest,
+        cancel: &CancellationToken,
     ) -> Result<InferenceResult, RuntimeError> {
         monitor
             .check_rights_ok_result(token, RightsMask::EXEC)
@@ -207,7 +307,7 @@ impl LocalAiRuntime {
         // slow network call without serializing any other concurrent `infer` call. See this
         // struct's own `backend` field doc comment.
         let backend = self.backend.lock().unwrap().clone();
-        let text = backend.generate(model_id, request);
+        let text = backend.generate(model_id, request, cancel);
         self.residency.lock().unwrap().touch(model_id, now());
         let _request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
 
@@ -231,8 +331,15 @@ impl LocalAiRuntime {
             .unwrap_or(current)
     }
 
-    /// A no-op stub — see this crate's doc comment on deferred streaming.
-    pub fn cancel(&self, _request_id: u64) {}
+    /// Real now: flips the real [`CancellationToken`] registered for `request_id` (via
+    /// [`Self::infer_cancellable`]), if that request is still in flight. A harmless no-op for an
+    /// id that already finished, was never registered (e.g. a plain [`Self::infer`] call), or
+    /// belongs to a backend with no real per-step boundary to check it at.
+    pub fn cancel(&self, request_id: u64) {
+        if let Some(token) = self.in_flight.lock().unwrap().get(&request_id) {
+            token.cancel();
+        }
+    }
 
     pub fn residency_of(&self, model_id: u64) -> Option<ResidencyEntry> {
         self.residency.lock().unwrap().entry(model_id)

@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use hyperion_agent_runtime::AgentRuntime;
 use hyperion_ai_runtime::{
-    sign, InferenceBackend, InferenceRequest, LocalAiRuntime, MockBackend, ModelClass,
-    ModelDescriptor, Precision, QuantizedVariant,
+    sign, CancellationToken, InferenceBackend, InferenceRequest, LocalAiRuntime, MockBackend,
+    ModelClass, ModelDescriptor, Precision, QuantizedVariant,
 };
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_context::ContextEngine;
@@ -78,7 +78,12 @@ struct SlowBackend {
 }
 
 impl InferenceBackend for SlowBackend {
-    fn generate(&self, _model_id: u64, request: &InferenceRequest) -> String {
+    fn generate(
+        &self,
+        _model_id: u64,
+        request: &InferenceRequest,
+        _cancel: &CancellationToken,
+    ) -> String {
         std::thread::sleep(self.delay);
         format!("slow echo: {}", request.prompt)
     }

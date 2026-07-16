@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::runtime::InferenceBackend;
+use crate::runtime::{CancellationToken, InferenceBackend};
 use crate::types::InferenceRequest;
 
 const BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
@@ -121,8 +121,15 @@ impl InferenceBackend for GeminiBackend {
     /// via [`serde_json::Value`] (fishing for `candidates[0].content.parts[0].text`) rather than
     /// a strict typed `Deserialize`. Every failure is embedded as `"[gemini backend error:
     /// ...]"` text, matching every other real backend's convention in this crate -- this
-    /// trait's contract returns a plain `String`, never a `Result`.
-    fn generate(&self, _model_id: u64, request: &InferenceRequest) -> String {
+    /// trait's contract returns a plain `String`, never a `Result`. `cancel` is unused: one
+    /// blocking HTTP call, no real per-chunk boundary -- see
+    /// `hyperion_ai_runtime::CancellationToken`'s own doc comment.
+    fn generate(
+        &self,
+        _model_id: u64,
+        request: &InferenceRequest,
+        _cancel: &CancellationToken,
+    ) -> String {
         let payload = serde_json::json!({
             "contents": [{ "parts": [{ "text": request.prompt }] }],
         });

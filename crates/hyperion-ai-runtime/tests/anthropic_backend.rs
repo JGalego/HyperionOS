@@ -7,7 +7,9 @@
 
 mod common;
 
-use hyperion_ai_runtime::{AnthropicBackend, InferenceBackend, InferenceRequest};
+use hyperion_ai_runtime::{
+    AnthropicBackend, CancellationToken, InferenceBackend, InferenceRequest,
+};
 
 #[test]
 fn connects_to_a_real_local_server_and_proves_a_real_request_response_round_trip() {
@@ -31,7 +33,7 @@ fn connects_to_a_real_local_server_and_proves_a_real_request_response_round_trip
     let request = InferenceRequest {
         prompt: "what is the real meaning of this test".to_string(),
     };
-    let text = backend.generate(1, &request);
+    let text = backend.generate(1, &request, &CancellationToken::never_cancelled());
 
     assert_eq!(
         text, "real anthropic fixture echo: what is the real meaning of this test",

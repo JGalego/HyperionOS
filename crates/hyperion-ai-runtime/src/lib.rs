@@ -50,10 +50,14 @@
 //!   governor tick (fewer concurrent streams, forced downgrade) without
 //!   wiring the actual feedback loop — that wiring belongs to whichever
 //!   later phase first has a real caller on both ends.
-//! - **Cancellable streaming (§Data Structures' `TokenStream`).** Inference
-//!   here is a single synchronous call, not a cancellable stream — there is
-//!   no real generation loop to interrupt yet. `runtime.cancel` exists in
-//!   the API surface but is a no-op stub, noted at its call site.
+//! - ~~**Cancellable streaming (§Data Structures' `TokenStream`)**~~ — now real: a caller-visible
+//!   `request_id` (via [`LocalAiRuntime::infer_cancellable`]) registers a real
+//!   [`runtime::CancellationToken`] in a real `in_flight` registry, and [`LocalAiRuntime::cancel`]
+//!   flips it for real rather than being the previous no-op stub. [`candle_backend::CandleBackend`]
+//!   is the one real backend with a genuine per-token loop to check it at; every HTTP-backed
+//!   backend receives the token but can't act on it mid-call (one blocking round trip, no
+//!   per-chunk boundary) — see [`runtime::CancellationToken`]'s own doc comment for the honest
+//!   split.
 //! - ~~**Real model-artifact signing** (§Security Considerations)~~ — now real
 //!   (docs/998-roadmap.md M9): [`LocalAiRuntime::register_model`] checks a real Ed25519
 //!   signature (via [`hyperion_crypto`]) over [`sign`]'s canonical bytes, not a non-cryptographic
@@ -83,7 +87,7 @@ pub use gemini_backend::{GeminiBackend, GeminiError};
 #[cfg(feature = "openai-compat")]
 pub use openai_compat_backend::{OpenAiCompatBackend, OpenAiCompatError};
 pub use registry::{sign, verify, MockBackend};
-pub use runtime::{InferenceBackend, LocalAiRuntime, RuntimeError};
+pub use runtime::{CancellationToken, InferenceBackend, LocalAiRuntime, RuntimeError};
 pub use types::{
     CapabilityContract, InferenceRequest, InferenceResult, ModelClass, ModelDescriptor, PowerMode,
     Precision, QuantizedVariant, ResidencyEntry, ResidencyStatus, ResourceEstimate,

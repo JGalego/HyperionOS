@@ -17,8 +17,12 @@ use hyperion_ai_runtime::{
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_crypto::Keystore;
 
-#[test]
-fn a_real_candle_backend_runs_real_inference_through_a_real_downloaded_model() {
+fn setup() -> (
+    LocalAiRuntime,
+    CapabilityMonitor,
+    hyperion_capability::CapabilityToken,
+    CapabilityContract,
+) {
     let backend = CandleBackend::load().expect(
         "download (or reuse a cached) real stories15M.bin + tokenizer.json and load real weights",
     );
@@ -50,6 +54,12 @@ fn a_real_candle_backend_runs_real_inference_through_a_real_downloaded_model() {
         latency_budget_ms: 60_000,
         always_on: false,
     };
+    (runtime, monitor, token, contract)
+}
+
+#[test]
+fn a_real_candle_backend_runs_real_inference_through_a_real_downloaded_model() {
+    let (runtime, monitor, token, contract) = setup();
     let request = InferenceRequest {
         prompt: "Once upon a time".to_string(),
     };
@@ -66,5 +76,56 @@ fn a_real_candle_backend_runs_real_inference_through_a_real_downloaded_model() {
         result.text, request.prompt,
         "real generation must produce genuinely new text, not just echo the prompt back \
          (that would indicate MockBackend's shape, not a real forward pass)"
+    );
+}
+
+/// Proves cancellation is real all the way down through `CandleBackend`'s own per-token loop,
+/// not just through the synthetic `StepCountingBackend` `tests/infer.rs` uses: a real
+/// `infer_cancellable` call against a real model, cancelled from another real thread almost
+/// immediately after it starts, produces genuinely fewer real generated tokens than an
+/// uncancelled run of the same prompt gets to produce.
+#[test]
+fn cancel_stops_a_real_candle_generation_before_it_reaches_max_new_tokens() {
+    let (runtime, monitor, token, contract) = setup();
+    let request = InferenceRequest {
+        prompt: "Once upon a time".to_string(),
+    };
+
+    let baseline = runtime
+        .infer(&monitor, &token, ModelClass::Slm, &contract, &request)
+        .expect("an uncancelled real run must complete and produce real generated text");
+    let baseline_tokens = baseline.text.split_whitespace().count();
+
+    let request_id = 7;
+    let cancelled = std::thread::scope(|scope| {
+        let handle = scope.spawn(|| {
+            runtime
+                .infer_cancellable(
+                    request_id,
+                    &monitor,
+                    &token,
+                    ModelClass::Slm,
+                    &contract,
+                    &request,
+                )
+                .expect(
+                    "a cancelled-mid-flight real run must still return whatever real tokens \
+                         were already sampled, not an error",
+                )
+        });
+        // A real forward pass through this real model takes on the order of 100ms+/token on
+        // CPU (see `CandleBackend`'s own doc comment); this sleep is long enough for the
+        // spawned thread to register its real token in `in_flight` and start generating, but
+        // short enough that only a small handful of the real 100 `MAX_NEW_TOKENS` have run.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        runtime.cancel(request_id);
+        handle.join().unwrap()
+    });
+    let cancelled_tokens = cancelled.text.split_whitespace().count();
+
+    assert!(
+        cancelled_tokens < baseline_tokens,
+        "a real cancel() mid-generation must produce fewer real tokens ({cancelled_tokens}) \
+         than an uncancelled real run of the same prompt ({baseline_tokens})"
     );
 }

@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::runtime::InferenceBackend;
+use crate::runtime::{CancellationToken, InferenceBackend};
 use crate::types::InferenceRequest;
 
 /// Bounded, short: [`OpenAiCompatBackend::connect`]'s own real reachability proof shouldn't make
@@ -146,8 +146,16 @@ impl InferenceBackend for OpenAiCompatBackend {
     /// other and from OpenAI's own, and fishing for `choices[0].message.content` tolerates that.
     /// Every failure is embedded as `"[openai-compat backend error: ...]"` text, matching
     /// [`crate::candle_backend::CandleBackend::generate`]'s own convention -- this trait's
-    /// contract returns a plain `String`, never a `Result`.
-    fn generate(&self, _model_id: u64, request: &InferenceRequest) -> String {
+    /// contract returns a plain `String`, never a `Result`. `cancel` is unused: this is one
+    /// blocking HTTP call with no real per-chunk boundary to check it at -- see
+    /// `hyperion_ai_runtime::CancellationToken`'s own doc comment for why that's an honest
+    /// limitation, not an oversight.
+    fn generate(
+        &self,
+        _model_id: u64,
+        request: &InferenceRequest,
+        _cancel: &CancellationToken,
+    ) -> String {
         let payload = serde_json::json!({
             "model": self.model,
             "messages": [{ "role": "user", "content": request.prompt }],

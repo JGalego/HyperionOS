@@ -3,8 +3,9 @@
 //! locally signal when nothing fits.
 
 use hyperion_ai_runtime::{
-    sign, CapabilityContract, InferenceBackend, InferenceRequest, LocalAiRuntime, MockBackend,
-    ModelClass, ModelDescriptor, PowerMode, Precision, QuantizedVariant, RuntimeError,
+    sign, CancellationToken, CapabilityContract, InferenceBackend, InferenceRequest,
+    LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, PowerMode, Precision,
+    QuantizedVariant, RuntimeError,
 };
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_crypto::Keystore;
@@ -167,10 +168,142 @@ struct SlowBackend {
 }
 
 impl InferenceBackend for SlowBackend {
-    fn generate(&self, _model_id: u64, request: &InferenceRequest) -> String {
+    fn generate(
+        &self,
+        _model_id: u64,
+        request: &InferenceRequest,
+        _cancel: &CancellationToken,
+    ) -> String {
         std::thread::sleep(self.delay);
         format!("slow echo: {}", request.prompt)
     }
+}
+
+/// A real `InferenceBackend` with a genuine per-step loop that actually consults `cancel` --
+/// standing in for [`hyperion_ai_runtime::CandleBackend`]'s own real per-token check without
+/// this test needing the `candle` feature (and its real network download) to prove the
+/// runtime's own `in_flight` registry/`cancel()` plumbing reaches the token `generate` sees.
+struct StepCountingBackend {
+    step_delay: std::time::Duration,
+    max_steps: u32,
+}
+
+impl InferenceBackend for StepCountingBackend {
+    fn generate(
+        &self,
+        _model_id: u64,
+        _request: &InferenceRequest,
+        cancel: &CancellationToken,
+    ) -> String {
+        let mut steps_run = 0;
+        for _ in 0..self.max_steps {
+            if cancel.is_cancelled() {
+                break;
+            }
+            std::thread::sleep(self.step_delay);
+            steps_run += 1;
+        }
+        format!("ran {steps_run} of {} steps", self.max_steps)
+    }
+}
+
+/// Proves `LocalAiRuntime::cancel` is real, not the previous no-op stub: a caller-supplied
+/// `request_id` registered via `infer_cancellable` is looked up and its token flipped by a
+/// concurrent `cancel(request_id)` call, and the backend -- which genuinely consults that same
+/// token once per step -- stops early with fewer steps run than `max_steps`.
+#[test]
+fn cancel_stops_a_real_in_flight_request_before_it_reaches_max_steps() {
+    let mut monitor = CapabilityMonitor::new();
+    let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let (_dir, keystore) = keystore();
+    let runtime = LocalAiRuntime::new(
+        Box::new(StepCountingBackend {
+            step_delay: std::time::Duration::from_millis(50),
+            max_steps: 100,
+        }),
+        8_000,
+    );
+    runtime
+        .register_model(
+            descriptor_with_two_tiers(&keystore),
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    let contract = CapabilityContract {
+        latency_budget_ms: 5_000,
+        always_on: false,
+    };
+    let request = InferenceRequest {
+        prompt: "hello".to_string(),
+    };
+    let request_id = 42;
+
+    std::thread::scope(|scope| {
+        let handle = scope.spawn(|| {
+            runtime
+                .infer_cancellable(
+                    request_id,
+                    &monitor,
+                    &token,
+                    ModelClass::Slm,
+                    &contract,
+                    &request,
+                )
+                .unwrap()
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        runtime.cancel(request_id);
+
+        let result = handle.join().unwrap();
+        let steps_run: u32 = result
+            .text
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            steps_run < 100,
+            "expected cancel() to stop generation well before all 100 steps ran, but {steps_run} ran"
+        );
+    });
+}
+
+/// A cancelled `request_id` that's already finished (or never existed) is a harmless no-op --
+/// mirrors real-world races between a caller's cancel request and the backend finishing first.
+#[test]
+fn cancel_on_an_unknown_request_id_is_a_harmless_no_op() {
+    let mut monitor = CapabilityMonitor::new();
+    let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let (_dir, keystore) = keystore();
+    let runtime = LocalAiRuntime::new(Box::new(MockBackend), 8_000);
+    runtime
+        .register_model(
+            descriptor_with_two_tiers(&keystore),
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    runtime.cancel(9999);
+
+    let contract = CapabilityContract {
+        latency_budget_ms: 5_000,
+        always_on: false,
+    };
+    let result = runtime
+        .infer(
+            &monitor,
+            &token,
+            ModelClass::Slm,
+            &contract,
+            &InferenceRequest {
+                prompt: "hello".to_string(),
+            },
+        )
+        .unwrap();
+    assert!(result.text.contains("hello"));
 }
 
 /// Regression coverage for a real, previously-shipped bottleneck: `infer` used to hold the

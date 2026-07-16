@@ -13,7 +13,9 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
-use hyperion_ai_runtime::{InferenceBackend, InferenceRequest, OpenAiCompatBackend};
+use hyperion_ai_runtime::{
+    CancellationToken, InferenceBackend, InferenceRequest, OpenAiCompatBackend,
+};
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
@@ -134,7 +136,7 @@ fn connects_to_a_real_local_server_and_proves_a_real_request_response_round_trip
     let request = InferenceRequest {
         prompt: "what is the real meaning of this test".to_string(),
     };
-    let text = backend.generate(1, &request);
+    let text = backend.generate(1, &request, &CancellationToken::never_cancelled());
 
     assert_eq!(
         text, "real fixture echo: what is the real meaning of this test",
