@@ -2732,3 +2732,28 @@ next step on any of these is a design pass, not code.
   straight to `Ga`; and a health breach demotes the real candidate back to `Shadow` rather than
   leaving it stuck at whatever partial percentage it last reached. All 29 of this crate's own
   pre-existing tests pass unchanged.
+
+- **`hyperion-memory`'s real AI-backed Working → Episodic distillation, landed (2026-07-16)**
+  (docs/08 §5.1's own named gap: this crate accepted a caller-supplied summary rather than
+  summarizing the turn buffer itself, deferred pending a real summarization capability — which
+  now exists). `MemoryEngine::new_with_ai_runtime` wires a real `hyperion-ai-runtime::LocalAiRuntime`
+  in, the same real path `hyperion-context::ContextEngine::new_with_ai_runtime` already proved; a
+  new `MemoryEngine::distill_working_memory` turns a session's real `WorkingMemory` turn buffer
+  (docs/08 §4's RAM-only ring buffer, "discarded at session close after distillation") into one
+  real Episodic `MemoryRecord` — a real, model-generated summary when an `ai_runtime` is wired,
+  falling back to a plain verbatim join of every turn when it isn't, the token lacks real-
+  inference rights (`RuntimeError::Unauthorized`), or nothing is resident locally
+  (`RuntimeError::InfeasibleLocally`) — a caller loses summarization fidelity, never the memory
+  itself, the same graceful-degradation contract `ContextEngine::summarize` already established.
+  `MemoryEngine::new` is unchanged and still every existing caller's default; the AI-runtime-aware
+  constructor is additive. `distill_working_memory` is never called automatically —
+  `WorkingMemory` has no lifecycle hook of its own, so a real caller distills explicitly (e.g. at
+  session close). This crate's own remaining "model-estimated salience" bullet is left open,
+  explicitly: it needs a real, structured numeric estimate from a model, not just free-text
+  summarization, and extracting a reliable float out of free-form model output isn't attempted
+  here. Proven end to end in a new `tests/distillation.rs` (4 tests): a wired, resident model
+  produces a real summary distinguishable from the raw turns; an unregistered model class falls
+  back to the exact verbatim join, not a failure; no `ai_runtime` wired at all keeps the same
+  verbatim-join behavior; and a distilled record really persists as a real Episodic Knowledge
+  Graph node with its own real `importance`/`pinned` fields. All 21 of this crate's own
+  pre-existing tests pass unchanged.

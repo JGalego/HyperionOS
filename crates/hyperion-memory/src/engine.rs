@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
 use hyperion_knowledge_graph::{EdgeOrigin, GraphError, GraphQuery, KnowledgeGraph, NodeId};
 use hyperion_scheduler::{
@@ -10,7 +11,14 @@ use hyperion_scheduler::{
 };
 
 use crate::decay::{decay_score, is_promotable, THETA_ARCHIVE, THETA_PROMOTE};
-use crate::types::{MemoryRecord, MemoryTier};
+use crate::types::{MemoryRecord, MemoryTier, WorkingMemory};
+
+/// Matches `hyperion-context::ContextEngine::SUMMARIZE_LATENCY_BUDGET_MS`'s own precedent (in
+/// turn tracing back to `hyperion-agent-runtime::AgentRuntime::dispatch_document_draft`'s one
+/// real, resident `Slm`-class inference call): generous enough that a real, modest-throughput
+/// resident variant still passes tier selection, without letting one distillation's real
+/// inference call stall a caller indefinitely.
+const DISTILL_LATENCY_BUDGET_MS: u64 = 15_000;
 
 fn now() -> u64 {
     SystemTime::now()
@@ -67,16 +75,40 @@ pub struct MemoryEngine {
     /// see this crate's doc comment.
     scheduler: Mutex<Scheduler>,
     next_task_id: AtomicU64,
+    /// `None` by default: [`Self::distill_working_memory`] falls back to its own verbatim-join
+    /// stand-in — see [`Self::new_with_ai_runtime`]'s own doc comment for the real path this
+    /// unlocks.
+    ai_runtime: Option<Arc<LocalAiRuntime>>,
 }
 
 impl MemoryEngine {
     pub fn new(graph: Arc<KnowledgeGraph>) -> Self {
+        Self::new_inner(graph, None)
+    }
+
+    /// As [`Self::new`], but wires docs/08 §5.1's real "Working → Episodic distillation via a
+    /// local model" this crate's own doc comment previously named as blocked on a real
+    /// summarization capability — which now exists (the same real `hyperion-ai-runtime` path
+    /// `hyperion-context::ContextEngine::new_with_ai_runtime` already proved).
+    /// [`Self::distill_working_memory`] uses `ai_runtime` to produce a real, model-generated
+    /// summary of a session's turn buffer rather than joining the raw turns verbatim; a caller
+    /// not yet ready to wire this (or one whose token lacks the exec rights `LocalAiRuntime::infer`
+    /// requires) keeps the exact same verbatim-join behavior via [`Self::new`].
+    pub fn new_with_ai_runtime(
+        graph: Arc<KnowledgeGraph>,
+        ai_runtime: Arc<LocalAiRuntime>,
+    ) -> Self {
+        Self::new_inner(graph, Some(ai_runtime))
+    }
+
+    fn new_inner(graph: Arc<KnowledgeGraph>, ai_runtime: Option<Arc<LocalAiRuntime>>) -> Self {
         let mut scheduler = Scheduler::new();
         scheduler.register_resource_provider(ResourceLedger::new(ResourceDimension::Cpu, 100, 0));
         MemoryEngine {
             graph,
             scheduler: Mutex::new(scheduler),
             next_task_id: AtomicU64::new(1),
+            ai_runtime,
         }
     }
 
@@ -163,6 +195,69 @@ impl MemoryEngine {
             vec![semantic_id],
         )?;
         Ok((semantic_id, long_term_id))
+    }
+
+    /// docs/08 §5.1's `distillation`, real for the first time: a session's real
+    /// [`WorkingMemory`] turn buffer becomes one real Episodic [`MemoryRecord`] — a real,
+    /// model-generated summary when [`Self::new_with_ai_runtime`] wired an `ai_runtime`, falling
+    /// back to a plain verbatim join of every turn when it didn't, when this `token` isn't
+    /// authorized for real inference (`RuntimeError::Unauthorized`), or when nothing is resident
+    /// locally for `ModelClass::Slm` (`RuntimeError::InfeasibleLocally`) — a caller loses
+    /// summarization fidelity, never the memory itself, the same graceful-degradation contract
+    /// `hyperion-context::ContextEngine::summarize` already established. Never called
+    /// automatically — `WorkingMemory` is this crate's own RAM-only type with no lifecycle hook
+    /// of its own; a real caller distills it explicitly (e.g. at session close, per docs/08 §4's
+    /// "discarded at session close after distillation").
+    pub fn distill_working_memory(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        working: &WorkingMemory,
+        importance: f32,
+        pinned: bool,
+    ) -> Result<NodeId, MemoryError> {
+        let turns: Vec<&str> = working.turns().collect();
+        let summary = self.distill(monitor, token, &turns);
+        self.remember(
+            monitor,
+            token,
+            MemoryTier::Episodic,
+            serde_json::json!({
+                "session_id": working.session_id,
+                "summary": summary,
+            }),
+            None,
+            importance,
+            pinned,
+            Vec::new(),
+        )
+    }
+
+    fn distill(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        turns: &[&str],
+    ) -> String {
+        if let Some(ai_runtime) = &self.ai_runtime {
+            let request = InferenceRequest {
+                prompt: format!(
+                    "Summarize the following conversation turns in one or two short sentences, \
+                     keeping only what would matter to recall later:\n{}",
+                    turns.join("\n")
+                ),
+            };
+            let contract = CapabilityContract {
+                latency_budget_ms: DISTILL_LATENCY_BUDGET_MS,
+                always_on: false,
+            };
+            if let Ok(result) =
+                ai_runtime.infer(monitor, token, ModelClass::Slm, &contract, &request)
+            {
+                return result.text;
+            }
+        }
+        turns.join(" | ")
     }
 
     /// `memory.query` — docs/08 §6.

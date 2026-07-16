@@ -21,9 +21,9 @@
 //! Deliberately deferred, and why:
 //!
 //! - **Model-estimated salience** (docs/08 §5.2's `I(r) = max(explicit_flag,
-//!   model_estimated_salience)`) — needs a real model; `I(r)` here is just
-//!   the caller-supplied `importance` flag. Wire in
-//!   `hyperion-ai-runtime` once a real backend can estimate salience.
+//!   model_estimated_salience)`) — needs a real model to produce a real, structured numeric
+//!   estimate (not just free-text summarization, which [`engine::MemoryEngine::distill_working_memory`]
+//!   now does); `I(r)` here is still just the caller-supplied `importance` flag.
 //! - **Embedding-similarity clustering for extraction** (§5.4's "cluster
 //!   recent unconsolidated episodes by shared entities and embedding
 //!   similarity") — this crate groups by an explicit, caller-supplied
@@ -32,10 +32,15 @@
 //!   real backend to produce meaningful embeddings to cluster over. The
 //!   frequency gate itself (≥3 independent occurrences before promotion) is
 //!   real and tested.
-//! - **Working → Episodic distillation via a local model** (§5.1) — this
-//!   crate accepts a caller-supplied summary rather than summarizing the
-//!   turn buffer itself; wire in `hyperion-ai-runtime` once summarization
-//!   is a real capability.
+//! - ~~**Working → Episodic distillation via a local model**~~ (§5.1, 2026-07-16) — now real:
+//!   [`engine::MemoryEngine::new_with_ai_runtime`] wires a real `hyperion_ai_runtime::LocalAiRuntime`
+//!   in (the same real path `hyperion-context::ContextEngine::new_with_ai_runtime` already
+//!   proved), and [`engine::MemoryEngine::distill_working_memory`] turns a session's real
+//!   [`types::WorkingMemory`] turn buffer into one real, model-generated Episodic summary rather
+//!   than requiring a caller to summarize it themselves — falling back to a plain verbatim join
+//!   of every turn when no `ai_runtime` is wired, the token lacks real-inference rights, or
+//!   nothing is resident locally, the same graceful-degradation contract `ContextEngine::summarize`
+//!   already established.
 //! - **Cold-tier storage migration** (§5.3's "moved to cold storage in
 //!   [28 — Storage Engine]") — this crate has one tier of physical storage
 //!   (whatever `hyperion-knowledge-graph` uses); "dormant" is a metadata
