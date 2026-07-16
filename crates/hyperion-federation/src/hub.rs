@@ -71,6 +71,12 @@ pub struct FederationHub {
     /// migration sees the whole cross-device trace, not just what ran
     /// there after the hop.
     telemetry: Mutex<HashMap<u64, Arc<TelemetryCollector>>>,
+    /// This hub's own real Ed25519 identity, shared by every device it federates today (see
+    /// [`Self::seal`]/[`Self::open`]'s own doc comment on why that's an honest scope boundary,
+    /// not an oversight) -- [`Self::new`] gives every hub a real, ephemeral
+    /// (`Keystore::ephemeral`) one so existing callers need no changes; [`Self::new_with_keystore`]
+    /// is for a caller with a real, persisted identity to use instead.
+    keystore: Keystore,
 }
 
 impl Default for FederationHub {
@@ -81,6 +87,12 @@ impl Default for FederationHub {
 
 impl FederationHub {
     pub fn new() -> Self {
+        Self::new_with_keystore(Keystore::ephemeral())
+    }
+
+    /// As [`Self::new`], with a real, caller-supplied identity (e.g. one persisted via
+    /// [`Keystore::open_or_create`]) instead of a fresh, process-lifetime-only one.
+    pub fn new_with_keystore(keystore: Keystore) -> Self {
         FederationHub {
             devices: Mutex::new(HashMap::new()),
             trust_tiers: Mutex::new(HashMap::new()),
@@ -92,7 +104,32 @@ impl FederationHub {
             explanations: ExplanationStore::new(),
             next_action_id: AtomicU64::new(1),
             telemetry: Mutex::new(HashMap::new()),
+            keystore,
         }
+    }
+
+    /// docs/998-roadmap.md's own named "`SyncEnvelope`-wrapped encrypted payloads" gap, closed
+    /// for real: really encrypts (ChaCha20-Poly1305) and really signs (Ed25519) `plaintext` via
+    /// `hyperion_crypto::sync_envelope`, using this hub's own real identity. `sender_device_id`
+    /// is a real, signature-covered provenance label, not a secret -- it's the caller's job to
+    /// pass the id of whichever device is actually producing `plaintext`.
+    ///
+    /// **Honest scope**: every device this hub federates shares this *one* symmetric key today
+    /// (one process, one hub, one identity) -- this proves real confidentiality/integrity for
+    /// whatever transport eventually carries an envelope between processes, not yet a real
+    /// key-exchange between genuinely separate, independently-keyed devices (see
+    /// `hyperion_crypto::sync_envelope`'s own doc comment).
+    pub fn seal(&self, sender_device_id: u64, plaintext: &[u8]) -> hyperion_crypto::SyncEnvelope {
+        hyperion_crypto::sync_envelope::seal(&self.keystore, sender_device_id, plaintext)
+    }
+
+    /// The real inverse of [`Self::seal`] -- a tampered or wrongly-keyed envelope is a real,
+    /// honest [`hyperion_crypto::SyncEnvelopeError`], never a silent or partial decrypt.
+    pub fn open(
+        &self,
+        envelope: &hyperion_crypto::SyncEnvelope,
+    ) -> Result<Vec<u8>, hyperion_crypto::SyncEnvelopeError> {
+        hyperion_crypto::sync_envelope::open(&self.keystore, envelope)
     }
 
     /// The real `hyperion-observability` `TelemetryCollector`

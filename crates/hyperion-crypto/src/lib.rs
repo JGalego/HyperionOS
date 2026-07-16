@@ -24,6 +24,15 @@
 //! this workspace cross-compiles for musl unconditionally for the real boot image) that an
 //! unconditional `ring` dependency here actually broke that build, not just hypothetically.
 //!
+//! [`sync_envelope`] (2026-07-16, docs/998-roadmap.md's Social pillar: `hyperion-federation`'s
+//! own named "`SyncEnvelope`-wrapped encrypted payloads" gap) is a real, reusable
+//! seal/open pair over the same `derive_key`/AEAD pattern `SecretStore` already established,
+//! plus a real Ed25519 signature over the sealed blob for sender authenticity -- see that
+//! module's own doc comment for the honest scope boundary (one shared `Keystore` today, not yet
+//! a real per-device key-exchange). [`Keystore::ephemeral`] is the small, real addition that
+//! makes this practical for a caller with no meaningful file path to persist an identity to (a
+//! federation hub's own default identity, real for its process's lifetime, never on disk).
+//!
 //! Deliberately deferred, and why:
 //! - **TPM/secure-enclave-backed sealing.** This sandbox has no TPM device (`/dev/tpm*` does not
 //!   exist here) -- confirmed directly, not assumed. docs/34's own text already frames hardware
@@ -45,10 +54,12 @@ use ed25519_dalek::{Signer, Verifier};
 use rand_core::OsRng;
 
 pub mod secret_store;
+pub mod sync_envelope;
 
 pub use blake3::Hash;
 pub use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 pub use secret_store::{SecretStore, SecretStoreError};
+pub use sync_envelope::{SyncEnvelope, SyncEnvelopeError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum KeystoreError {
@@ -98,6 +109,18 @@ impl Keystore {
             let signing_key = SigningKey::generate(&mut OsRng);
             Self::persist_new_key(path, &signing_key)?;
             Ok(Keystore { signing_key })
+        }
+    }
+
+    /// A real Ed25519 identity that's never persisted anywhere -- for a caller that needs a real
+    /// device-bound key for the lifetime of one in-process value (e.g.
+    /// `hyperion_federation::FederationHub`'s own default identity) but has no real, meaningful
+    /// path to persist it to, and no need for it to survive a restart. Still a real key from the
+    /// OS CSPRNG, still usable with every other real method on this type -- just gone once this
+    /// value is dropped.
+    pub fn ephemeral() -> Self {
+        Keystore {
+            signing_key: SigningKey::generate(&mut OsRng),
         }
     }
 

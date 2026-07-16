@@ -48,6 +48,18 @@
 //! into the target device's collector before tearing the source instance
 //! down, reconstructing the whole cross-device trace on the target side.
 //!
+//! [`FederationHub::seal`]/[`FederationHub::open`] (2026-07-16) close
+//! this crate's own previously-named "`SyncEnvelope`-wrapped, per-device-
+//! encrypted migration payloads" gap for real: every hub now holds its
+//! own real [`hyperion_crypto::Keystore`] (a fresh
+//! [`hyperion_crypto::Keystore::ephemeral`] identity by default via
+//! [`FederationHub::new`], or a real persisted one via
+//! [`FederationHub::new_with_keystore`]), and `seal`/`open` really
+//! encrypt (ChaCha20-Poly1305) and really sign (Ed25519) a payload
+//! through it — see [`hyperion_crypto::sync_envelope`]'s own doc comment
+//! for the honest scope boundary this still has (one shared identity per
+//! hub today, not yet a per-device key-exchange).
+//!
 //! Deliberately deferred, and why:
 //!
 //! - **One workspace-wide, shared Explanation Record store.** This hub's
@@ -60,11 +72,15 @@
 //!   by a caller-supplied clock, not a real heartbeat loop; storage
 //!   convergence is [28 — Storage Engine](../28-storage-engine.md)'s job
 //!   and isn't wired in here (no multi-device KG replica exists yet to
-//!   converge).
-//! - **`SyncEnvelope`-wrapped, per-device-encrypted migration payloads**
-//!   ([16 — Privacy Architecture](../16-privacy-architecture.md), Phase 8)
-//!   — a checkpoint's contents transfer as plain in-process Rust values
-//!   here, standing in for what a real envelope would carry.
+//!   converge). What now *is* real — the payload confidentiality/
+//!   authenticity a wire transport would need — is `seal`/`open`, above;
+//!   the transport itself (actual sockets carrying these envelopes
+//!   between processes) is still deferred.
+//! - **Real per-device key-exchange (X25519 or similar).** `seal`/`open`
+//!   assume sealer and opener already share the same `Keystore` — real
+//!   for one hub's own devices under one process identity today, not yet
+//!   genuinely independent, separately-keyed devices negotiating a
+//!   shared key. See [`hyperion_crypto::sync_envelope`]'s doc comment.
 //! - **Cold-cache pre-staging** (docs/21 §Recovery's priority-sync batch
 //!   for a migration target with no local replica) — there is no Context
 //!   Bundle replica model across devices yet.

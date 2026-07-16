@@ -2023,13 +2023,26 @@ mean here):
   real child process spawned with `--mcp-stdio`, driven with real `initialize`/`tools/call`/
   `resources/list` requests over real pipes, replies correctly on each and exits cleanly on real
   stdin EOF.
+- **`SyncEnvelope`-wrapped encrypted federation payloads, landed (2026-07-16).**
+  `hyperion-federation`'s own previously-named deferred gap. Every `FederationHub` now holds a
+  real `hyperion_crypto::Keystore` (a fresh ephemeral identity by default via `new()`, or a real
+  persisted one via `new_with_keystore`); `FederationHub::seal`/`open` really encrypt
+  (ChaCha20-Poly1305) and really sign (Ed25519) a payload through it — the same real
+  `derive_key`/AEAD pattern `hyperion-crypto::secret_store::SecretStore` already established, plus
+  a new, reusable `hyperion_crypto::sync_envelope` module. Proven end to end: a hub's own envelope
+  round-trips its real plaintext; a different hub's independent identity cannot open it; a
+  persisted keystore reopened fresh still can. Honest scope boundary (named in both crates' own
+  doc comments): sealer and opener still share the *same* `Keystore` — real for one hub's own
+  devices under one process identity today, not yet a real key-exchange (e.g. X25519) between
+  genuinely independent, separately-keyed devices.
 - **The rest of each real spec.** MCP: prompts, notifications, the SSE-streaming half of
   "Streamable HTTP." A2A: streaming/push notifications themselves (see above for why a task
   store alone doesn't need them yet).
 - **A2A, gossip, or any custom/invented protocol.** Worth exactly when a real, concrete need
   outgrows what MCP already covers — not before.
 - **Real network transport for federation** (`hyperion-federation`'s own deferred list: heartbeat
-  timing, ambient anti-entropy, `SyncEnvelope`-wrapped encrypted payloads) — orthogonal to, and a
+  timing, ambient anti-entropy, and a real per-device key-exchange so independently-keyed devices
+  — not just one hub's shared identity — can use `SyncEnvelope`, above) — orthogonal to, and a
   prerequisite for, real multi-*device* (not just multi-*instance*) social behavior.
 
 ### Self-Sustaining — degrade safely, recover, come out stronger
