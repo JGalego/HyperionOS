@@ -69,13 +69,28 @@
 //!   publisher PKI is still deferred, for the same reason named in `hyperion-plugin-framework`'s
 //!   own doc comment: no multi-publisher trust store exists anywhere in this workspace, so this
 //!   verifies against one real, trusted device identity instead.
-//! - **Real PKI beyond one device identity, anti-rollback monotonic counters.** docs/32's own
-//!   "signed monotonic version counter" anti-downgrade mechanism does not exist here at all, in
-//!   any form — `apply_update`'s `compatibility_check` only compares `from_version` against the
-//!   currently active version, which rejects an update built against a *stale* base but not a
-//!   deliberate downgrade to an older, still-validly-signed manifest. A real fix needs a
-//!   monotonic counter this crate has nowhere to persist yet (no keystore/state store concept for
-//!   it) — named here rather than silently left implied by the signature fix above.
+//! - ~~Anti-rollback monotonic counters~~ (docs/32 §Security Considerations: "a signed monotonic
+//!   version counter prevents an attacker from reinstalling a deliberately-downgraded, vulnerable
+//!   prior image... downgrade is only permitted through the explicit, audited `update_rollback`
+//!   path, never through re-flashing an old signed image directly") — now real, for the system
+//!   image track that section names: [`system_image::SystemImageController::highest_version_ever`]
+//!   is a real, monotonic high-water-mark, distinct from either A/B slot's own `version` (which
+//!   *can* legitimately move backward — that's what a rollback is). The normal forward path,
+//!   [`system_image::SystemImageController::stage_to_inactive_slot`], now really refuses
+//!   (`UpdateError::AntiRollbackViolation`) to stage anything at or below it; only the new, separate
+//!   [`system_image::SystemImageController::stage_rollback_to_inactive_slot`] — the "explicit,
+//!   audited" counterpart — may stage an older version, and doing so never lowers the high-water-mark,
+//!   so replaying that same old, vulnerable, still-validly-signed image through the normal path
+//!   immediately afterward is still refused. Proven end to end: staging at or below the high-water-mark
+//!   is rejected; a legitimate rollback succeeds without lowering it; a same-version replay attempt
+//!   right after that rollback is still rejected. Honest scope boundary: this is a real counter
+//!   enforced in software, not yet a real cryptographically tamper-evident one persisted to a real
+//!   state store — this crate still has no keystore/state-store concept for any of its data (every
+//!   field here is in-process `Mutex` state, gone on restart), a separate, larger gap this pass
+//!   doesn't attempt to close.
+//! - **Real PKI beyond one device identity.** No multi-publisher trust store exists anywhere in
+//!   this workspace — the same honest boundary `hyperion-plugin-framework`'s own doc comment
+//!   already names.
 //! - **Real bootloader A/B hardware.** [`system_image::SystemImageController`]
 //!   simulates the slot/boot-attempt state machine in-process; nothing
 //!   here writes to a real partition table or invokes a real bootloader.

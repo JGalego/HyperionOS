@@ -156,4 +156,13 @@ pub enum UpdateError {
     RepeatedRecentRollback { reason: String },
     #[error("recovery error: {0}")]
     Recovery(#[from] hyperion_recovery::RecoveryError),
+    #[error(
+        "refusing to stage version {attempted} through the normal update path: it is not newer \
+         than {highest_ever} (the highest version ever installed) -- a deliberate downgrade must \
+         go through the explicit, audited rollback path instead"
+    )]
+    AntiRollbackViolation {
+        attempted: Version,
+        highest_ever: Version,
+    },
 }

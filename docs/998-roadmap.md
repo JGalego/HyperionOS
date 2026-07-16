@@ -894,7 +894,8 @@ crates -- 465 tests passing, up from 461 before this milestone.
 Named gaps left open, deliberately: (1) a multi-publisher trust store/PKI, everywhere a single
 device identity now stands in for it (see above); (2) `hyperion-update`'s anti-rollback monotonic
 version counter -- docs/32 asks for one, none exists in any form, a pre-existing gap this
-milestone's signature fix does not touch; (3) `hyperion-observability`'s periodic signed
+milestone's signature fix does not touch (closed later, 2026-07-16: see this document's Resourceful
+pillar section below for `SystemImageController::highest_version_ever`); (3) `hyperion-observability`'s periodic signed
 Merkle-anchor over the hash chain (see above). Also identified but explicitly left untouched, since
 none is named in this milestone's own exit criteria (a tampered plugin manifest, update package,
 or audit-ledger entry): `hyperion-context`'s own envelope-integrity checksum (the same FNV1a-style
@@ -1844,6 +1845,24 @@ mean here):
   live test alone can't exercise two) get different real partitions; a live `allocate` pass really
   bumps only the completed task's own partition, provably shared correctly by every task in the
   same real dependency chain.
+- **`hyperion-update`'s anti-rollback monotonic counter, landed (2026-07-16)** (docs/32 §Security
+  Considerations, M9's own named remaining gap: "a signed monotonic version counter prevents an
+  attacker from reinstalling a deliberately-downgraded, vulnerable prior image... downgrade is only
+  permitted through the explicit, audited `update_rollback` path, never through re-flashing an old
+  signed image directly"). `SystemImageController::highest_version_ever` is a real, monotonic
+  high-water-mark, distinct from either A/B slot's own `version` field (which *can* legitimately
+  move backward — that's what a rollback is). The normal forward path,
+  `stage_to_inactive_slot`, now really refuses (`UpdateError::AntiRollbackViolation`) to stage
+  anything at or below it; only the new, separate `stage_rollback_to_inactive_slot` — the
+  "explicit, audited" counterpart — may stage an older version, and doing so never lowers the
+  high-water-mark, so replaying that same old, vulnerable, still-validly-signed image through the
+  normal path immediately afterward is still refused. Proven end to end: staging at or below the
+  high-water-mark is rejected; a legitimate rollback succeeds without lowering it; a same-version
+  replay attempt right after that rollback is still rejected. Honest scope boundary: a real
+  counter enforced in software, not yet a real cryptographically tamper-evident one persisted to a
+  real state store — this crate still has no keystore/state-store concept for any of its data
+  (every field is in-process `Mutex` state, gone on restart), a separate, larger gap this pass
+  doesn't attempt to close.
 
 **Deliberately still deferred:**
 

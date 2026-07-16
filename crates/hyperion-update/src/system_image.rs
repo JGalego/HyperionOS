@@ -17,9 +17,24 @@ fn other(slot: SystemImageSlotName) -> SystemImageSlotName {
 /// live data regardless of booted image. Rollback here is a pure
 /// pointer flip, deliberately kept out of `hyperion-recovery` entirely —
 /// see this crate's doc comment.
+///
+/// Also enforces docs/32 §Security Considerations' real "anti-rollback counter":
+/// [`Self::highest_version_ever`] is a real monotonic high-water-mark, distinct from either
+/// slot's own `version` (which *can* legitimately move backward — that's what a rollback is) --
+/// [`Self::stage_to_inactive_slot`] (the normal forward-update path) refuses to stage anything at
+/// or below it; only [`Self::stage_rollback_to_inactive_slot`] (the "explicit, audited"
+/// counterpart docs/32 names) may stage an older version, and doing so never lowers the
+/// high-water-mark itself -- so replaying that same old, vulnerable, still-validly-signed image
+/// through the normal path immediately afterward is still refused. Closes this crate's own
+/// previously-named "anti-rollback monotonic counters... does not exist here at all, in any form"
+/// gap for real; still honestly scoped to what a hosted simulator can do: this is a real in-process
+/// counter enforced in software, not yet a real cryptographically tamper-evident one persisted to
+/// a real state store this crate has no other concept of (the same honest boundary this crate's
+/// own doc comment already draws elsewhere).
 pub struct SystemImageController {
     slots: Mutex<[SystemImageSlot; 2]>,
     active: Mutex<SystemImageSlotName>,
+    highest_version_ever: Mutex<Version>,
 }
 
 impl SystemImageController {
@@ -40,6 +55,7 @@ impl SystemImageController {
                 },
             ]),
             active: Mutex::new(SystemImageSlotName::A),
+            highest_version_ever: Mutex::new(initial_version),
         }
     }
 
@@ -64,10 +80,43 @@ impl SystemImageController {
             .expect("both slots always exist")
     }
 
-    /// Stages a new version into whichever slot is *not* currently
-    /// active — the active slot, and the live data it boots into, is
-    /// never touched until [`Self::commit`].
-    pub fn stage_to_inactive_slot(&self, version: Version) -> SystemImageSlotName {
+    /// The real monotonic anti-rollback high-water-mark — the highest version this controller
+    /// has ever staged, through either path. Only ever increases.
+    pub fn highest_version_ever(&self) -> Version {
+        *self.highest_version_ever.lock().unwrap()
+    }
+
+    /// Stages a new version into whichever slot is *not* currently active — the active slot, and
+    /// the live data it boots into, is never touched until [`Self::commit`]. The normal
+    /// forward-update path: real anti-rollback enforced here, per this struct's own doc comment --
+    /// refuses (`UpdateError::AntiRollbackViolation`) to stage anything at or below
+    /// [`Self::highest_version_ever`]. A deliberate downgrade must go through
+    /// [`Self::stage_rollback_to_inactive_slot`] instead.
+    pub fn stage_to_inactive_slot(
+        &self,
+        version: Version,
+    ) -> Result<SystemImageSlotName, UpdateError> {
+        let mut highest = self.highest_version_ever.lock().unwrap();
+        if version <= *highest {
+            return Err(UpdateError::AntiRollbackViolation {
+                attempted: version,
+                highest_ever: *highest,
+            });
+        }
+        *highest = version;
+        drop(highest);
+        Ok(self.stage_unchecked(version))
+    }
+
+    /// The "explicit, audited" rollback path docs/32 names — the only real way to stage a version
+    /// at or below [`Self::highest_version_ever`]. Deliberately does *not* lower the high-water-mark:
+    /// a subsequent [`Self::stage_to_inactive_slot`] attempt to re-flash that same old, vulnerable
+    /// image directly is still refused immediately afterward.
+    pub fn stage_rollback_to_inactive_slot(&self, version: Version) -> SystemImageSlotName {
+        self.stage_unchecked(version)
+    }
+
+    fn stage_unchecked(&self, version: Version) -> SystemImageSlotName {
         let inactive = other(*self.active.lock().unwrap());
         let mut slots = self.slots.lock().unwrap();
         let slot = Self::slot_mut(&mut slots, inactive);
