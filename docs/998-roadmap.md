@@ -3217,3 +3217,27 @@ next step on any of these is a design pass, not code.
   compaction (a stale, now-pruned `expected_version` is still rejected as a conflict; the real
   current head still works). All pre-existing `hyperion-storage` tests
   (`capability_gating`/`concurrency`/`wal_recovery`) pass unchanged.
+
+- **`hyperion-model-router`/`hyperion-observability`'s `get_rationale`-by-`invocation_id`, landed
+  (2026-07-16)** (both crates' own named gap: docs/23-multi-model-orchestration.md's literal,
+  previously-unbuilt `get_rationale(decision_id: InvocationId) -> Rationale`, "consumed by
+  [18 — Explainability & Trust]" — `AuditPayload::ModelRouting` carried a `Rationale` with no way
+  to look one up by the invocation that produced it, only by `target`/`seq`). `ModelRouting`
+  is now a struct variant carrying its own real `invocation_id` alongside the `Rationale`
+  (`hyperion-api-gateway`'s `invoke_capability` was computing `decision.invocation_id` and
+  discarding it — it's now threaded through to the audit entry); new
+  `AuditLedger::rationale_for_invocation(monitor, token, invocation_id) ->
+  Result<Option<Rationale>, ObservabilityError>` is built on the ledger's own existing `query`
+  rather than a second, separately-maintained index — this ledger is never rolled up or
+  truncated, so a parallel `HashMap` would be state to keep consistent forever for no correctness
+  a scan doesn't already give at this scale; new `ApiGateway::get_rationale` is docs/23's own
+  literal API, the same bridge-method shape `audit_query`/`memory_export` already established.
+  Proven with a new test extending `invoke_capability_appends_a_real_model_routing_audit_entry`
+  (asserting `get_rationale` resolves the real entry's own `invocation_id` and returns `None` for
+  an unrelated one) plus a new
+  `get_rationale_disambiguates_two_decisions_sharing_the_same_target` test: two real
+  `invoke_capability` calls against the *same* `contract_id` produce two distinct
+  `invocation_id`s and two distinct `Rationale`s, both sharing `target == "web.search"` in the
+  ledger — proving the lookup genuinely resolves by `invocation_id`, not `target`, which a
+  `target`-keyed lookup could never disambiguate. All pre-existing
+  `hyperion-model-router`/`hyperion-observability`/`hyperion-api-gateway` tests pass unchanged.

@@ -168,10 +168,17 @@ pub enum AuditAction {
 /// for [23 — Multi-Model Orchestration](../23-multi-model-orchestration.md)'s
 /// real [`hyperion_model_router::Rationale`] — this crate's own doc
 /// comment named that Rationale as real but never fed to audit/telemetry.
+/// `ModelRouting`'s own `invocation_id` field (2026-07-16) closes this crate's own further-named
+/// gap: docs/23's own literal `get_rationale(decision_id) -> Rationale` API needs to look a
+/// `Rationale` up by the invocation that produced it, not just by `target` (the capability id) —
+/// see [`crate::ledger::AuditLedger::rationale_for_invocation`].
 #[derive(Debug, Clone)]
 pub enum AuditPayload {
     Explanation(ExplanationRecord),
-    ModelRouting(Rationale),
+    ModelRouting {
+        invocation_id: u64,
+        rationale: Rationale,
+    },
     Grant {
         capability_ref: String,
     },

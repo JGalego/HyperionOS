@@ -363,11 +363,147 @@ fn invoke_capability_appends_a_real_model_routing_audit_entry() {
         .unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].target.as_deref(), Some("web.search"));
-    match &entries[0].payload {
-        hyperion_observability::AuditPayload::ModelRouting(rationale) => {
+    let invocation_id = match &entries[0].payload {
+        hyperion_observability::AuditPayload::ModelRouting {
+            invocation_id,
+            rationale,
+        } => {
             assert!(!rationale.candidates_considered.is_empty());
+            *invocation_id
         }
         other => panic!("expected ModelRouting payload, got {other:?}"),
+    };
+
+    // docs/23's own literal get_rationale(decision_id) -> Rationale, real for the first time:
+    // looked up by invocation_id, not target/seq.
+    let rationale = gateway
+        .get_rationale(&monitor, &root, invocation_id)
+        .unwrap()
+        .expect("a real ModelRouting audit entry was appended for this invocation_id");
+    assert!(!rationale.candidates_considered.is_empty());
+
+    assert!(
+        gateway
+            .get_rationale(&monitor, &root, invocation_id + 1_000)
+            .unwrap()
+            .is_none(),
+        "an unrelated invocation_id must never resolve to someone else's rationale"
+    );
+}
+
+/// Proves `get_rationale` really indexes by `invocation_id`, not by `target`/capability id: two
+/// separate `invoke_capability` calls against the *same* contract each get their own distinct
+/// `invocation_id` and their own distinct `Rationale` in the ledger, even though both audit
+/// entries share `target == "web.search"` -- a lookup keyed on `target` alone couldn't
+/// disambiguate them.
+#[test]
+fn get_rationale_disambiguates_two_decisions_sharing_the_same_target() {
+    let mut monitor = CapabilityMonitor::new();
+    let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let context = Arc::new(ContextEngine::new(graph.clone()));
+    let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
+    let memory = Arc::new(MemoryEngine::new(graph.clone()));
+    let registry = Arc::new(PluginRegistry::new());
+    let (_key_dir, keystore) = keystore();
+    let explainability = Arc::new(ExplanationStore::new());
+    let (router, ai_runtime) = model_router_and_ai_runtime();
+    let gateway = ApiGateway::new(
+        intent,
+        memory,
+        graph,
+        registry.clone(),
+        explainability,
+        router,
+        context,
+        ai_runtime,
+    );
+    gateway.grant_scopes(&monitor, &root, all_scopes()).unwrap();
+
+    let mut manifest = PluginManifest {
+        plugin_id: 1,
+        publisher: "acme-plugins".to_string(),
+        signature: None,
+        sdk_version: 1,
+        contributions: vec![Contribution::Capability(CapabilityManifest {
+            capability_id: "web.search".to_string(),
+            contract: SemanticContract {
+                inputs: vec!["query".to_string()],
+                outputs: vec!["results".to_string()],
+                side_effects: vec![SideEffect::NetworkEgress],
+            },
+            implementation_kind: ImplementationKind::CloudApi,
+            quality_score: 0.9,
+            version: 1,
+            native_binary: None,
+            privacy_tier: PrivacyTier::Local,
+            resource_profile: None,
+        })],
+        requested_permissions: vec![],
+        min_trust_depth: TrustDepth::D0,
+    };
+    manifest.signature = Some(sign(&manifest, &keystore));
+    registry
+        .install(
+            &mut monitor,
+            &root,
+            manifest,
+            TrustDepth::D2,
+            true,
+            1_000,
+            &keystore.verifying_key(),
+        )
+        .unwrap();
+
+    for query in ["first query", "second query"] {
+        gateway
+            .invoke_capability(
+                &monitor,
+                &root,
+                InvokeRequest {
+                    contract_id: "web.search".to_string(),
+                    inputs: serde_json::json!({"query": query}),
+                    agent_id: 1,
+                    intent_id: 1,
+                    risk: RiskHints::default(),
+                    confirmed: false,
+                },
+                1_000,
+            )
+            .unwrap();
+    }
+
+    let entries = gateway
+        .audit_query(&monitor, &root, |e| {
+            e.action == hyperion_observability::AuditAction::ModelRouting
+        })
+        .unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(entries
+        .iter()
+        .all(|e| e.target.as_deref() == Some("web.search")));
+
+    let invocation_ids: Vec<u64> = entries
+        .iter()
+        .map(|e| match &e.payload {
+            hyperion_observability::AuditPayload::ModelRouting { invocation_id, .. } => {
+                *invocation_id
+            }
+            other => panic!("expected ModelRouting payload, got {other:?}"),
+        })
+        .collect();
+    assert_ne!(
+        invocation_ids[0], invocation_ids[1],
+        "two distinct routing decisions must never share an invocation_id"
+    );
+
+    for id in invocation_ids {
+        let rationale = gateway
+            .get_rationale(&monitor, &root, id)
+            .unwrap()
+            .expect("each real invocation_id must resolve to its own rationale");
+        assert!(!rationale.candidates_considered.is_empty());
     }
 }
 

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_crypto::{Hash, Keystore, Signature, VerifyingKey};
+use hyperion_model_router::Rationale;
 
 use crate::types::{
     AuditAction, AuditLogEntry, AuditPayload, ObservabilityError, PrincipalRef, VerificationReport,
@@ -269,6 +270,38 @@ impl AuditLedger {
             .filter(|e| filter(e))
             .cloned()
             .collect())
+    }
+
+    /// docs/23-multi-model-orchestration.md §Algorithms' own literal, previously-unbuilt
+    /// `get_rationale(decision_id) -> Rationale` — closes `hyperion-model-router`'s and this
+    /// crate's own further-named gap ("`get_rationale`-by-`invocation_id` specifically is still
+    /// not a dedicated index — the ledger's own `query`/`seq` lookup is by `target`... and not
+    /// `invocation_id`"). Built on [`Self::query`] rather than a separate index kept in sync
+    /// alongside `entries` — this ledger is never rolled up or truncated (see this struct's own
+    /// doc comment), so a second data structure mirroring it would be state to keep consistent
+    /// forever for no correctness this scan doesn't already give. Returns the *most recent*
+    /// matching entry (a caller could in principle re-route the same `invocation_id` were it ever
+    /// reused, though `hyperion-model-router`'s own `next_invocation_id` never does) — `None` if
+    /// no `ModelRouting` entry was ever appended for it.
+    pub fn rationale_for_invocation(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        invocation_id: u64,
+    ) -> Result<Option<Rationale>, ObservabilityError> {
+        let matches = self.query(monitor, token, |entry| {
+            matches!(
+                &entry.payload,
+                AuditPayload::ModelRouting { invocation_id: id, .. } if *id == invocation_id
+            )
+        })?;
+        Ok(matches
+            .into_iter()
+            .next_back()
+            .map(|entry| match entry.payload {
+                AuditPayload::ModelRouting { rationale, .. } => rationale,
+                _ => unreachable!("query filter only matches ModelRouting entries"),
+            }))
     }
 
     /// docs/34 §6's `Audit.verifyChain` — recomputes every hash in

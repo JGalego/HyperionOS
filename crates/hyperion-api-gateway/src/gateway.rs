@@ -241,6 +241,23 @@ impl ApiGateway {
         Ok(self.audit.query(monitor, token, filter)?)
     }
 
+    /// docs/23-multi-model-orchestration.md's own literal, previously-unbuilt
+    /// `get_rationale(decision_id) -> Rationale`, consumed by
+    /// [18 — Explainability & Trust](../18-explainability-and-trust.md) — a real caller can look
+    /// up exactly the [`hyperion_model_router::Rationale`] behind one of [`Self::invoke_capability`]'s
+    /// own routing decisions by its `invocation_id`, not just by `target` (the capability id) via
+    /// [`Self::audit_query`]. `None` if no `ModelRouting` audit entry was ever appended for it.
+    pub fn get_rationale(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        invocation_id: u64,
+    ) -> Result<Option<hyperion_model_router::Rationale>, ApiError> {
+        Ok(self
+            .audit
+            .rationale_for_invocation(monitor, token, invocation_id)?)
+    }
+
     /// Real answer to docs/998-roadmap.md's Backlog "Protect the Human" item — "no signal exists
     /// for 'you've delegated this kind of task N times this month, want to do the next one
     /// yourself?'" `hyperion-memory`'s procedural tier already tracks repeated task delegation
@@ -412,7 +429,10 @@ impl ApiGateway {
             PrincipalRef::Capability(token.token_id().0),
             AuditAction::ModelRouting,
             Some(request.contract_id.clone()),
-            AuditPayload::ModelRouting(decision.rationale.clone()),
+            AuditPayload::ModelRouting {
+                invocation_id: decision.invocation_id,
+                rationale: decision.rationale.clone(),
+            },
             now,
         )?;
         if decision.chosen.is_none() {

@@ -36,8 +36,10 @@
 //! there is no separate persisted lookup" gap — `hyperion-api-gateway`'s
 //! `invoke_capability` now appends every real routing decision's
 //! `Rationale` here, giving it a real, durable, queryable log for the
-//! first time, even though lookup is still by `seq`/`target`
-//! (the capability id), not a dedicated `invocation_id` index.
+//! first time. ~~Lookup was still by `seq`/`target` (the capability id), not a dedicated
+//! `invocation_id` index~~ (2026-07-16) — now real: `ModelRouting` carries its own real
+//! `invocation_id`, and [`ledger::AuditLedger::rationale_for_invocation`] is docs/23's own
+//! literal, previously-unbuilt `get_rationale(decision_id) -> Rationale`.
 //!
 //! [`telemetry::TelemetryCollector::compact_metrics`]/[`telemetry::TelemetryCollector::expire_logs`]
 //! (2026-07-16) close this crate's own previously-named "retention/rollup compaction" gap:

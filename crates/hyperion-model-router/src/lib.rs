@@ -65,9 +65,13 @@
 //!   `invoke_capability` appends every real routing decision's
 //!   [`Rationale`] to `hyperion-observability::AuditLedger` via the new
 //!   `AuditPayload::ModelRouting` variant, giving it a durable, queryable
-//!   log. `get_rationale`-by-`invocation_id` specifically is still not a
-//!   dedicated index — the ledger's own `query`/`seq` lookup is by
-//!   `target` (the capability id) and sequence, not `invocation_id`.
+//!   log. ~~`get_rationale`-by-`invocation_id` specifically is still not a
+//!   dedicated index~~ (2026-07-16) — now real too: `ModelRouting` carries the real
+//!   `invocation_id` alongside its `Rationale`, and
+//!   `hyperion_observability::AuditLedger::rationale_for_invocation` is docs/23's own literal
+//!   `get_rationale(decision_id) -> Rationale`, consumed by [18 —
+//!   Explainability & Trust](../18-explainability-and-trust.md) via `hyperion-api-gateway`'s own
+//!   new `get_rationale` bridge.
 
 mod registry;
 mod router;
