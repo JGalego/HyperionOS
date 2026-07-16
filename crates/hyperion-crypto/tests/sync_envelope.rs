@@ -2,8 +2,8 @@
 //! ChaCha20-Poly1305-sealed, Ed25519-signed envelope round-trips its real plaintext, and rejects
 //! (never silently corrupts) a tampered ciphertext, a tampered signature, or the wrong key.
 
-use hyperion_crypto::sync_envelope::{open, seal};
-use hyperion_crypto::{Keystore, SyncEnvelopeError};
+use hyperion_crypto::sync_envelope::{open, open_from_peer, seal, seal_for_peer};
+use hyperion_crypto::{diffie_hellman, Keystore, SyncEnvelopeError};
 
 #[test]
 fn a_sealed_envelope_round_trips_its_real_plaintext() {
@@ -41,6 +41,56 @@ fn an_envelope_sealed_by_a_different_keystore_fails_to_open() {
     let result = open(&real_sender, &envelope);
     assert!(
         matches!(result, Err(SyncEnvelopeError::SignatureInvalid)),
+        "got: {result:?}"
+    );
+}
+
+#[test]
+fn two_genuinely_independent_devices_seal_and_open_for_each_other_via_a_real_x25519_exchange() {
+    let alice = Keystore::ephemeral();
+    let bob = Keystore::ephemeral();
+
+    // Real X25519 key agreement -- each side independently derives the same shared secret from
+    // its own private half and the other's real public key, never from a shared Keystore.
+    let alice_shared = diffie_hellman(&alice, &bob.x25519_public());
+    let bob_shared = diffie_hellman(&bob, &alice.x25519_public());
+    assert_eq!(alice_shared, bob_shared);
+
+    let envelope = seal_for_peer(&alice, &alice_shared, 1, b"a real cross-device message");
+    let opened = open_from_peer(&alice.verifying_key(), &bob_shared, &envelope)
+        .expect("bob's independently-derived shared secret must open alice's real envelope");
+    assert_eq!(opened, b"a real cross-device message");
+}
+
+#[test]
+fn open_from_peer_rejects_the_wrong_senders_verifying_key() {
+    let alice = Keystore::ephemeral();
+    let bob = Keystore::ephemeral();
+    let impostor = Keystore::ephemeral();
+
+    let shared = diffie_hellman(&alice, &bob.x25519_public());
+    let envelope = seal_for_peer(&alice, &shared, 1, b"really from alice");
+
+    let result = open_from_peer(&impostor.verifying_key(), &shared, &envelope);
+    assert!(
+        matches!(result, Err(SyncEnvelopeError::SignatureInvalid)),
+        "got: {result:?}"
+    );
+}
+
+#[test]
+fn open_from_peer_rejects_a_shared_secret_from_a_different_pair_of_devices() {
+    let alice = Keystore::ephemeral();
+    let bob = Keystore::ephemeral();
+    let mallory = Keystore::ephemeral();
+
+    let alice_bob_shared = diffie_hellman(&alice, &bob.x25519_public());
+    let alice_mallory_shared = diffie_hellman(&alice, &mallory.x25519_public());
+
+    let envelope = seal_for_peer(&alice, &alice_bob_shared, 1, b"only for bob");
+    let result = open_from_peer(&alice.verifying_key(), &alice_mallory_shared, &envelope);
+    assert!(
+        matches!(result, Err(SyncEnvelopeError::DecryptionFailed)),
         "got: {result:?}"
     );
 }

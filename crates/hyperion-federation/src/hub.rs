@@ -115,10 +115,8 @@ impl FederationHub {
     /// pass the id of whichever device is actually producing `plaintext`.
     ///
     /// **Honest scope**: every device this hub federates shares this *one* symmetric key today
-    /// (one process, one hub, one identity) -- this proves real confidentiality/integrity for
-    /// whatever transport eventually carries an envelope between processes, not yet a real
-    /// key-exchange between genuinely separate, independently-keyed devices (see
-    /// `hyperion_crypto::sync_envelope`'s own doc comment).
+    /// (one process, one hub, one identity) -- for a real, independently-keyed *peer* hub, see
+    /// [`Self::seal_for_peer`]/[`Self::open_from_peer`] below instead.
     pub fn seal(&self, sender_device_id: u64, plaintext: &[u8]) -> hyperion_crypto::SyncEnvelope {
         hyperion_crypto::sync_envelope::seal(&self.keystore, sender_device_id, plaintext)
     }
@@ -130,6 +128,68 @@ impl FederationHub {
         envelope: &hyperion_crypto::SyncEnvelope,
     ) -> Result<Vec<u8>, hyperion_crypto::SyncEnvelopeError> {
         hyperion_crypto::sync_envelope::open(&self.keystore, envelope)
+    }
+
+    /// This hub's own real, public Ed25519 verifying key -- what a peer needs to authenticate a
+    /// [`Self::seal_for_peer`]-sealed envelope's real signature via [`Self::open_from_peer`].
+    pub fn verifying_key(&self) -> hyperion_crypto::VerifyingKey {
+        self.keystore.verifying_key()
+    }
+
+    /// This hub's own real X25519 public key -- what a genuinely independent peer hub needs to
+    /// derive the same real shared secret via [`Self::establish_shared_secret`]. Closes the gap
+    /// [`Self::seal`]/[`Self::open`]'s own doc comment names: "not yet a real key-exchange between
+    /// genuinely separate, independently-keyed devices."
+    pub fn x25519_public(&self) -> hyperion_crypto::X25519PublicKey {
+        self.keystore.x25519_public()
+    }
+
+    /// A real X25519 Diffie-Hellman shared secret between this hub and a peer hub identified only
+    /// by `their_x25519_public` -- the caller passes it to [`Self::seal_for_peer`]/
+    /// [`Self::open_from_peer`], never persisted or cached here (recomputing it is cheap, and this
+    /// hub does not track which peers it's ever exchanged keys with).
+    pub fn establish_shared_secret(
+        &self,
+        their_x25519_public: &hyperion_crypto::X25519PublicKey,
+    ) -> [u8; 32] {
+        hyperion_crypto::diffie_hellman(&self.keystore, their_x25519_public)
+    }
+
+    /// Really encrypts `plaintext` for a genuinely independent peer hub, keyed by a real
+    /// `shared_secret` from [`Self::establish_shared_secret`] (never this hub's own [`Self::seal`]
+    /// key, which only ever matches another sealer sharing this exact hub's `Keystore`). Still
+    /// really signs with this hub's own identity, so the receiving peer can verify genuine
+    /// authorship via [`Self::open_from_peer`]-equivalent logic on its own side.
+    pub fn seal_for_peer(
+        &self,
+        shared_secret: &[u8; 32],
+        sender_device_id: u64,
+        plaintext: &[u8],
+    ) -> hyperion_crypto::SyncEnvelope {
+        hyperion_crypto::sync_envelope::seal_for_peer(
+            &self.keystore,
+            shared_secret,
+            sender_device_id,
+            plaintext,
+        )
+    }
+
+    /// The real inverse of [`Self::seal_for_peer`]: verifies against `sender_verifying_key` (the
+    /// *peer's* real public signing key, not this hub's own -- get it from the peer out of band,
+    /// e.g. alongside its `x25519_public()`), then really decrypts with the same real
+    /// `shared_secret`. Either failing is a real, honest error, exactly as [`Self::open`] already
+    /// guarantees for the single-hub case.
+    pub fn open_from_peer(
+        &self,
+        sender_verifying_key: &hyperion_crypto::VerifyingKey,
+        shared_secret: &[u8; 32],
+        envelope: &hyperion_crypto::SyncEnvelope,
+    ) -> Result<Vec<u8>, hyperion_crypto::SyncEnvelopeError> {
+        hyperion_crypto::sync_envelope::open_from_peer(
+            sender_verifying_key,
+            shared_secret,
+            envelope,
+        )
     }
 
     /// The real `hyperion-observability` `TelemetryCollector`

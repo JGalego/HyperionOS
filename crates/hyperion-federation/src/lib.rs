@@ -56,9 +56,17 @@
 //! [`FederationHub::new`], or a real persisted one via
 //! [`FederationHub::new_with_keystore`]), and `seal`/`open` really
 //! encrypt (ChaCha20-Poly1305) and really sign (Ed25519) a payload
-//! through it — see [`hyperion_crypto::sync_envelope`]'s own doc comment
-//! for the honest scope boundary this still has (one shared identity per
-//! hub today, not yet a per-device key-exchange).
+//! through it.
+//!
+//! [`FederationHub::x25519_public`]/[`FederationHub::establish_shared_secret`]/
+//! [`FederationHub::seal_for_peer`]/[`FederationHub::open_from_peer`] (same day) close this
+//! crate's own next-named gap: real X25519 Diffie-Hellman key agreement between two genuinely
+//! independent, separately-keyed hubs — neither ever learns the other's private key, only its
+//! real public X25519 key, and each derives the identical real shared secret independently (see
+//! [`hyperion_crypto::key_exchange`]'s own doc comment and tests for the actual DH property
+//! proven). `seal`/`open` (above) remain the one-shared-`Keystore` case; `seal_for_peer`/
+//! `open_from_peer` are the genuinely-independent-devices case, verifying against the *peer's*
+//! real public signing key rather than the opener's own.
 //!
 //! Deliberately deferred, and why:
 //!
@@ -73,14 +81,10 @@
 //!   convergence is [28 — Storage Engine](../28-storage-engine.md)'s job
 //!   and isn't wired in here (no multi-device KG replica exists yet to
 //!   converge). What now *is* real — the payload confidentiality/
-//!   authenticity a wire transport would need — is `seal`/`open`, above;
+//!   authenticity, and now the real key agreement, a wire transport would
+//!   need — is `seal`/`open` and `seal_for_peer`/`open_from_peer`, above;
 //!   the transport itself (actual sockets carrying these envelopes
 //!   between processes) is still deferred.
-//! - **Real per-device key-exchange (X25519 or similar).** `seal`/`open`
-//!   assume sealer and opener already share the same `Keystore` — real
-//!   for one hub's own devices under one process identity today, not yet
-//!   genuinely independent, separately-keyed devices negotiating a
-//!   shared key. See [`hyperion_crypto::sync_envelope`]'s doc comment.
 //! - **Cold-cache pre-staging** (docs/21 §Recovery's priority-sync batch
 //!   for a migration target with no local replica) — there is no Context
 //!   Bundle replica model across devices yet.

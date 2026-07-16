@@ -2029,21 +2029,29 @@ mean here):
   persisted one via `new_with_keystore`); `FederationHub::seal`/`open` really encrypt
   (ChaCha20-Poly1305) and really sign (Ed25519) a payload through it — the same real
   `derive_key`/AEAD pattern `hyperion-crypto::secret_store::SecretStore` already established, plus
-  a new, reusable `hyperion_crypto::sync_envelope` module. Proven end to end: a hub's own envelope
-  round-trips its real plaintext; a different hub's independent identity cannot open it; a
-  persisted keystore reopened fresh still can. Honest scope boundary (named in both crates' own
-  doc comments): sealer and opener still share the *same* `Keystore` — real for one hub's own
-  devices under one process identity today, not yet a real key-exchange (e.g. X25519) between
-  genuinely independent, separately-keyed devices.
+  a new, reusable `hyperion_crypto::sync_envelope` module.
+- **Real per-device X25519 key-exchange, landed (2026-07-16).** The scope boundary the bullet
+  above originally named — sealer and opener sharing the *same* `Keystore` — is closed for real.
+  `hyperion_crypto::key_exchange` adds real X25519 Diffie-Hellman: `Keystore::x25519_public`/
+  `diffie_hellman` let two genuinely independent, separately-keyed devices each derive the
+  identical real shared secret (proven directly: `diffie_hellman(a, b.x25519_public()) ==
+  diffie_hellman(b, a.x25519_public())`), reusing the same per-device Ed25519 identity via
+  `derive_key` rather than a second, separately-persisted keypair. `sync_envelope::seal_for_peer`/
+  `open_from_peer` (and `FederationHub::seal_for_peer`/`open_from_peer`/`x25519_public`/
+  `establish_shared_secret`) use that shared secret in place of one shared `Keystore` — the sender
+  signs with its own identity, the opener verifies against the *sender's* known public key, not its
+  own. Proven end to end: two independently-keyed hubs seal/open for each other; a third hub's own
+  shared secret (established with a *different* peer) cannot open an envelope meant for someone
+  else.
 - **The rest of each real spec.** MCP: prompts, notifications, the SSE-streaming half of
   "Streamable HTTP." A2A: streaming/push notifications themselves (see above for why a task
   store alone doesn't need them yet).
 - **A2A, gossip, or any custom/invented protocol.** Worth exactly when a real, concrete need
   outgrows what MCP already covers — not before.
 - **Real network transport for federation** (`hyperion-federation`'s own deferred list: heartbeat
-  timing, ambient anti-entropy, and a real per-device key-exchange so independently-keyed devices
-  — not just one hub's shared identity — can use `SyncEnvelope`, above) — orthogonal to, and a
-  prerequisite for, real multi-*device* (not just multi-*instance*) social behavior.
+  timing and ambient anti-entropy — the per-device key-exchange this bullet used to also name is
+  now landed, above) — orthogonal to, and a prerequisite for, real multi-*device* (not just
+  multi-*instance*) social behavior.
 
 ### Self-Sustaining — degrade safely, recover, come out stronger
 

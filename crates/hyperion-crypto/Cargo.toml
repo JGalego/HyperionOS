@@ -24,6 +24,11 @@ blake3 = { version = "1", features = ["serde", "pure"] }
 chacha20poly1305 = "0.10"
 ed25519-dalek = { version = "2", features = ["rand_core", "serde"] }
 rand_core = { version = "0.6", features = ["std"] }
+# Real X25519 (Curve25519) Diffie-Hellman key agreement for src/key_exchange.rs -- lets two
+# genuinely independent, separately-keyed devices derive a real shared secret, rather than
+# `sync_envelope`'s original scope (one shared `Keystore`). Same pure-Rust RustCrypto family as
+# `chacha20poly1305` above, for the identical "no C toolchain, ever" reason.
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

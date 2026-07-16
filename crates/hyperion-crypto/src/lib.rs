@@ -27,11 +27,17 @@
 //! [`sync_envelope`] (2026-07-16, docs/998-roadmap.md's Social pillar: `hyperion-federation`'s
 //! own named "`SyncEnvelope`-wrapped encrypted payloads" gap) is a real, reusable
 //! seal/open pair over the same `derive_key`/AEAD pattern `SecretStore` already established,
-//! plus a real Ed25519 signature over the sealed blob for sender authenticity -- see that
-//! module's own doc comment for the honest scope boundary (one shared `Keystore` today, not yet
-//! a real per-device key-exchange). [`Keystore::ephemeral`] is the small, real addition that
-//! makes this practical for a caller with no meaningful file path to persist an identity to (a
-//! federation hub's own default identity, real for its process's lifetime, never on disk).
+//! plus a real Ed25519 signature over the sealed blob for sender authenticity. [`Keystore::ephemeral`]
+//! is the small, real addition that makes this practical for a caller with no meaningful file path
+//! to persist an identity to (a federation hub's own default identity, real for its process's
+//! lifetime, never on disk).
+//!
+//! [`key_exchange`] (same day, `hyperion-federation`'s own next-named gap) is real X25519
+//! Diffie-Hellman key agreement: [`Keystore::x25519_public`]/[`diffie_hellman`] let two genuinely
+//! independent, separately-keyed devices derive the identical real shared secret, which
+//! [`sync_envelope::seal_for_peer`]/[`sync_envelope::open_from_peer`] use in place of `seal`/
+//! `open`'s original one-shared-`Keystore` assumption -- closing that module's own previously-
+//! named scope boundary for real, rather than leaving it named forever.
 //!
 //! Deliberately deferred, and why:
 //! - **TPM/secure-enclave-backed sealing.** This sandbox has no TPM device (`/dev/tpm*` does not
@@ -53,13 +59,16 @@ use std::path::Path;
 use ed25519_dalek::{Signer, Verifier};
 use rand_core::OsRng;
 
+pub mod key_exchange;
 pub mod secret_store;
 pub mod sync_envelope;
 
 pub use blake3::Hash;
 pub use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
+pub use key_exchange::diffie_hellman;
 pub use secret_store::{SecretStore, SecretStoreError};
 pub use sync_envelope::{SyncEnvelope, SyncEnvelopeError};
+pub use x25519_dalek::PublicKey as X25519PublicKey;
 
 #[derive(Debug, thiserror::Error)]
 pub enum KeystoreError {
