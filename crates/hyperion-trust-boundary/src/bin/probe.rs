@@ -9,16 +9,72 @@
 use std::env;
 use std::fs;
 use std::io::ErrorKind;
+use std::os::unix::net::UnixDatagram;
 
 fn main() {
     match env::args().nth(1).as_deref() {
         Some("sandbox-check") => sandbox_check(),
         Some("sleep") => sleep_forever(),
+        Some("ipc-check") => ipc_check(),
         _ => {
-            eprintln!("usage: probe <sandbox-check|sleep>");
+            eprintln!("usage: probe <sandbox-check|sleep|ipc-check>");
             std::process::exit(2);
         }
     }
+}
+
+/// Proves `hyperion_trust_boundary::SpawnGrant::ipc_rendezvous`'s real effect from inside a real
+/// sandboxed process: binding a real `UnixDatagram` at the granted rendezvous path, and a real
+/// send/receive round trip through it, both really succeed under real Landlock/seccomp
+/// enforcement -- and binding a second socket *outside* the granted rendezvous directory is
+/// really denied, proving the real Landlock `MakeSock` rule is genuinely scoped to that
+/// directory, not merely "sockets work everywhere once IPC is granted."
+fn ipc_check() {
+    let rendezvous = env::var("PROBE_IPC_RENDEZVOUS").expect("PROBE_IPC_RENDEZVOUS not set");
+    let outside_dir = env::var("PROBE_OUTSIDE_DIR").expect("PROBE_OUTSIDE_DIR not set");
+    let results_dir = env::var("PROBE_ALLOWED_DIR").expect("PROBE_ALLOWED_DIR not set");
+    let mut results = String::new();
+
+    match UnixDatagram::bind(&rendezvous) {
+        Ok(socket) => {
+            results.push_str("BIND_RENDEZVOUS: PASS\n");
+            let peer = format!("{rendezvous}.peer");
+            match UnixDatagram::bind(&peer) {
+                Ok(peer_socket) => {
+                    match socket.send_to(b"hello", &peer) {
+                        Ok(_) => results.push_str("SEND_TO_PEER: PASS\n"),
+                        Err(e) => results.push_str(&format!("SEND_TO_PEER: FAIL ({e})\n")),
+                    }
+                    let mut buf = [0u8; 16];
+                    match peer_socket.recv_from(&mut buf) {
+                        Ok((n, _)) if &buf[..n] == b"hello" => {
+                            results.push_str("RECV_FROM_PEER: PASS\n")
+                        }
+                        Ok((n, _)) => results.push_str(&format!(
+                            "RECV_FROM_PEER: FAIL (unexpected content {:?})\n",
+                            &buf[..n]
+                        )),
+                        Err(e) => results.push_str(&format!("RECV_FROM_PEER: FAIL ({e})\n")),
+                    }
+                }
+                Err(e) => results.push_str(&format!("SEND_TO_PEER: FAIL (peer bind: {e})\n")),
+            }
+        }
+        Err(e) => results.push_str(&format!("BIND_RENDEZVOUS: FAIL ({e})\n")),
+    }
+
+    let outside_path = format!("{outside_dir}/outside.sock");
+    match UnixDatagram::bind(&outside_path) {
+        Ok(_) => results.push_str("BIND_OUTSIDE_SCOPE: FAIL (unexpectedly succeeded)\n"),
+        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+            results.push_str(&format!("BIND_OUTSIDE_SCOPE: PASS (denied: {e})\n"));
+        }
+        Err(e) => results.push_str(&format!(
+            "BIND_OUTSIDE_SCOPE: FAIL (wrong error kind: {e})\n"
+        )),
+    }
+
+    let _ = fs::write(format!("{results_dir}/results.txt"), results);
 }
 
 fn sandbox_check() {

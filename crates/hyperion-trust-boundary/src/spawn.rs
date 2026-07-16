@@ -25,6 +25,7 @@ pub fn spawn(grant: &SpawnGrant, mut command: Command) -> io::Result<SpawnedBoun
     let rights = grant.token.rights();
     let depth = grant.depth;
     let fs_scope = grant.fs_scope.clone();
+    let ipc_rendezvous = grant.ipc_rendezvous.clone();
     // Extracted before the fork/move below: Landlock needs the program's own path to grant it
     // read+execute access independent of whatever `rights` governs on `fs_scope` (see
     // `apply_landlock`'s docs for why those are two different concerns).
@@ -42,8 +43,9 @@ pub fn spawn(grant: &SpawnGrant, mut command: Command) -> io::Result<SpawnedBoun
             if depth == TrustDepth::Container {
                 apply_namespaces().map_err(to_io_error)?;
             }
-            apply_landlock(&fs_scope, rights, &program_path).map_err(to_io_error)?;
-            apply_seccomp().map_err(to_io_error)?;
+            apply_landlock(&fs_scope, rights, &program_path, ipc_rendezvous.as_deref())
+                .map_err(to_io_error)?;
+            apply_seccomp(ipc_rendezvous.is_some()).map_err(to_io_error)?;
             // exec() only returns (as an Err) on failure -- success replaces this process image.
             Ok(command.exec())
         })();

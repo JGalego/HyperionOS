@@ -194,10 +194,14 @@ impl Supervisor {
         SupervisorError,
     > {
         let token = self.monitor.mint_root(spec.rights, origin, None);
+        // Every supervised service already gets a real, well-known `HYPERION_IPC_SOCK` bind
+        // path below -- this is the real capability grant that lets it actually bind there
+        // (closing this crate's own previously-named seccomp/Landlock socket-rights gap).
         let grant = SpawnGrant {
             token: token.clone(),
             depth: spec.depth,
             fs_scope: spec.fs_scope.clone(),
+            ipc_rendezvous: Some(self.socket_path_for(&spec.name)),
         };
 
         let mut command = Command::new(&spec.program);

@@ -40,4 +40,15 @@ pub struct SpawnGrant {
     pub token: CapabilityToken,
     pub depth: TrustDepth,
     pub fs_scope: PathBuf,
+    /// A real, distinct IPC-rights dimension -- `hyperion-supervisor`'s own previously-named gap
+    /// ("would need allowlisting AF_UNIX socket syscalls and Landlock MakeSock rights, a real but
+    /// separable extension"), closed here. `None` (every existing caller's default) grants no IPC
+    /// rights at all -- `socket`/`bind`/`sendto`/`recvfrom` stay denied by the baseline seccomp
+    /// filter exactly as before. `Some(rendezvous_path)` is the one specific socket path (e.g. a
+    /// per-service `HYPERION_IPC_SOCK` convention) this boundary may really `bind()` a real
+    /// `std::os::unix::net::UnixDatagram` at -- deliberately not folded into `fs_scope`/`RightsMask`
+    /// (a service that can read/write its own working directory has no reason to also be able to
+    /// create arbitrary sockets there, and vice versa), so a boundary can hold real filesystem
+    /// rights, real IPC rights, both, or neither, independently.
+    pub ipc_rendezvous: Option<PathBuf>,
 }

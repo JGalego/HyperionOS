@@ -2122,6 +2122,27 @@ mean here):
   deferred** — it needs a real multi-device Knowledge Graph replica model
   ([28 — Storage Engine](../28-storage-engine.md)) to converge, which doesn't exist yet; this
   closes only the transport, not continuous background re-publication.
+- **Many-instance mesh delegation + live dashboard, landed (2026-07-16).** Past scenario 12's
+  two hardcoded-host/port processes: any number of `hyperion-console` instances now each advertise
+  a real, configurable `HYPERION_CONSOLE_CAPABILITIES` (`agent_card`'s `skills` array is built from
+  it, no longer one hardcoded entry) and a new `/mesh-request <own_port> <capability> <text>`
+  command really discovers (via the existing mDNS `discover`, bounded-retried 5×2s for real
+  multi-process convergence) whichever peer's own Agent Card actually lists a capability this node
+  lacks, then delegates to it via the existing identity-checked `a2a::send_message` — no host/port
+  named by a human anywhere in that path. A new `crate::mesh` module holds the shared, in-process
+  `MeshEventLog` both the requesting side (`/mesh-request`) and the receiving side
+  (`a2a::handle_request`'s `SendMessage` arm, honestly `"unknown"`-attributed since that method
+  never authenticates its caller) record into, served at a new `GET /mesh/status`. A new
+  `/mesh-dashboard [port]` role — not itself a delegation participant — polls every discovered
+  peer's Agent Card + `/mesh/status` once a second and serves a real, self-contained live page
+  (`mesh_dashboard.html`, this crate's first `include_str!` asset) rendering the whole mesh as an
+  animated graph: dashed edges for real, persisted trust, a brief pulse for a delegation that just
+  happened, plus a raw scrolling event log. `scripts/run-mesh-demo.sh` launches six such nodes
+  with distinct/overlapping capabilities plus one dashboard end to end. See
+  [999 — Usage Scenarios](999-usage-scenarios.md) scenario 15 for the full transcript, two real
+  bugs this scenario's own manual verification caught and fixed (a dashboard-startup ordering
+  block, and duplicate "ghost" nodes from one peer's several resolved network interfaces), and an
+  honestly-named open finding about real mDNS convergence speed over some virtualized networks.
 
 ### Self-Sustaining — degrade safely, recover, come out stronger
 
@@ -2757,3 +2778,32 @@ next step on any of these is a design pass, not code.
   verbatim-join behavior; and a distilled record really persists as a real Episodic Knowledge
   Graph node with its own real `importance`/`pinned` fields. All 21 of this crate's own
   pre-existing tests pass unchanged.
+
+- **`hyperion-trust-boundary`/`hyperion-supervisor`'s real IPC-rights dimension for the
+  rendezvous socket, landed (2026-07-16)** (M2/M3/M5's own repeatedly-named gap: the seccomp
+  filter allowlisted no `socket`/`bind`/`connect` syscalls and Landlock never handled `MakeSock`,
+  so a supervised service could not actually bind a real `hyperion_ipc::Endpoint` at its own
+  well-known `HYPERION_IPC_SOCK` rendezvous path — "would need allowlisting AF_UNIX socket
+  syscalls and Landlock MakeSock rights, a real but separable extension," still open until now).
+  `SpawnGrant` gains a real, distinct `ipc_rendezvous: Option<PathBuf>` field — `None` (every
+  existing caller's default) grants no IPC rights at all; `Some(rendezvous_path)` is the one
+  socket path this boundary may really bind. `apply_seccomp` additionally allowlists exactly four
+  syscalls (`socket`/`bind`/`sendto`/`recvfrom` — confirmed via a real `strace` against a real
+  minimal `UnixDatagram` bind/send/recv round trip, this crate's own established rigor, not
+  guessed; `connect`/`listen`/`accept` are deliberately absent since `hyperion_ipc::transport::Endpoint`
+  is connectionless) when `ipc_rendezvous` is `Some`. `apply_landlock` adds a real `MakeSock` rule
+  scoped to the rendezvous path's *parent directory* — Landlock's creation-type rights can only
+  ever be scoped to a containing directory, never one exact not-yet-existing filename, an honest,
+  documented scope boundary rather than a hidden one. `hyperion-supervisor::Supervisor::spawn_sandboxed_inner`
+  is the real production caller: every supervised service's grant now carries
+  `ipc_rendezvous: Some(self.socket_path_for(&spec.name))`, the same path already exposed via
+  `HYPERION_IPC_SOCK`. Proven end to end in two new `hyperion-trust-boundary` tests (extending the
+  existing real, separate-process `probe` binary with a new `ipc-check` subcommand): a grant with
+  `ipc_rendezvous` really binds a real `UnixDatagram` at the granted path and round-trips a real
+  send/receive through it, while a bind attempt *outside* the granted rendezvous directory is
+  really denied by Landlock; a grant with no `ipc_rendezvous` at all cannot bind a socket there
+  either, since `socket()` itself stays denied by the baseline seccomp filter. All pre-existing
+  tests in `hyperion-trust-boundary`, `hyperion-supervisor` (including the real, separate-process
+  `real_supervision.rs` suite), and `hyperion-plugin-framework` (whose own `NativeBinary`
+  sandboxed-execution grant now explicitly carries `ipc_rendezvous: None`, since a one-shot tool
+  invocation has no rendezvous socket to bind) pass unchanged.

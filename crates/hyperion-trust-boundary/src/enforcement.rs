@@ -88,22 +88,49 @@ pub fn apply_namespaces() -> Result<(), EnforcementError> {
 /// it on `program_path` specifically (which typically lives outside `fs_scope`), the boundary
 /// would fail to even start. Any right this boundary doesn't hold over `fs_scope` stays
 /// ungoverned by Landlock there, not silently denied everywhere -- see [`fs_access_for_rights`].
+///
+/// `ipc_rendezvous`, when `Some`, is `hyperion_trust_boundary::SpawnGrant`'s own real, distinct
+/// IPC-rights dimension: a real Landlock `MakeSock` rule scoped to the rendezvous path's *parent
+/// directory* -- Landlock's creation-type rights (unlike `ReadFile`/`WriteFile`, which apply to a
+/// thing that already exists) can only ever be scoped to a containing directory, since the thing
+/// being created doesn't exist yet at rule-installation time, so this cannot be narrowed to
+/// exactly the one socket filename the caller actually intends to bind. An honest, acknowledged
+/// scope boundary, not a hidden one: a boundary granted IPC rights can really create a socket
+/// *anywhere in that same rendezvous directory*, not provably only its own -- `hyperion-supervisor`'s
+/// own single shared rendezvous directory per service makes this the real, achievable precision
+/// Landlock's actual primitives allow, not a design shortcut taken here.
 pub fn apply_landlock(
     fs_scope: &Path,
     rights: RightsMask,
     program_path: &Path,
+    ipc_rendezvous: Option<&Path>,
 ) -> Result<(), EnforcementError> {
     let fs_scope_access = fs_access_for_rights(rights);
     let program_access = AccessFs::ReadFile | AccessFs::Execute;
+    let ipc_access = if ipc_rendezvous.is_some() {
+        BitFlags::<AccessFs>::from(AccessFs::MakeSock)
+    } else {
+        BitFlags::<AccessFs>::empty()
+    };
 
     let mut created = Ruleset::default()
         .set_compatibility(CompatLevel::BestEffort)
-        .handle_access(fs_scope_access | program_access)?
+        .handle_access(fs_scope_access | program_access | ipc_access)?
         .create()?
         .add_rule(PathBeneath::new(PathFd::new(program_path)?, program_access))?;
 
     if !fs_scope_access.is_empty() {
         created = created.add_rule(PathBeneath::new(PathFd::new(fs_scope)?, fs_scope_access))?;
+    }
+
+    if let Some(rendezvous) = ipc_rendezvous {
+        let rendezvous_dir = rendezvous.parent().ok_or_else(|| {
+            EnforcementError::Io(std::io::Error::other(format!(
+                "ipc_rendezvous path {rendezvous:?} has no parent directory to scope a real \
+                 Landlock MakeSock rule to"
+            )))
+        })?;
+        created = created.add_rule(PathBeneath::new(PathFd::new(rendezvous_dir)?, ipc_access))?;
     }
 
     created.restrict_self()?;
@@ -215,10 +242,33 @@ fn host_target_arch() -> TargetArch {
     TargetArch::aarch64
 }
 
+/// `hyperion_trust_boundary::SpawnGrant`'s real, distinct IPC-rights dimension's own seccomp
+/// half: exactly the four syscalls a real `std::os::unix::net::UnixDatagram` bind/`send_to`/
+/// `recv_from` round trip actually makes on this target -- confirmed directly via `strace`
+/// against a real minimal Rust binary performing that exact round trip (this crate's own
+/// established rigor for every syscall list here, not guessed), rather than a broader "everything
+/// socket-related" allowlist. `connect`/`listen`/`accept` are deliberately absent:
+/// `hyperion_ipc::transport::Endpoint` is connectionless (`UnixDatagram`), and never calls them.
+fn ipc_allowed_syscalls() -> Vec<i64> {
+    vec![
+        libc::SYS_socket,
+        libc::SYS_bind,
+        libc::SYS_sendto,
+        libc::SYS_recvfrom,
+    ]
+}
+
 /// Installs the baseline default-deny seccomp-bpf filter on the calling process: every syscall
 /// in [`baseline_allowed_syscalls`] is allowed unconditionally, everything else returns `EPERM`.
-pub fn apply_seccomp() -> Result<(), EnforcementError> {
-    let rules = baseline_allowed_syscalls()
+/// `allow_ipc` additionally allows [`ipc_allowed_syscalls`] -- `hyperion_trust_boundary::SpawnGrant`'s
+/// own real, distinct IPC-rights dimension; see [`apply_landlock`]'s own doc comment for the
+/// matching real Landlock half that actually scopes *where* those syscalls may create a socket.
+pub fn apply_seccomp(allow_ipc: bool) -> Result<(), EnforcementError> {
+    let mut allowed = baseline_allowed_syscalls();
+    if allow_ipc {
+        allowed.extend(ipc_allowed_syscalls());
+    }
+    let rules = allowed
         .into_iter()
         .map(|syscall_nr| (syscall_nr, vec![]))
         .collect();

@@ -80,6 +80,7 @@ fn sandbox_enforces_scoped_filesystem_and_denies_unlisted_syscalls() {
         token,
         depth: TrustDepth::Process,
         fs_scope: allowed.path().to_path_buf(),
+        ipc_rendezvous: None,
     };
 
     let mut command = Command::new(probe_bin());
@@ -108,6 +109,93 @@ fn sandbox_enforces_scoped_filesystem_and_denies_unlisted_syscalls() {
 }
 
 #[test]
+fn a_grant_with_ipc_rendezvous_can_really_bind_and_round_trip_a_real_unix_socket() {
+    let allowed = tempfile::tempdir().expect("create allowed tempdir");
+    let ipc_dir = tempfile::tempdir().expect("create ipc rendezvous tempdir");
+    let outside = tempfile::tempdir().expect("create outside tempdir");
+    let rendezvous = ipc_dir.path().join("service.sock");
+
+    let mut monitor = hyperion_trust_boundary::CapabilityMonitor::new();
+    let token = monitor.mint_root(
+        RightsMask::READ | RightsMask::WRITE,
+        TrustBoundaryId(3),
+        None,
+    );
+    let grant = SpawnGrant {
+        token,
+        depth: TrustDepth::Process,
+        fs_scope: allowed.path().to_path_buf(),
+        ipc_rendezvous: Some(rendezvous.clone()),
+    };
+
+    let mut command = Command::new(probe_bin());
+    command
+        .arg("ipc-check")
+        .env("PROBE_ALLOWED_DIR", allowed.path())
+        .env("PROBE_IPC_RENDEZVOUS", &rendezvous)
+        .env("PROBE_OUTSIDE_DIR", outside.path());
+
+    let _boundary = spawn(&grant, command).expect("spawn probe under real enforcement");
+
+    let results_path = allowed.path().join("results.txt");
+    let results = wait_for_nonempty_file(&results_path, Duration::from_secs(5))
+        .unwrap_or_else(|| panic!("probe did not write {results_path:?} within timeout"));
+
+    for expected in [
+        "BIND_RENDEZVOUS: PASS",
+        "SEND_TO_PEER: PASS",
+        "RECV_FROM_PEER: PASS",
+        "BIND_OUTSIDE_SCOPE: PASS",
+    ] {
+        assert!(
+            results.contains(expected),
+            "expected {expected:?} in probe results, got:\n{results}"
+        );
+    }
+}
+
+#[test]
+fn a_grant_with_no_ipc_rendezvous_cannot_bind_a_real_unix_socket_at_all() {
+    let allowed = tempfile::tempdir().expect("create allowed tempdir");
+    let ipc_dir = tempfile::tempdir().expect("create ipc rendezvous tempdir");
+    let outside = tempfile::tempdir().expect("create outside tempdir");
+    let rendezvous = ipc_dir.path().join("service.sock");
+
+    let mut monitor = hyperion_trust_boundary::CapabilityMonitor::new();
+    let token = monitor.mint_root(
+        RightsMask::READ | RightsMask::WRITE,
+        TrustBoundaryId(4),
+        None,
+    );
+    // No `ipc_rendezvous` granted -- every existing caller's default.
+    let grant = SpawnGrant {
+        token,
+        depth: TrustDepth::Process,
+        fs_scope: allowed.path().to_path_buf(),
+        ipc_rendezvous: None,
+    };
+
+    let mut command = Command::new(probe_bin());
+    command
+        .arg("ipc-check")
+        .env("PROBE_ALLOWED_DIR", allowed.path())
+        .env("PROBE_IPC_RENDEZVOUS", &rendezvous)
+        .env("PROBE_OUTSIDE_DIR", outside.path());
+
+    let _boundary = spawn(&grant, command).expect("spawn probe under real enforcement");
+
+    let results_path = allowed.path().join("results.txt");
+    let results = wait_for_nonempty_file(&results_path, Duration::from_secs(5))
+        .unwrap_or_else(|| panic!("probe did not write {results_path:?} within timeout"));
+
+    assert!(
+        results.contains("BIND_RENDEZVOUS: FAIL"),
+        "with no real ipc_rendezvous grant, socket() itself must be denied by the baseline \
+         seccomp filter, not merely scoped away by Landlock -- got:\n{results}"
+    );
+}
+
+#[test]
 fn revoking_a_token_kills_the_real_process() {
     let allowed = tempfile::tempdir().expect("create allowed tempdir");
 
@@ -117,6 +205,7 @@ fn revoking_a_token_kills_the_real_process() {
         token,
         depth: TrustDepth::Process,
         fs_scope: allowed.path().to_path_buf(),
+        ipc_rendezvous: None,
     };
 
     let mut command = Command::new(probe_bin());

@@ -34,17 +34,16 @@
 //!   [`Supervisor::spawn_sandboxed`]'s docs.
 //! - The IPC rendezvous directory: a real, created-at-boot directory and a real, well-known
 //!   per-service bind path convention (`HYPERION_IPC_SOCK`) -- M3's own explicitly deferred
-//!   "service-discovery directory" gap, closed here. A supervised service actually *binding* a
-//!   real `hyperion_ipc::Endpoint` there is not exercised by this milestone, and can't be yet: M2's
-//!   seccomp filter has no `socket`/`bind`/`connect` syscalls on its allowlist and its Landlock
-//!   ruleset never handles `MakeSock`, so a sandboxed process attempting either fails closed today
-//!   -- exactly the gap M3's own completion note already named ("would need allowlisting AF_UNIX
-//!   socket syscalls and Landlock MakeSock rights, a real but separable extension"), still open,
-//!   not silently forgotten. Closing it needs `SpawnGrant`/`apply_seccomp`/`apply_landlock` to
-//!   accept a distinct IPC-rights dimension (the rendezvous directory is never the same path as a
-//!   service's own `fs_scope`, so it needs its own Landlock rule, not a reuse of the existing
-//!   one) -- a real, separate extension to M2's crate, deliberately not folded into this
-//!   milestone's already-large scope.
+//!   "service-discovery directory" gap, closed here. ~~A supervised service actually *binding* a
+//!   real `hyperion_ipc::Endpoint` there~~ (2026-07-16) — now real too: every service's own
+//!   `SpawnGrant` carries `ipc_rendezvous: Some(self.socket_path_for(&spec.name))`, and
+//!   `hyperion_trust_boundary::apply_seccomp`/`apply_landlock` accept exactly the distinct
+//!   IPC-rights dimension M2's own completion note named as needed ("would need allowlisting
+//!   AF_UNIX socket syscalls and Landlock MakeSock rights, a real but separable extension") — see
+//!   that crate's own doc comment for what's really granted and its one honest scope boundary
+//!   (Landlock's `MakeSock` right can only be scoped to a containing directory, never one exact
+//!   socket filename, so a service can really create a socket anywhere in the shared rendezvous
+//!   directory, not provably only its own).
 //! - ~~A give-up/alerting policy for a respawn attempt that itself keeps failing~~: now real --
 //!   [`Supervisor::reap_and_restart_one`] stops respawning a service once it has fast-failed a
 //!   small, fixed number of times in a row, or once a fresh respawn attempt itself errors,

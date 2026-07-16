@@ -946,6 +946,9 @@ impl PluginRegistry {
             token,
             depth: real_trust_depth(policy_depth),
             fs_scope: tempdir.path().to_path_buf(),
+            // A one-shot NativeBinary invocation communicates via input.json/output.json in its
+            // own real fs_scope -- it has no rendezvous socket to bind, so no IPC rights at all.
+            ipc_rendezvous: None,
         };
         let mut boundary_handle = hyperion_trust_boundary::spawn(&grant, command).map_err(|e| {
             PluginError::ExecutionFailed(format!("couldn't spawn the sandbox: {e}"))
