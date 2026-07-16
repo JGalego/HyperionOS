@@ -57,7 +57,7 @@
 //!   activity yet still reports the same fixed, zero-confidence `Novice`
 //!   estimate this method always returned, honestly labeled as such in its
 //!   own `evidence` field.
-//! ~~**Semantic summarization** (docs/06 §2's `summary` inclusion mode)~~ — now real:
+//! - ~~**Semantic summarization** (docs/06 §2's `summary` inclusion mode)~~ — now real:
 //!   [`engine::ContextEngine::new_with_ai_runtime`] wires a real
 //!   [`hyperion_ai_runtime::LocalAiRuntime`] in, and [`engine`]'s own `summarize` uses it to
 //!   produce a real, model-generated summary of an entry's metadata rather than truncating it
