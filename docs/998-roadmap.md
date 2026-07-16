@@ -2107,13 +2107,21 @@ mean here):
   the lease. Proven end to end: a real, running heartbeat keeps a one-second-ttl lease looking
   fresh across 1.2+ real seconds; the identical lease with no heartbeat genuinely goes stale in the
   same window; a stopped heartbeat provably stops renewing (the lease goes stale again afterward).
-- **Real network transport for federation, and ambient anti-entropy** (`hyperion-federation`'s own
-  remaining deferred items — heartbeat *timing* and the per-device key-exchange this bullet used to
-  name are now both landed, above) — orthogonal to, and a prerequisite for, real multi-*device*
-  (not just multi-*instance*) social behavior. Ambient anti-entropy specifically still needs a real
-  multi-device Knowledge Graph replica model ([28 — Storage Engine](../28-storage-engine.md)) to
-  converge, which doesn't exist yet — the heartbeat above keeps a *lease* alive, not KG state in
-  sync.
+- **Real network transport for federation, landed (2026-07-16).**
+  `hyperion_federation::serve_ledger_publications` runs a real background thread accepting real
+  `TcpListener` connections; `publish_ledger_over_socket` is the real client half. A
+  `LedgerPublication` (a device's resource headroom) genuinely travels — `seal_for_peer`-encrypted
+  and Ed25519-signed the whole way, via `hyperion-crypto`'s new `SyncEnvelope::to_wire_bytes`/
+  `from_wire_bytes` — over a real `TcpStream` between two independent `FederationHub` instances,
+  and is only applied via the receiving hub's own already-real `FederationHub::publish_ledger`
+  once authentication and decryption both genuinely succeed (a malformed frame or the wrong
+  signing identity is silently dropped, never applied). The receiver stamps `published_at` with
+  its own real wall clock, never a value the remote sender could lie about. Proven end to end: a
+  ledger published on one hub really arrives on a genuinely separate hub over a real socket; a
+  publication signed by the wrong identity is never applied. **Ambient anti-entropy remains
+  deferred** — it needs a real multi-device Knowledge Graph replica model
+  ([28 — Storage Engine](../28-storage-engine.md)) to converge, which doesn't exist yet; this
+  closes only the transport, not continuous background re-publication.
 
 ### Self-Sustaining — degrade safely, recover, come out stronger
 

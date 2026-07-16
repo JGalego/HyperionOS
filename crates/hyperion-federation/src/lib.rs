@@ -90,17 +90,16 @@
 //!   `new_with_keystore` are unchanged (still build a private store; every existing call site
 //!   keeps compiling). Proven end to end, cross-crate: see `hyperion-coordination`'s own
 //!   `tests/shared_explanation_store.rs`.
-//! - **Real network transport, and ambient anti-entropy.** Ledger
-//!   publication is still a direct method call, not something a real
-//!   wire transport carries between processes yet; storage convergence
-//!   is [28 — Storage Engine](../28-storage-engine.md)'s job and isn't
-//!   wired in here (no multi-device KG replica exists yet to converge).
-//!   What now *is* real — the payload confidentiality/authenticity and
-//!   key agreement a wire transport would need, and the ambient
-//!   heartbeat that would drive it — are `seal`/`open`,
-//!   `seal_for_peer`/`open_from_peer`, and `start_lease_heartbeat`,
-//!   above; the transport itself (actual sockets carrying these
-//!   envelopes between processes) is still deferred.
+//! - ~~Real network transport~~ — now real: [`transport::serve_ledger_publications`] runs a
+//!   real background thread accepting real `TcpListener` connections, and
+//!   [`transport::publish_ledger_over_socket`] is the real client half — a
+//!   [`transport::LedgerPublication`] genuinely travels, `seal_for_peer`-encrypted and signed,
+//!   over a real `TcpStream` between two independent [`FederationHub`] instances, and is only
+//!   applied via the receiving hub's own already-real [`FederationHub::publish_ledger`] once
+//!   authentication and decryption both genuinely succeed. **Ambient anti-entropy remains
+//!   deferred**: storage convergence is [28 — Storage Engine](../28-storage-engine.md)'s job and
+//!   isn't wired in here (no multi-device KG replica exists yet to converge) — this closes only
+//!   the transport, not continuous background re-publication.
 //! - **Cold-cache pre-staging** (docs/21 §Recovery's priority-sync batch
 //!   for a migration target with no local replica) — there is no Context
 //!   Bundle replica model across devices yet.
@@ -112,9 +111,14 @@
 //!   suite does.
 
 mod hub;
+mod transport;
 mod types;
 
 pub use hub::{FederationError, FederationHub, LeaseHeartbeat};
+pub use transport::{
+    publish_ledger_over_socket, serve_ledger_publications, LedgerPublication,
+    LedgerPublicationServer,
+};
 pub use types::{
     AnchorLease, FederationTrustTier, MigrationOutcome, MigrationReceipt, OffloadDescriptor,
     PrivacyTier, VirtualResourceLedger,

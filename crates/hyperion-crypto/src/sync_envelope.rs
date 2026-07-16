@@ -161,3 +161,48 @@ fn canonical_bytes(sender_id: u64, nonce: &[u8], ciphertext: &[u8]) -> Vec<u8> {
     bytes.extend_from_slice(ciphertext);
     bytes
 }
+
+/// This envelope's own signature, in bytes -- ed25519-dalek's fixed 64-byte encoding.
+const SIGNATURE_LEN: usize = 64;
+/// [`SyncEnvelope::to_wire_bytes`]'s fixed header size before the variable-length ciphertext:
+/// `sender_id` (8) + `nonce` (12) + `signature` (64).
+const WIRE_HEADER_LEN: usize = 8 + NONCE_LEN + SIGNATURE_LEN;
+
+impl SyncEnvelope {
+    /// A real, fixed-order wire encoding a caller can actually send over a socket --
+    /// docs/998-roadmap.md's own named "actual sockets carrying these envelopes between
+    /// processes" gap needs exactly this: `sender_id` (8 bytes LE) + `nonce` (12 bytes) +
+    /// `signature` (64 bytes) + `ciphertext` (the remainder, variable-length since it's last).
+    /// This encoding is not self-framing -- a caller sending this over a stream socket still
+    /// needs its own length prefix (e.g. a real `u32` byte count) around the whole result.
+    pub fn to_wire_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(WIRE_HEADER_LEN + self.ciphertext.len());
+        bytes.extend_from_slice(&self.sender_id.to_le_bytes());
+        bytes.extend_from_slice(&self.nonce);
+        bytes.extend_from_slice(&self.signature.to_bytes());
+        bytes.extend_from_slice(&self.ciphertext);
+        bytes
+    }
+
+    /// The real inverse of [`Self::to_wire_bytes`]. A truncated or otherwise malformed buffer --
+    /// which a real, untrusted wire sender can always produce, maliciously or not -- is a real,
+    /// honest `None`, never a panic on an out-of-bounds slice.
+    pub fn from_wire_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < WIRE_HEADER_LEN {
+            return None;
+        }
+        let sender_id = u64::from_le_bytes(bytes[0..8].try_into().ok()?);
+        let nonce: [u8; NONCE_LEN] = bytes[8..8 + NONCE_LEN].try_into().ok()?;
+        let sig_start = 8 + NONCE_LEN;
+        let sig_bytes: [u8; SIGNATURE_LEN] = bytes[sig_start..sig_start + SIGNATURE_LEN]
+            .try_into()
+            .ok()?;
+        let ciphertext = bytes[sig_start + SIGNATURE_LEN..].to_vec();
+        Some(SyncEnvelope {
+            sender_id,
+            nonce,
+            ciphertext,
+            signature: crate::Signature::from_bytes(&sig_bytes),
+        })
+    }
+}

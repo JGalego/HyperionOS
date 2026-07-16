@@ -3,7 +3,7 @@
 //! (never silently corrupts) a tampered ciphertext, a tampered signature, or the wrong key.
 
 use hyperion_crypto::sync_envelope::{open, open_from_peer, seal, seal_for_peer};
-use hyperion_crypto::{diffie_hellman, Keystore, SyncEnvelopeError};
+use hyperion_crypto::{diffie_hellman, Keystore, SyncEnvelope, SyncEnvelopeError};
 
 #[test]
 fn a_sealed_envelope_round_trips_its_real_plaintext() {
@@ -107,4 +107,52 @@ fn a_tampered_sender_id_invalidates_the_real_signature() {
         "changing the claimed sender after sealing must invalidate the real signature, got: \
          {result:?}"
     );
+}
+
+#[test]
+fn a_sealed_envelope_round_trips_through_its_real_wire_encoding() {
+    let keystore = Keystore::ephemeral();
+    let envelope = seal(&keystore, 3, b"a real payload bound for a real socket");
+
+    let wire = envelope.to_wire_bytes();
+    let decoded = SyncEnvelope::from_wire_bytes(&wire)
+        .expect("a real envelope's own wire encoding must always decode");
+
+    let opened = open(&keystore, &decoded).expect("the wire-decoded envelope must still open");
+    assert_eq!(opened, b"a real payload bound for a real socket");
+    assert_eq!(decoded.sender_id, 3);
+}
+
+#[test]
+fn a_buffer_shorter_than_the_fixed_wire_header_is_rejected_rather_than_panicking() {
+    let keystore = Keystore::ephemeral();
+    let envelope = seal(&keystore, 1, b"real payload");
+    let wire = envelope.to_wire_bytes();
+    // Shorter than sender_id(8) + nonce(12) + signature(64) -- too short to even contain a
+    // complete header, regardless of how much (if any) ciphertext follows.
+    let header_len = 8 + 12 + 64;
+
+    assert!(
+        SyncEnvelope::from_wire_bytes(&wire[..header_len - 1]).is_none(),
+        "a buffer shorter than the fixed header must be rejected"
+    );
+    assert!(
+        SyncEnvelope::from_wire_bytes(&[]).is_none(),
+        "an empty buffer must be rejected"
+    );
+}
+
+#[test]
+fn a_wire_buffer_truncated_within_the_ciphertext_decodes_but_fails_to_open() {
+    let keystore = Keystore::ephemeral();
+    let envelope = seal(&keystore, 1, b"real payload");
+    let wire = envelope.to_wire_bytes();
+
+    // Long enough to contain a full header plus a shortened ciphertext -- this still parses (the
+    // wire encoding has no separate ciphertext-length field), but the corrupted ciphertext must
+    // fail to decrypt rather than silently produce wrong plaintext.
+    let truncated = &wire[..wire.len() - 1];
+    let decoded =
+        SyncEnvelope::from_wire_bytes(truncated).expect("still long enough to contain a header");
+    assert!(open(&keystore, &decoded).is_err());
 }

@@ -400,6 +400,15 @@ impl FederationHub {
         Ok(())
     }
 
+    /// The most recently published resource ledger for `device_id`, if any -- mirrors
+    /// [`Self::lease_of`]/[`Self::device_of`]'s own read-accessor convention. Does not check
+    /// [`VirtualResourceLedger::is_live`] itself (that's [`Self::best_candidate`]'s own
+    /// freshness gate) -- a caller wanting "is this still fresh" checks `is_live` against its
+    /// own `now`.
+    pub fn ledger_of(&self, device_id: u64) -> Option<VirtualResourceLedger> {
+        self.ledgers.lock().unwrap().get(&device_id).copied()
+    }
+
     fn fits(request: &ResourceVector, available: &ResourceVector) -> bool {
         ResourceDimension::ALL
             .iter()
