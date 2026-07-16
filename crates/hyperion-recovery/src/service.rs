@@ -677,6 +677,53 @@ impl RecoveryService {
         self.points.lock().unwrap().get(&id).cloned()
     }
 
+    /// This crate's own named "retention classes, compaction, and pinning enforcement beyond a
+    /// boolean flag" gap (see this crate's own doc comment): a real, caller-driven sweep (this
+    /// crate has no background thread of its own to tick on, matching `hyperion-observability`'s
+    /// own `compact_metrics`/`expire_logs` caller-driven-pass convention) that evicts a
+    /// [`RecoveryPoint`] and its snapshot once all of: it isn't pinned, its
+    /// age has reached `retention_secs`, and no [`ActionRecord`] still needs it to restore
+    /// from — [`Self::recover_from_crash`] reads an `InFlight` action's `recovery_point_before`,
+    /// and [`Self::undo`] reads a `Committed` one's; `Aborted`/`Undone`/`Expired` actions never
+    /// read theirs again ([`Self::redo`] restores from its own separate, `ActionId`-keyed
+    /// `redo_snapshots`, not this one). A point nothing has journaled an `ActionRecord` against at
+    /// all (the direct [`Self::restore_to`]/[`Self::restore_to_with_cause`] caller shape) is
+    /// eligible the same way once its retention window lapses — pinning is exactly how such a
+    /// caller protects one it still needs, the same real enforcement [`Self::pin`] already
+    /// promised but nothing previously read. Returns the count evicted, so a caller can log or
+    /// audit exactly what a sweep did.
+    pub fn compact(&self, now: u64, retention_secs: u64) -> usize {
+        let still_needed: HashSet<RecoveryPointId> = self
+            .actions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|a| a.status == ActionStatus::InFlight || a.status == ActionStatus::Committed)
+            .map(|a| a.recovery_point_before)
+            .collect();
+
+        let mut points = self.points.lock().unwrap();
+        let to_evict: Vec<RecoveryPointId> = points
+            .values()
+            .filter(|p| {
+                !p.pinned
+                    && now.saturating_sub(p.created_at) >= retention_secs
+                    && !still_needed.contains(&p.id)
+            })
+            .map(|p| p.id)
+            .collect();
+        for id in &to_evict {
+            points.remove(id);
+        }
+        drop(points);
+
+        let mut snapshots = self.snapshots.lock().unwrap();
+        for id in &to_evict {
+            snapshots.remove(id);
+        }
+        to_evict.len()
+    }
+
     pub fn action_records(&self) -> Vec<ActionRecord> {
         self.actions.lock().unwrap().clone()
     }

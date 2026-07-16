@@ -3165,3 +3165,27 @@ next step on any of these is a design pass, not code.
   within-grace-period case, the double-sweep case, the `CryptoShred`-has-nothing-to-sweep case,
   and the unrelated-action case — pass with only their call sites updated for the new parameters,
   no behavior change.
+
+- **`hyperion-recovery`'s pinning enforcement via a real compaction pass, landed (2026-07-16)**
+  (this crate's own named gap: "`pin`/`unpin` exist; nothing yet reads that flag to protect a
+  point from eviction, since this crate has no eviction/compaction pass at all yet — recovery
+  points and the action journal simply accumulate for the process lifetime"). New
+  `RecoveryService::compact(now, retention_secs) -> usize`, a real caller-driven sweep (matching
+  `hyperion-observability`'s own `compact_metrics`/`expire_logs` convention — this crate has no
+  background thread of its own to tick on): evicts a `RecoveryPoint` and its snapshot once it
+  isn't pinned, its age has reached `retention_secs`, and no still-live `ActionRecord`
+  (`InFlight`, needed by `recover_from_crash`; `Committed`, needed by `undo`) references it via
+  `recovery_point_before` — `Aborted`/`Undone`/`Expired` actions never read theirs again (`redo`
+  restores from its own separate, `ActionId`-keyed `redo_snapshots`, not this one), and a point
+  with no `ActionRecord` at all (the direct `restore_to`/`restore_to_with_cause` caller shape) is
+  eligible the same way once its window lapses — pinning is exactly how such a caller protects
+  one it still needs. Returns the count evicted for a caller to log or audit. Proven with 5 new
+  tests in `tests/retention_compaction.rs`: within-window survives regardless of pin state; an
+  unpinned, unreferenced point past its window is really removed (`recovery_point` returns
+  `None`, not just a count); a pinned point past its window survives; a point backing a
+  `Committed` action is never evicted and `undo` still succeeds afterward; a point backing only
+  an `Undone` action is evicted past its window. Named simplification: one real, general eviction
+  mechanism, not retention *classes* — every point is swept by the same caller-supplied
+  `retention_secs`, the same "one policy applies uniformly" shape `hyperion-privacy`'s own
+  grace-period sweep already established. All pre-existing `hyperion-recovery` tests, including
+  the existing `pin_and_unpin_round_trip` test, pass unchanged.

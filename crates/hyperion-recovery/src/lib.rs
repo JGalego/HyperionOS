@@ -88,13 +88,17 @@
 //!   crash-recovery journaling and session/goal-scoped bookkeeping, proven end to end in both
 //!   crates' own test suites (`hyperion-recovery`'s `tests/undo_scope_session_goal.rs`;
 //!   `hyperion-coordination`'s `tests/recovery_bridge.rs`).
-//! - **Retention classes, compaction, and pinning enforcement beyond a
-//!   boolean flag.** [`service::RecoveryService::pin`]/`unpin` exist;
-//!   nothing yet reads that flag to protect a point from eviction, since
-//!   this crate has no eviction/compaction pass at all yet — recovery
-//!   points and the action journal simply accumulate for the process
-//!   lifetime, appropriate for a hosted simulator with no long-running
-//!   retention story yet.
+//! - ~~**Retention classes, compaction, and pinning enforcement beyond a boolean
+//!   flag.**~~ (2026-07-16) — the pinning half is now real: [`service::RecoveryService::compact`]
+//!   is a real, caller-driven sweep (this crate has no background thread of its own to tick on)
+//!   that evicts a [`types::RecoveryPoint`] and its snapshot once it isn't pinned, its age has
+//!   reached a caller-chosen `retention_secs`, and
+//!   no still-live `ActionRecord` (`InFlight` or `Committed`) needs it to restore from —
+//!   [`service::RecoveryService::pin`]/`unpin` finally have a real reader. Named simplification:
+//!   this is one real, general eviction mechanism, not retention *classes* (per-trigger or
+//!   per-subject retention windows) — every point is swept by the same caller-supplied
+//!   `retention_secs`, the same "one policy applies uniformly" shape this crate's own
+//!   grace-period sweep in `hyperion-privacy` already established.
 //! - ~~**Redo.**~~ Now real: [`service::RecoveryService::undo`] captures
 //!   each reverted action's actual pre-revert state (its real committed
 //!   effects) into a redo snapshot, distinct from marking it `Aborted`;
