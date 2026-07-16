@@ -1995,8 +1995,18 @@ mean here):
   trip first — purely to fetch the key, this also happens to close this module's own previously-
   named "no real client handshake" gap for free. Proven end to end the identical way: a real
   impersonation swap is refused, not silently shown.
-- **The rest of each real spec.** MCP: resources, prompts, notifications, the SSE-streaming half
-  of "Streamable HTTP," stdio transport. A2A: `GetTask`/`ListTasks`/streaming/push notifications
+- **MCP `resources/list`/`resources/read`, landed the same pass (2026-07-16).** Two real,
+  read-only resources (`hyperion://graph`, `hyperion://recall`) reached through the exact same
+  `ConsoleSession::handle_utterance` path `tools/call` already uses — no second, resource-
+  specific bypass. `initialize`'s advertised `capabilities` now includes `"resources": {}`. New
+  `/mcp-resource <host> <port> <uri>` client command performs the identical real `initialize` +
+  identity-check handshake `/mcp-call` uses (both now share `fetch_claimed_key`/
+  `verify_and_finalize` rather than duplicating the check a second time). Proven end to end: a
+  real client reads `hyperion://graph`'s real live content over a real connection, an unknown URI
+  is a real honest JSON-RPC error, and the identity check really fires the same way it does for
+  `tools/call`.
+- **The rest of each real spec.** MCP: prompts, notifications, the SSE-streaming half of
+  "Streamable HTTP," stdio transport. A2A: `GetTask`/`ListTasks`/streaming/push notifications
   (no real task store exists here — every dispatch completes synchronously before `SendMessage`
   returns, so there's nothing to poll).
 - **A2A, gossip, or any custom/invented protocol.** Worth exactly when a real, concrete need

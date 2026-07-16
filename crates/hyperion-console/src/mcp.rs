@@ -1,13 +1,14 @@
 //! `/mcp-server`: a real MCP (Model Context Protocol) server, exposing a real, live
-//! [`ConsoleSession`] as a small set of real tools over MCP's JSON-RPC 2.0 wire format
-//! (docs/998-roadmap.md's Social pillar -- "being callable" over a real, known protocol, before
-//! "calling others"). Deliberately a narrow, honest subset: three real methods (`initialize`,
-//! `tools/list`, `tools/call`) over HTTP (MCP's "Streamable HTTP" transport, request/response
-//! only -- no SSE streaming upgrade), not the full MCP surface (no resources, prompts,
-//! notifications, or stdio transport). Every tool call is a real turn through the exact same
-//! [`ConsoleSession::handle_utterance`] path everything else in this crate already uses -- no new
-//! bypass of the capability/consent model; an MCP client genuinely drives the real Intent Engine,
-//! real Agent dispatch, real Knowledge Graph writes.
+//! [`ConsoleSession`] as a small set of real tools and resources over MCP's JSON-RPC 2.0 wire
+//! format (docs/998-roadmap.md's Social pillar -- "being callable" over a real, known protocol,
+//! before "calling others"). Deliberately a narrow, honest subset: five real methods
+//! (`initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`) over HTTP
+//! (MCP's "Streamable HTTP" transport, request/response only -- no SSE streaming upgrade), not
+//! the full MCP surface (no prompts, notifications, or stdio transport). Every tool call and
+//! resource read is a real turn through the exact same [`ConsoleSession::handle_utterance`] path
+//! everything else in this crate already uses -- no new bypass of the capability/consent model;
+//! an MCP client genuinely drives the real Intent Engine, real Agent dispatch, real Knowledge
+//! Graph writes/reads.
 //!
 //! **Real identity (docs/998-roadmap.md's Social pillar), the same shape `crate::a2a` already
 //! established:** `initialize`'s response now carries this session's own real, hex-encoded
@@ -72,7 +73,7 @@ fn handle_request(
             id,
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {}},
+                "capabilities": {"tools": {}, "resources": {}},
                 "serverInfo": {"name": "hyperion-console", "version": env!("CARGO_PKG_VERSION")},
                 // Not part of the real MCP spec -- see this module's own doc comment.
                 "publicKey": verifying_key_hex,
@@ -107,6 +108,29 @@ fn handle_request(
                     id,
                     json!({"content": [{"type": "text", "text": message}], "isError": true}),
                 ),
+            }
+        }
+        "resources/list" => success_response(id, json!({"resources": resource_definitions()})),
+        "resources/read" => {
+            let uri = request
+                .get("params")
+                .and_then(|p| p.get("uri"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            match dispatch_resource(session, uri) {
+                Ok(text) => {
+                    let signature_hex =
+                        encode_hex(&session.lock().unwrap().sign(text.as_bytes()).to_bytes());
+                    success_response(
+                        id,
+                        json!({
+                            "contents": [{"uri": uri, "mimeType": "text/plain", "text": text}],
+                            // Not part of the real MCP spec -- see this module's own doc comment.
+                            "signature": signature_hex,
+                        }),
+                    )
+                }
+                Err(message) => error_response(id, -32602, &message),
             }
         }
         other => error_response(id, -32601, &format!("method not found: {other}")),
@@ -177,6 +201,38 @@ fn dispatch_tool(
     Ok(session.handle_utterance(&utterance).join("\n"))
 }
 
+/// docs/998-roadmap.md's own named "resources" gap in the MCP spec, closed for real: two real,
+/// read-only views onto this same live session, reached through the exact same
+/// [`ConsoleSession::handle_utterance`] path [`dispatch_tool`] already uses -- no second,
+/// resource-specific bypass of the capability/consent model.
+fn resource_definitions() -> Value {
+    json!([
+        {
+            "uri": "hyperion://graph",
+            "name": "Knowledge Graph",
+            "description": "This session's whole recorded knowledge graph as real text -- real nodes and edges, sorted by id.",
+            "mimeType": "text/plain",
+        },
+        {
+            "uri": "hyperion://recall",
+            "name": "Recent Memory",
+            "description": "Everything this session has recorded recently.",
+            "mimeType": "text/plain",
+        },
+    ])
+}
+
+fn dispatch_resource(session: &Arc<Mutex<ConsoleSession>>, uri: &str) -> Result<String, String> {
+    let utterance = match uri {
+        "hyperion://graph" => "/graph".to_string(),
+        "hyperion://recall" => "/recall".to_string(),
+        other => return Err(format!("unknown resource: {other:?}")),
+    };
+
+    let mut session = session.lock().unwrap();
+    Ok(session.handle_utterance(&utterance).join("\n"))
+}
+
 fn success_response(id: Value, result: Value) -> String {
     json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()
 }
@@ -185,25 +241,11 @@ fn error_response(id: Value, code: i64, message: &str) -> String {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}).to_string()
 }
 
-/// The real outbound half: calling a real, already-known MCP endpoint's `tools/call` -- another
-/// Hyperion instance's own `/mcp-server`, or any other real MCP-over-HTTP server. Not discovery
-/// (the caller names the host/port). Performs a real `initialize` round trip first -- purely to
-/// fetch a real identity claim, if the peer makes one (see this module's own doc comment) -- so
-/// this is now a real, if still narrow, two-call client handshake, not the single bare
-/// `tools/call` this function used to send alone.
-///
-/// **Real identity check**, only when `initialize`'s response claims one -- a real, non-Hyperion
-/// MCP server is neither penalized nor silently trusted, exactly like `crate::a2a::send_message`'s
-/// own identical check: the reply's signature must verify against the claimed key, and that key
-/// must match `trust_store`'s own record for `host:port`. A key that verifies but doesn't match
-/// the trust store's record is a hard failure -- the reply is never returned, only the warning.
-pub fn call_tool(
-    host: &str,
-    port: u16,
-    tool_name: &str,
-    arguments: Value,
-    trust_store: &mut PeerTrustStore,
-) -> Result<String, String> {
+/// A real `initialize` round trip, purely to fetch a real identity claim if the peer makes one
+/// (see this module's own doc comment) -- shared by [`call_tool`] and [`read_resource`] so
+/// neither duplicates this real handshake or the identity-verification tail
+/// ([`verify_and_finalize`]) it feeds.
+fn fetch_claimed_key(host: &str, port: u16) -> Result<Option<String>, String> {
     let init_response_body = crate::http_client::post(
         host,
         port,
@@ -213,45 +255,34 @@ pub fn call_tool(
     let init_response: Value = serde_json::from_str(&init_response_body).map_err(|e| {
         format!("the initialize response wasn't valid JSON: {e} (got: {init_response_body:?})")
     })?;
-    let claimed_key_hex = init_response
+    Ok(init_response
         .get("result")
         .and_then(|r| r.get("publicKey"))
         .and_then(|k| k.as_str())
-        .map(str::to_string);
+        .map(str::to_string))
+}
 
-    let request = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {"name": tool_name, "arguments": arguments},
-    });
-    let response_body = crate::http_client::post(host, port, "/", &request.to_string())?;
-    let response: Value = serde_json::from_str(&response_body)
-        .map_err(|e| format!("the response wasn't valid JSON: {e} (got: {response_body:?})"))?;
-    if let Some(error) = response.get("error") {
-        return Err(format!("the remote server returned a real error: {error}"));
-    }
-    let text = response
-        .get("result")
-        .and_then(|r| r.get("content"))
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("text"))
-        .and_then(|t| t.as_str())
-        .unwrap_or(&response_body)
-        .to_string();
-
+/// **Real identity check**, only when `claimed_key_hex` is `Some` (`initialize` claimed one) --
+/// a real, non-Hyperion MCP server is neither penalized nor silently trusted, exactly like
+/// `crate::a2a::send_message`'s own identical check: `text`'s own `signature_hex` must verify
+/// against the claimed key, and that key must match `trust_store`'s own record for `host:port`.
+/// A key that verifies but doesn't match the trust store's record is a hard failure -- `text` is
+/// never returned, only the warning. Shared by [`call_tool`] and [`read_resource`].
+fn verify_and_finalize(
+    host: &str,
+    port: u16,
+    text: String,
+    claimed_key_hex: Option<String>,
+    signature_hex: Option<&str>,
+    trust_store: &mut PeerTrustStore,
+) -> Result<String, String> {
     let Some(claimed_key_hex) = claimed_key_hex else {
         return Ok(text);
     };
-    let signature_hex = response
-        .get("result")
-        .and_then(|r| r.get("signature"))
-        .and_then(|s| s.as_str());
     let Some(signature_hex) = signature_hex else {
         return Err(format!(
             "{host}:{port} claims identity {claimed_key_hex} in its initialize response but its \
-             tools/call reply carried no signature to prove it -- refusing to trust an unproven \
-             claim"
+             reply carried no signature to prove it -- refusing to trust an unproven claim"
         ));
     };
 
@@ -295,4 +326,102 @@ pub fn call_tool(
              expected, use \"/trust forget {peer_id}\" and try again."
         )),
     }
+}
+
+/// The real outbound half: calling a real, already-known MCP endpoint's `tools/call` -- another
+/// Hyperion instance's own `/mcp-server`, or any other real MCP-over-HTTP server. Not discovery
+/// (the caller names the host/port). Performs a real `initialize` round trip first via
+/// [`fetch_claimed_key`] -- purely to fetch a real identity claim, if the peer makes one -- so
+/// this is now a real, if still narrow, two-call client handshake, not the single bare
+/// `tools/call` this function used to send alone. See [`verify_and_finalize`] for the identity
+/// check itself.
+pub fn call_tool(
+    host: &str,
+    port: u16,
+    tool_name: &str,
+    arguments: Value,
+    trust_store: &mut PeerTrustStore,
+) -> Result<String, String> {
+    let claimed_key_hex = fetch_claimed_key(host, port)?;
+
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": tool_name, "arguments": arguments},
+    });
+    let response_body = crate::http_client::post(host, port, "/", &request.to_string())?;
+    let response: Value = serde_json::from_str(&response_body)
+        .map_err(|e| format!("the response wasn't valid JSON: {e} (got: {response_body:?})"))?;
+    if let Some(error) = response.get("error") {
+        return Err(format!("the remote server returned a real error: {error}"));
+    }
+    let text = response
+        .get("result")
+        .and_then(|r| r.get("content"))
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or(&response_body)
+        .to_string();
+    let signature_hex = response
+        .get("result")
+        .and_then(|r| r.get("signature"))
+        .and_then(|s| s.as_str());
+
+    verify_and_finalize(
+        host,
+        port,
+        text,
+        claimed_key_hex,
+        signature_hex,
+        trust_store,
+    )
+}
+
+/// The real outbound half: reading a real, already-known MCP endpoint's `resources/read` --
+/// docs/998-roadmap.md's own named "resources" gap in the MCP spec, closed for the client side
+/// too (see [`resource_definitions`] for the server side). Same real `initialize`-first handshake
+/// and identity check as [`call_tool`] -- see there and [`verify_and_finalize`].
+pub fn read_resource(
+    host: &str,
+    port: u16,
+    uri: &str,
+    trust_store: &mut PeerTrustStore,
+) -> Result<String, String> {
+    let claimed_key_hex = fetch_claimed_key(host, port)?;
+
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "resources/read",
+        "params": {"uri": uri},
+    });
+    let response_body = crate::http_client::post(host, port, "/", &request.to_string())?;
+    let response: Value = serde_json::from_str(&response_body)
+        .map_err(|e| format!("the response wasn't valid JSON: {e} (got: {response_body:?})"))?;
+    if let Some(error) = response.get("error") {
+        return Err(format!("the remote server returned a real error: {error}"));
+    }
+    let text = response
+        .get("result")
+        .and_then(|r| r.get("contents"))
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or(&response_body)
+        .to_string();
+    let signature_hex = response
+        .get("result")
+        .and_then(|r| r.get("signature"))
+        .and_then(|s| s.as_str());
+
+    verify_and_finalize(
+        host,
+        port,
+        text,
+        claimed_key_hex,
+        signature_hex,
+        trust_store,
+    )
 }

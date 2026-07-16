@@ -172,6 +172,9 @@ fn try_control_command(
     if let Some(rest) = trimmed.strip_prefix("/mcp-call ") {
         return ControlOutcome::Handled(vec![mcp_call(rest.trim(), data_dir)]);
     }
+    if let Some(rest) = trimmed.strip_prefix("/mcp-resource ") {
+        return ControlOutcome::Handled(vec![mcp_resource(rest.trim(), data_dir)]);
+    }
     if let Some(rest) = trimmed.strip_prefix("/a2a-call ") {
         return ControlOutcome::Handled(vec![a2a_call(rest.trim(), data_dir)]);
     }
@@ -399,6 +402,32 @@ fn mcp_call(rest: &str, data_dir: &str) -> String {
     match mcp::call_tool(host, port, tool, arguments, &mut trust_store) {
         Ok(text) => text,
         Err(e) => format!("I couldn't call that MCP tool: {e}"),
+    }
+}
+
+/// `/mcp-resource <host> <port> <uri>` -- the real outbound half of docs/998-roadmap.md's own
+/// named "resources" MCP gap: reads a real, already-known MCP endpoint's `resources/read`
+/// (e.g. `hyperion://graph`, `hyperion://recall`), checked against the same shared peer identity
+/// `/mcp-call` uses -- see [`mcp::read_resource`]'s own doc comment.
+fn mcp_resource(rest: &str, data_dir: &str) -> String {
+    let mut parts = rest.splitn(3, ' ');
+    let (Some(host), Some(port_str), Some(uri)) = (parts.next(), parts.next(), parts.next()) else {
+        return "\"/mcp-resource\" needs <host> <port> <uri>, e.g. \"/mcp-resource 127.0.0.1 \
+                8765 hyperion://graph\""
+            .to_string();
+    };
+    let Ok(port) = port_str.parse::<u16>() else {
+        return format!("\"{port_str}\" isn't a real port number.");
+    };
+    let mut trust_store = match hyperion_console::peer_trust::PeerTrustStore::open_or_create(
+        peer_trust_path(data_dir),
+    ) {
+        Ok(store) => store,
+        Err(e) => return format!("I couldn't open the real peer trust store: {e}"),
+    };
+    match mcp::read_resource(host, port, uri, &mut trust_store) {
+        Ok(text) => text,
+        Err(e) => format!("I couldn't read that MCP resource: {e}"),
     }
 }
 
