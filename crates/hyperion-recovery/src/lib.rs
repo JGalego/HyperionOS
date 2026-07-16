@@ -56,14 +56,18 @@
 //!   (`restore_objects`, `undo`, `redo`, `recover_from_crash`), not a
 //!   one-line wiring fix — worth its own careful pass rather than folding
 //!   into an unrelated change.
-//! - **Un-creating a freshly created object.** ~~`hyperion-knowledge-graph`
-//!   has no node-delete operation (only edges tombstone)~~ — that primitive is now real
-//!   (`hyperion_knowledge_graph::KnowledgeGraph::delete_node`, tombstones a node exactly the way
-//!   `unlink` already tombstones an edge), but this crate doesn't call it yet: a recovery-point
-//!   snapshot of an object that didn't exist yet is still recorded as `None` and is simply not
-//!   restorable — this crate's `restore` reverts *modifications* to pre-existing objects, never
-//!   *creations*. Wiring `restore` to call the real `delete_node` for exactly this case remains
-//!   separate, real follow-up work this bullet does not itself close.
+//! - ~~**Un-creating a freshly created object.**~~ Now real: `apply_snapshot` — shared by
+//!   `restore_objects`/`restore_to` and `redo` — calls the real
+//!   `hyperion_knowledge_graph::KnowledgeGraph::delete_node` for exactly this case (a `None`
+//!   snapshot entry, meaning the object didn't exist before the state being restored to), so
+//!   undoing a Create genuinely un-creates it instead of leaving it behind forever
+//!   (`GraphError::NotFound` is treated as a benign no-op, not an error — something else may have
+//!   already deleted the same object by the time this snapshot applies). One real, honestly-named
+//!   asymmetry this doesn't close: `redo`'s own reverse direction re-creates via `put_node`,
+//!   which — correctly, mirroring the CRDT tombstone-never-silently-resurrected invariant edges
+//!   already have — can never resurrect a node this same path just tombstoned. Redoing an undone
+//!   Create therefore still leaves the object gone; a real, separate limitation, not silently
+//!   broken.
 //! - **`InverseOperation`/symbolic inverses** (docs/33 §4's
 //!   `ActionRecord.inverse_op`) — every "inverse" here is the literal
 //!   pre-action snapshot restored verbatim, not a separately-declared

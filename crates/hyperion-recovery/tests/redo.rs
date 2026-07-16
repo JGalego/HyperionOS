@@ -171,3 +171,53 @@ fn a_conflicting_commit_after_undo_blocks_a_silent_redo() {
         "a blocked redo must never overwrite the conflicting data"
     );
 }
+
+/// A real, honestly-named asymmetry: undoing a Create now really un-creates the object
+/// (`KnowledgeGraph::delete_node`'s own tombstone), but `redo`'s own reverse direction still
+/// re-creates via `put_node` -- which, correctly, can never resurrect a node that same path just
+/// tombstoned (the identical "an insert never silently resurrects a deliberate deletion"
+/// invariant edges already have). Redoing an undone Create is therefore still a real, separate
+/// limitation, not silently broken -- this test documents exactly that, rather than leaving it
+/// undiscovered.
+#[test]
+fn redoing_an_undone_create_cannot_resurrect_the_tombstoned_object() {
+    let (monitor, root, recovery, graph) = setup();
+    let future_id = hyperion_storage::ObjectId(999);
+    let rp = recovery
+        .recovery_point_create(&monitor, &root, Trigger::UserRequested, &[future_id], 1_000)
+        .unwrap();
+    let action = recovery.record_action_started(rp, vec![future_id], None, "create", 1_000);
+    graph
+        .put_node(
+            &monitor,
+            &root,
+            Some(future_id),
+            "Note",
+            None,
+            serde_json::json!({"text": "brand new"}),
+        )
+        .unwrap();
+    recovery.record_action_committed(action).unwrap();
+
+    recovery
+        .undo(&monitor, &root, UndoScope::SingleAction(action))
+        .unwrap();
+    assert!(matches!(
+        graph.get(&monitor, &root, future_id),
+        Err(hyperion_knowledge_graph::GraphError::NotFound)
+    ));
+
+    let redo_receipt = recovery
+        .redo(&monitor, &root, UndoScope::SingleAction(action))
+        .unwrap();
+    assert!(matches!(redo_receipt, RedoReceipt::Targeted { .. }));
+
+    // The real, known limitation: put_node cannot un-tombstone, so the object stays gone.
+    assert!(
+        matches!(
+            graph.get(&monitor, &root, future_id),
+            Err(hyperion_knowledge_graph::GraphError::NotFound)
+        ),
+        "redo cannot resurrect a tombstoned node -- a real, separately-named limitation"
+    );
+}

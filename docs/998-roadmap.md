@@ -3088,3 +3088,23 @@ next step on any of these is a design pass, not code.
   neighbor; the tombstone surviving a real WAL replay (`KnowledgeGraph::open` twice); and a plain
   `put_node` update never resurrecting one. All 25 pre-existing `hyperion-knowledge-graph` tests
   pass unchanged.
+
+- **`hyperion-recovery`'s "un-creating a freshly created object," landed (2026-07-16)** (this
+  crate's own named gap, closed the moment `hyperion-knowledge-graph::KnowledgeGraph::delete_node`
+  landed above: "a recovery-point snapshot of an object that didn't exist yet is recorded as
+  `None` and is simply not restorable"). `apply_snapshot` — the shared helper both
+  `restore_objects`/`restore_to` and `redo` call — now calls the real `delete_node` for exactly a
+  `None` snapshot entry, genuinely un-creating the object instead of silently leaving it behind;
+  `GraphError::NotFound` is treated as a benign no-op (something else may have already deleted the
+  same object by the time this snapshot applies), never a hard failure. One real, honestly-named
+  asymmetry this doesn't close: `redo`'s own reverse direction re-creates via `put_node`, which —
+  correctly, mirroring the CRDT tombstone-never-silently-resurrected invariant edges already have
+  — can never resurrect a node this same path just tombstoned, so redoing an undone Create still
+  leaves the object gone. A pre-existing test (`a_recovery_point_over_a_not_yet_created_object_
+  cannot_undo_its_creation`) asserted the *old*, broken behavior directly — renamed and rewritten
+  to assert the new, correct one (a real `GraphError::NotFound` after undo, not "still there").
+  Proven further with a new test in `redo.rs` that documents the real asymmetry: redoing an
+  undone Create reports `Targeted` but the object genuinely stays gone, not silently and
+  incorrectly resurrected. All other pre-existing `hyperion-recovery` tests, plus
+  `hyperion-coordination`'s own `recovery_bridge.rs` (whose real task-result nodes are always
+  fresh creates — exactly this code path), pass unchanged.

@@ -229,7 +229,7 @@ fn undo_scope_global_undoes_every_action_sharing_a_recovery_point() {
 }
 
 #[test]
-fn a_recovery_point_over_a_not_yet_created_object_cannot_undo_its_creation() {
+fn a_recovery_point_over_a_not_yet_created_object_really_undoes_its_creation() {
     let (monitor, root, recovery, graph) = setup();
     let future_id = hyperion_storage::ObjectId(999);
     let rp = recovery
@@ -252,10 +252,13 @@ fn a_recovery_point_over_a_not_yet_created_object_cannot_undo_its_creation() {
         .undo(&monitor, &root, UndoScope::SingleAction(action))
         .unwrap();
 
-    // The object still exists — creation cannot be undone (no node-delete
-    // in the Knowledge Graph), documented as a limitation.
-    let still_there = graph.get(&monitor, &root, created).unwrap();
-    assert_eq!(still_there.metadata["text"], serde_json::json!("brand new"));
+    // `hyperion-knowledge-graph`'s own previously-named "no node-delete operation" gap is now
+    // real: undoing a Create genuinely un-creates the object rather than leaving it behind.
+    let result = graph.get(&monitor, &root, created);
+    assert!(
+        matches!(result, Err(hyperion_knowledge_graph::GraphError::NotFound)),
+        "got: {result:?}"
+    );
 }
 
 #[test]

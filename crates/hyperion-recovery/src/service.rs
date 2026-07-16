@@ -223,12 +223,19 @@ impl RecoveryService {
         Ok(())
     }
 
-    /// Writes every `Some` entry of `snapshot` back to the graph verbatim,
-    /// restricted to `objects` — shared by [`Self::restore_objects`] (a
-    /// `RecoveryPointId`-keyed "before" snapshot) and [`Self::redo`] (an
-    /// `ActionId`-keyed "after" snapshot). A `None` entry is left alone,
-    /// same limitation both callers already document: this can't un-create
-    /// an object `hyperion-knowledge-graph` has no delete operation for.
+    /// Writes every `Some` entry of `snapshot` back to the graph verbatim, restricted to
+    /// `objects` — shared by [`Self::restore_objects`] (a `RecoveryPointId`-keyed "before"
+    /// snapshot) and [`Self::redo`] (an `ActionId`-keyed "after" snapshot). A `None` entry means
+    /// this node didn't exist before the state being restored to — `hyperion-knowledge-graph`'s
+    /// own previously-named "no delete operation" gap is now real
+    /// ([`hyperion_knowledge_graph::KnowledgeGraph::delete_node`]), so restoring to "didn't exist"
+    /// now genuinely un-creates it instead of leaving a stale object behind forever. `NotFound` is
+    /// ignored, not an error: something else may have already deleted this same node by the time
+    /// this snapshot is applied, which isn't a real failure of this restore. One real asymmetry
+    /// this doesn't close: [`Self::redo`]'s own reverse direction re-creates via `put_node`, which
+    /// (correctly, matching the CRDT tombstone-never-silently-resurrected invariant edges already
+    /// have) can never resurrect a node this same path just tombstoned — redoing an undone Create
+    /// remains a separate, real limitation.
     fn apply_snapshot(
         &self,
         monitor: &CapabilityMonitor,
@@ -237,15 +244,21 @@ impl RecoveryService {
         objects: &[NodeId],
     ) -> Result<(), RecoveryError> {
         for (node_id, state) in snapshot.iter().filter(|(id, _)| objects.contains(id)) {
-            if let Some(record) = state {
-                self.graph.put_node(
-                    monitor,
-                    token,
-                    Some(*node_id),
-                    record.object_type.clone(),
-                    record.embedding.clone(),
-                    record.metadata.clone(),
-                )?;
+            match state {
+                Some(record) => {
+                    self.graph.put_node(
+                        monitor,
+                        token,
+                        Some(*node_id),
+                        record.object_type.clone(),
+                        record.embedding.clone(),
+                        record.metadata.clone(),
+                    )?;
+                }
+                None => match self.graph.delete_node(monitor, token, *node_id) {
+                    Ok(()) | Err(GraphError::NotFound) => {}
+                    Err(e) => return Err(e.into()),
+                },
             }
         }
         Ok(())
