@@ -189,6 +189,52 @@ impl KnowledgeGraph {
         Ok(())
     }
 
+    /// docs/28 §"Garbage collection / compaction"'s own named gap for this crate: "inferred
+    /// edges below a confidence threshold and past their provenance TTL are pruned... explicit
+    /// edges... are never auto-pruned." [`crate::decay::effective_edge_weight`] was the real,
+    /// on-demand *read* half of this; this is the real *sweep* — every non-tombstoned
+    /// [`EdgeOrigin::Inferred`] edge whose current [`crate::decay::effective_edge_weight`] has
+    /// fallen below `threshold` is tombstoned for real via [`Self::unlink`] (the same real,
+    /// WAL-backed, undoable-within-a-retention-window tombstone every other deletion in this
+    /// crate already uses) — an [`EdgeOrigin::Explicit`] edge is never even considered,
+    /// regardless of `threshold` or `now`, matching docs/28's own explicit carve-out. Named
+    /// simplification: `EdgeRecord` has no separate provenance-TTL field distinct from
+    /// `last_confirmed_at`'s own tau-decay, so the confidence-threshold check alone is this
+    /// sweep's one real mechanism — the same "one real, general mechanism, not two separate
+    /// ones" shape this session's other compaction sweeps already established, rather than
+    /// inventing a second, redundant TTL clock this crate's own data model doesn't carry.
+    /// Returns every `EdgeId` this call really pruned, so a caller can log or audit exactly what
+    /// a sweep did — never a silent bulk operation with no visible effect.
+    pub fn prune_decayed_edges(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        threshold: f32,
+        now: u64,
+    ) -> Result<Vec<EdgeId>, GraphError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+
+        let to_prune: Vec<EdgeId> = {
+            let index = self.index.lock().unwrap();
+            index
+                .edges
+                .iter()
+                .filter(|(_, edge)| {
+                    !edge.tombstone
+                        && edge.origin == EdgeOrigin::Inferred
+                        && crate::decay::effective_edge_weight(edge, now) < threshold
+                })
+                .map(|(&id, _)| id)
+                .collect()
+        };
+
+        for &id in &to_prune {
+            self.unlink(monitor, token, id)?;
+        }
+
+        Ok(to_prune)
+    }
+
     /// `graph.link` for a fresh node — docs/09 §6 has no separate "create
     /// node" verb (nodes are implicitly created by writing a Semantic
     /// Object elsewhere in the system); this crate exposes it explicitly

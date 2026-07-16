@@ -52,6 +52,15 @@
 //!   own tau); an [`types::EdgeOrigin::Explicit`] edge never decays at all — "a hypothesis is
 //!   allowed to fade," an explicit fact is not. A pure, recompute-from-scratch function (mirrors
 //!   `decay_score`'s own shape), not a batch job overwriting `weight` in place.
+//!   ~~Pruning below a confidence threshold~~ (2026-07-16) — now real too:
+//!   [`graph::KnowledgeGraph::prune_decayed_edges`] is docs/28's own paired "Garbage collection /
+//!   compaction" gap for this crate ("inferred edges below a confidence threshold... are pruned
+//!   ... explicit edges... are never auto-pruned") — every non-tombstoned `Inferred` edge whose
+//!   real `effective_edge_weight` has fallen below a caller-chosen threshold is tombstoned for
+//!   real via the existing [`graph::KnowledgeGraph::unlink`], never an `Explicit` edge regardless
+//!   of threshold. Named simplification: no separate provenance-TTL field exists on
+//!   `EdgeRecord` distinct from `last_confirmed_at`'s own tau-decay, so the confidence check
+//!   alone is this sweep's one real mechanism.
 //! - ~~**Per-object ACL enforcement.**~~ Now real for [`graph::KnowledgeGraph::query`]/
 //!   [`graph::KnowledgeGraph::traverse`] — Phase 8's hardening pass
 //!   (docs/41-implementation-phases.md's own framing: "minimal versions... already exist from

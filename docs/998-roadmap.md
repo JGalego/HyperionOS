@@ -3265,3 +3265,25 @@ next step on any of these is a design pass, not code.
   `ApiError::NoEligibleImplementation`, since it was the only registered candidate); after a real
   `ConsentLedger::request` grant scoped to that exact capability, the candidate becomes eligible
   and dispatch succeeds. All pre-existing `hyperion-api-gateway` tests pass unchanged.
+
+- **`hyperion-knowledge-graph`'s inferred-edge pruning sweep, landed (2026-07-16)** (docs/28
+  §"Garbage collection / compaction"'s own named gap for this crate: "inferred edges below a
+  confidence threshold... are pruned... explicit edges... are never auto-pruned" — this crate's
+  own `effective_edge_weight` was the real, on-demand decay *read*, but nothing ever swept a
+  decayed edge into a real tombstone). New `KnowledgeGraph::prune_decayed_edges(monitor, token,
+  threshold, now) -> Result<Vec<EdgeId>, GraphError>`: every non-tombstoned `Inferred` edge whose
+  current `effective_edge_weight` has fallen below `threshold` is tombstoned for real via the
+  existing `unlink` (the same real, WAL-backed, undoable-within-a-retention-window tombstone
+  every other deletion in this crate already uses) — an `Explicit` edge is never even considered,
+  regardless of `threshold` or `now`, matching docs/28's own explicit carve-out. Named
+  simplification: `EdgeRecord` has no separate provenance-TTL field distinct from
+  `last_confirmed_at`'s own tau-decay, so the confidence-threshold check alone is this sweep's
+  one real mechanism — the same "one real, general mechanism, not two separate ones" shape this
+  session's other compaction sweeps (`hyperion-recovery`/`hyperion-storage`) already established.
+  Proven with 5 new tests in `tests/edge_pruning.rs`: a deeply decayed `Inferred` edge is
+  tombstoned and never resurfaced by `dump`; a freshly confirmed one survives untouched; an
+  `Explicit` edge is never pruned even under an extreme threshold and far-future `now`;
+  idempotence (a second pass over an already-pruned edge evicts nothing new); and durability
+  across a real `KnowledgeGraph::open` reopen (the prune survives replay, not just the live
+  in-memory index). All pre-existing `hyperion-knowledge-graph` tests, including the existing
+  `edge_decay.rs` suite, pass unchanged.
