@@ -26,8 +26,23 @@ pub(crate) struct GraphIndex {
 
 impl GraphIndex {
     pub(crate) fn rebuild(path: &std::path::Path) -> Result<Self, hyperion_storage::StorageError> {
+        Self::rebuild_from(Wal::replay(path)?)
+    }
+
+    /// As [`Self::rebuild`], but replays a real, per-record encrypted WAL (see
+    /// [`crate::graph::KnowledgeGraph::open_encrypted`]) under `key`.
+    pub(crate) fn rebuild_encrypted(
+        path: &std::path::Path,
+        key: [u8; 32],
+    ) -> Result<Self, hyperion_storage::StorageError> {
+        Self::rebuild_from(Wal::replay_encrypted(path, key)?)
+    }
+
+    fn rebuild_from(
+        records: Vec<hyperion_storage::WalRecord>,
+    ) -> Result<Self, hyperion_storage::StorageError> {
         let mut index = GraphIndex::default();
-        for wal_record in Wal::replay(path)? {
+        for wal_record in records {
             if let Ok(record) = serde_json::from_value::<Record>(wal_record.metadata) {
                 index.apply(wal_record.object_id, record);
             }

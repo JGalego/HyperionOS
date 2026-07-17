@@ -357,10 +357,15 @@ impl ConsoleSession {
         let kg_path = PathBuf::from(data_dir).join("console_knowledge_graph.jsonl");
         let mut monitor = CapabilityMonitor::new();
         let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
-        let graph = Arc::new(KnowledgeGraph::open(&kg_path)?);
 
         let keystore = Keystore::open_or_create(&data_dir.join("device.key"))
             .expect("open or create this session's real device signing key");
+        // Real encryption at rest (hyperion-storage's own named "no encryption at rest" gap,
+        // closed 2026-07-17): keyed by this session's own device identity via
+        // `Keystore::derive_key`, so a Knowledge Graph left on a real, unmounted disk is never
+        // plaintext -- no new passphrase or key-management UX for the person using this console.
+        let graph = Arc::new(KnowledgeGraph::open_encrypted(&kg_path, &keystore)?);
+
         let (runtime, current_backend) = Self::build_ai_runtime(&keystore);
         let ai_runtime = Arc::new(runtime);
 

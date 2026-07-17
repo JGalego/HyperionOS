@@ -49,14 +49,43 @@ pub struct KnowledgeGraph {
     events: Option<Arc<EventBus>>,
 }
 
+/// Domain-separates this graph's derived WAL encryption key from any other future caller of
+/// [`hyperion_crypto::Keystore::derive_key`] -- see [`KnowledgeGraph::open_encrypted`].
+const WAL_KEY_DERIVATION_CONTEXT: &str = "hyperion.knowledge-graph.wal.v1";
+
 impl KnowledgeGraph {
     /// Opens (or creates) the graph at `path`. Rebuilds the adjacency/vector
     /// index by replaying the same WAL `hyperion-storage` itself replays —
     /// no separately persisted index.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, GraphError> {
+        Self::open_impl(path, None)
+    }
+
+    /// As [`Self::open`], but the underlying WAL is real, per-record encrypted at rest (see
+    /// `hyperion_storage::Wal`'s own doc comment) under a key derived from `device_key`'s own
+    /// identity via [`hyperion_crypto::Keystore::derive_key`] -- no new passphrase or
+    /// key-management UX, matching `hyperion_crypto::SecretStore`'s own established pattern. A
+    /// caller opening the same graph later with a *different* `device_key` recovers an empty
+    /// graph, never wrong or garbage data -- the same fail-closed behavior
+    /// `StorageEngine::open_encrypted` itself already guarantees.
+    pub fn open_encrypted(
+        path: impl AsRef<Path>,
+        device_key: &hyperion_crypto::Keystore,
+    ) -> Result<Self, GraphError> {
+        let key = device_key.derive_key(WAL_KEY_DERIVATION_CONTEXT);
+        Self::open_impl(path, Some(key))
+    }
+
+    fn open_impl(path: impl AsRef<Path>, key: Option<[u8; 32]>) -> Result<Self, GraphError> {
         let path: PathBuf = path.as_ref().to_path_buf();
-        let storage = StorageEngine::open(&path)?;
-        let index = GraphIndex::rebuild(&path)?;
+        let storage = match key {
+            Some(key) => StorageEngine::open_encrypted(&path, key)?,
+            None => StorageEngine::open(&path)?,
+        };
+        let index = match key {
+            Some(key) => GraphIndex::rebuild_encrypted(&path, key)?,
+            None => GraphIndex::rebuild(&path)?,
+        };
         Ok(KnowledgeGraph {
             storage,
             index: Mutex::new(index),

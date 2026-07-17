@@ -7,6 +7,10 @@ description = "Hyperion L2/L3 storage engine core: WAL-backed object store with 
 
 [dependencies]
 hyperion-capability = { workspace = true }
+# Real per-record AEAD encryption at rest for the WAL -- see src/wal.rs's own doc comment on
+# Wal::open_for_append_encrypted/replay_encrypted, and hyperion_crypto::SealingKey's own doc
+# comment on why this crate is its first real caller.
+hyperion-crypto = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

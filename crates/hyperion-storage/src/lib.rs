@@ -40,6 +40,16 @@
 //! concurrency via compare-and-swap on the version pointer, full
 //! crash-consistent recovery by replay, and real version-chain compaction — the properties
 //! docs/28 §Testing Strategy calls out first.
+//!
+//! ~~**Encryption at rest**~~ (2026-07-17, [16 — Privacy Architecture](../16-privacy-architecture.md)
+//! Phase 8's own CryptoShred prerequisite) — now real and opt-in: [`engine::StorageEngine::
+//! open_encrypted`]/[`wal::Wal::open_for_append_encrypted`]/[`wal::Wal::replay_encrypted`] seal
+//! each individual WAL record under its own fresh nonce via `hyperion_crypto::SealingKey` (never
+//! one whole-file reseal per append), keyed by a caller-supplied 32-byte key -- typically
+//! `hyperion_crypto::Keystore::derive_key`, the same device-bound, no-new-passphrase pattern
+//! `hyperion-crypto::secret_store::SecretStore` already established. The plain, unencrypted
+//! `open`/`open_for_append`/`replay` path is unchanged and still every existing caller's default;
+//! this is additive, not a breaking format change.
 
 mod engine;
 mod types;

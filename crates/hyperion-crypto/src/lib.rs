@@ -39,6 +39,12 @@
 //! `open`'s original one-shared-`Keystore` assumption -- closing that module's own previously-
 //! named scope boundary for real, rather than leaving it named forever.
 //!
+//! [`sealed_stream::SealingKey`] (2026-07-17, `hyperion-storage`'s own named "no encryption at
+//! rest" gap) generalizes `SecretStore`'s seal/open pattern to many independent messages under
+//! one key, rather than one whole-file blob -- `hyperion-storage::Wal`'s own real per-record
+//! encryption at rest is its first real caller, sealing each Write-Ahead Log record under its own
+//! fresh nonce rather than re-sealing the whole growing file on every append.
+//!
 //! Deliberately deferred, and why:
 //! - **TPM/secure-enclave-backed sealing.** This sandbox has no TPM device (`/dev/tpm*` does not
 //!   exist here) -- confirmed directly, not assumed. docs/34's own text already frames hardware
@@ -63,6 +69,7 @@ use rand_core::OsRng;
 
 pub mod key_exchange;
 pub mod publisher_registry;
+pub mod sealed_stream;
 pub mod secret_store;
 pub mod sync_envelope;
 
@@ -70,6 +77,7 @@ pub use blake3::Hash;
 pub use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 pub use key_exchange::diffie_hellman;
 pub use publisher_registry::PublisherRegistry;
+pub use sealed_stream::{SealError, SealingKey};
 pub use secret_store::{SecretStore, SecretStoreError};
 pub use sync_envelope::{SyncEnvelope, SyncEnvelopeError};
 pub use x25519_dalek::PublicKey as X25519PublicKey;

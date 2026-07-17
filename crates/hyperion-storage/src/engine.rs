@@ -38,6 +38,7 @@ struct Inner {
 pub struct StorageEngine {
     inner: Mutex<Inner>,
     path: PathBuf,
+    encryption_key: Option<[u8; 32]>,
 }
 
 impl StorageEngine {
@@ -46,8 +47,22 @@ impl StorageEngine {
     /// restart, the engine replays the WAL... a standard redo-log
     /// recovery."
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
+        Self::open_impl(path, None)
+    }
+
+    /// As [`Self::open`], but the WAL is encrypted at rest under `key` (see [`crate::wal::Wal`]'s
+    /// own doc comment) -- both the initial replay and every subsequent append/compact use the
+    /// same real per-record sealing.
+    pub fn open_encrypted(path: impl AsRef<Path>, key: [u8; 32]) -> Result<Self, StorageError> {
+        Self::open_impl(path, Some(key))
+    }
+
+    fn open_impl(path: impl AsRef<Path>, key: Option<[u8; 32]>) -> Result<Self, StorageError> {
         let path = path.as_ref().to_path_buf();
-        let records = Wal::replay(&path)?;
+        let records = match key {
+            Some(key) => Wal::replay_encrypted(&path, key)?,
+            None => Wal::replay(&path)?,
+        };
 
         let mut metadata = HashMap::new();
         let mut version_pointer = HashMap::new();
@@ -70,7 +85,10 @@ impl StorageEngine {
             next_version_id = next_version_id.max(record.new_version.0 + 1);
         }
 
-        let wal = Wal::open_for_append(&path)?;
+        let wal = match key {
+            Some(key) => Wal::open_for_append_encrypted(&path, key)?,
+            None => Wal::open_for_append(&path)?,
+        };
 
         Ok(StorageEngine {
             inner: Mutex::new(Inner {
@@ -82,6 +100,7 @@ impl StorageEngine {
                 next_version_id,
             }),
             path,
+            encryption_key: key,
         })
     }
 
@@ -249,7 +268,10 @@ impl StorageEngine {
             })
             .collect();
 
-        inner.wal = Wal::compact(&self.path, &new_records)?;
+        inner.wal = match self.encryption_key {
+            Some(key) => Wal::compact_encrypted(&self.path, &new_records, key)?,
+            None => Wal::compact(&self.path, &new_records)?,
+        };
 
         let before = inner.version_chain.len();
         let heads: HashSet<VersionId> = inner.version_pointer.values().copied().collect();
