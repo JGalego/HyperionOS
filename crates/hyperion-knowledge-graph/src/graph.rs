@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
+use hyperion_events::{EventBus, EventPayload, SubjectId, Topic, TopicKind};
 use hyperion_storage::{StorageEngine, VersionId};
 
 use crate::index::GraphIndex;
@@ -40,6 +41,12 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 pub struct KnowledgeGraph {
     storage: StorageEngine,
     index: Mutex<GraphIndex>,
+    /// docs/09's own object-changed notification, cited as [31 — Event
+    /// System](../31-event-system.md)'s own motivating example ("Knowledge
+    /// Graph object-changed notifications"): real, optional (the same
+    /// `Option<Arc<...>>` shape this workspace uses for every other
+    /// optional backend) once [`Self::with_events`] wires it.
+    events: Option<Arc<EventBus>>,
 }
 
 impl KnowledgeGraph {
@@ -53,7 +60,49 @@ impl KnowledgeGraph {
         Ok(KnowledgeGraph {
             storage,
             index: Mutex::new(index),
+            events: None,
         })
+    }
+
+    /// Opts this graph into docs/31-event-system.md's real broadcast bus: every real write
+    /// ([`Self::put_node`]/[`Self::link`]/[`Self::unlink`]/[`Self::delete_node`]) publishes a
+    /// real `ObjectChanged` event under the written record's own Trust-Boundary owner —
+    /// `hyperion-semantic-fs`'s own live `VirtualFolder` invalidation is the first real
+    /// consumer, but this is a general-purpose capability, not scoped to that one caller.
+    pub fn with_events(mut self, events: Arc<EventBus>) -> Self {
+        self.events = Some(events);
+        self
+    }
+
+    fn publish_changed(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        subject_id: u64,
+        owner: u64,
+    ) {
+        let Some(bus) = &self.events else {
+            return;
+        };
+        let topic = Topic::new(
+            TopicKind::ObjectChanged,
+            SubjectId::Object(subject_id),
+            "kg.object_changed.v1",
+        );
+        let payload = EventPayload::Inline(serde_json::json!({
+            "object_id": subject_id,
+            "changed_at": now(),
+        }));
+        if let Err(e) = bus.publish(
+            monitor,
+            token,
+            TrustBoundaryId(owner),
+            topic,
+            payload,
+            Vec::new(),
+        ) {
+            eprintln!("hyperion-knowledge-graph: failed to publish object-changed event: {e}");
+        }
     }
 
     fn require(
@@ -167,6 +216,7 @@ impl KnowledgeGraph {
             self.storage
                 .put_object(monitor, token, id_arg, expected_version, payload)?;
         index.apply(assigned_id, Record::Edge(record));
+        self.publish_changed(monitor, token, assigned_id.0, owner);
 
         Ok(if is_update {
             LinkOutcome::Updated(assigned_id)
@@ -215,6 +265,7 @@ impl KnowledgeGraph {
             payload,
         )?;
         index.apply(edge_id, Record::Edge(record));
+        self.publish_changed(monitor, token, edge_id.0, caller_boundary);
         Ok(())
     }
 
@@ -322,6 +373,7 @@ impl KnowledgeGraph {
             self.storage
                 .put_object(monitor, token, node_id, expected_version, payload)?;
         index.apply(assigned_id, Record::Node(record));
+        self.publish_changed(monitor, token, assigned_id.0, caller_boundary);
         Ok(assigned_id)
     }
 
@@ -392,6 +444,7 @@ impl KnowledgeGraph {
             payload,
         )?;
         index.apply(node_id, Record::Node(record));
+        self.publish_changed(monitor, token, node_id.0, caller_boundary);
         Ok(())
     }
 

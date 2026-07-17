@@ -30,6 +30,13 @@
 //! matched capability still goes through the exact same invocation/consent machinery every
 //! other Capability already does.
 //!
+//! [`KnowledgeGraph::with_events`] closes docs/31-event-system.md's own motivating example
+//! ("09 — Knowledge Graph object-changed notifications"): every real write
+//! ([`KnowledgeGraph::put_node`]/[`KnowledgeGraph::link`]/[`KnowledgeGraph::unlink`]/
+//! [`KnowledgeGraph::delete_node`]) publishes a real `ObjectChanged` event under that write's own
+//! Trust-Boundary owner once wired — `hyperion-semantic-fs`'s live `VirtualFolder` invalidation
+//! is the first real consumer.
+//!
 //! Explicitly deferred, and why, matching the scoping this workspace already
 //! uses (see `hyperion-storage`'s crate doc for the same pattern):
 //!

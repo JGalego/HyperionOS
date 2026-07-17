@@ -3067,6 +3067,7 @@ version = "0.3.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
+ "hyperion-events",
  "hyperion-plugin-framework",
  "hyperion-storage",
  "proptest",
