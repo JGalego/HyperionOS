@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
@@ -109,6 +109,13 @@ pub enum AgentError {
 pub struct AgentRuntime {
     instances: Mutex<HashMap<u64, AgentInstance>>,
     checkpoints: Mutex<HashMap<u64, AgentCheckpoint>>,
+    /// A real, monotonic backoff clock, keyed by `instance_id` -- [`QuotaState::suspended_at`]
+    /// is epoch-second display metadata only now, since gating an auto-resume decision on
+    /// [`now`]'s own whole-second truncation let a real backoff window appear to have already
+    /// elapsed after up to just under one second *less* real wait than [`backoff_duration`]
+    /// actually requires (two independent floors can each round toward each other). [`Instant`]
+    /// has no such truncation and isn't affected by wall-clock adjustments either.
+    suspended_since: Mutex<HashMap<u64, Instant>>,
     next_id: AtomicU64,
     /// docs/04's real unified Scheduler, backing [`Self::invoke`]'s quota
     /// gate — see this crate's doc comment on why admission is delegated
@@ -218,6 +225,7 @@ impl AgentRuntime {
         AgentRuntime {
             instances: Mutex::new(HashMap::new()),
             checkpoints: Mutex::new(HashMap::new()),
+            suspended_since: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             scheduler: Mutex::new(scheduler),
             next_task_id: AtomicU64::new(1),
@@ -471,6 +479,10 @@ impl AgentRuntime {
                 if instance.quota.consecutive_failures >= CIRCUIT_BREAKER_THRESHOLD {
                     instance.state = LifecycleState::Suspended;
                     instance.quota.suspended_at = Some(now());
+                    self.suspended_since
+                        .lock()
+                        .unwrap()
+                        .insert(instance_id, Instant::now());
                     instance.quota.times_suspended += 1;
                     instance.quota.consecutive_successes_since_resume = 0;
                     Self::audit(
@@ -551,13 +563,20 @@ impl AgentRuntime {
             .ok_or(AgentError::NotFound)?;
 
         if instance.state == LifecycleState::Suspended {
-            let elapsed = now().saturating_sub(instance.quota.suspended_at.unwrap_or(0));
             let required = backoff_duration(instance.quota.times_suspended);
-            if elapsed >= required {
+            let elapsed = self
+                .suspended_since
+                .lock()
+                .unwrap()
+                .get(&instance_id)
+                .map(Instant::elapsed)
+                .unwrap_or(std::time::Duration::MAX);
+            if elapsed >= std::time::Duration::from_secs(required) {
                 // A real path back: auto-resume, for real, rather than staying stuck until
                 // something external intervenes -- docs/998-roadmap.md's Self-Sustaining pillar.
                 instance.state = LifecycleState::Bound;
                 instance.quota.suspended_at = None;
+                self.suspended_since.lock().unwrap().remove(&instance_id);
                 Self::audit(
                     instance,
                     "auto_resumed_after_backoff",
@@ -572,7 +591,7 @@ impl AgentRuntime {
                     instance.quota.times_suspended,
                 );
             } else {
-                let remaining = required - elapsed;
+                let remaining = required.saturating_sub(elapsed.as_secs());
                 return Err(AgentError::InvalidState(format!(
                     "still recovering from a recent run of failures -- try again in {remaining}s"
                 )));

@@ -57,9 +57,13 @@ pub struct QuotaState {
     pub calls_used_this_window: u32,
     pub max_calls_per_window: u32,
     pub consecutive_failures: u32,
-    /// Real epoch-seconds ([`crate::runtime::now`]) this instance was last suspended, so
-    /// [`crate::AgentRuntime::prepare_invoke`] can tell whether its own adaptive backoff window
-    /// (keyed on [`Self::times_suspended`]) has really elapsed yet. `None` once resumed.
+    /// Real epoch-seconds ([`crate::runtime::now`]) this instance was last suspended --
+    /// informational display/audit metadata only. `None` once resumed. The actual adaptive
+    /// backoff window (keyed on [`Self::times_suspended`]) is gated by
+    /// [`crate::AgentRuntime::prepare_invoke`] against a real monotonic clock kept separately
+    /// (`AgentRuntime::suspended_since`), not this field -- whole-second epoch arithmetic can
+    /// make a window appear to have already elapsed after up to just under one second less real
+    /// wait than it actually requires.
     pub suspended_at: Option<u64>,
     /// docs/998-roadmap.md's Self-Sustaining pillar: this instance's *whole-life* suspension
     /// count, distinct from [`Self::consecutive_failures`] (which already resets to `0` on any
