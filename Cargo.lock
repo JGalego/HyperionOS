@@ -2985,6 +2985,7 @@ dependencies = [
  "hyperion-ai-runtime",
  "hyperion-capability",
  "hyperion-crypto",
+ "hyperion-events",
  "hyperion-knowledge-graph",
  "hyperion-privacy",
  "hyperion-recovery",

@@ -1,13 +1,17 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_events::{
+    BackpressurePolicy, DeliveryClass, EventBus, EventPayload, SubjectId, SubscriptionId, Topic,
+    TopicKind, TopicPattern,
+};
 use hyperion_recovery::RecoveryPointId;
 
 use crate::types::{
     ActionId, Alternative, CalibrationScore, ConfidenceScore, ControlState, EvidenceRef,
-    ExplainabilityError, ExplanationId, ExplanationRecord, ReasoningStep,
+    ExplainabilityError, ExplanationId, ExplanationLookup, ExplanationRecord, ReasoningStep,
 };
 
 /// docs/18 §5's explain-then-commit: a record is assembled *during*
@@ -28,6 +32,13 @@ pub struct ExplanationStore {
     /// Minting every real `action_id` from this one counter, regardless of which owner asked,
     /// makes that collision structurally impossible rather than merely unlikely.
     next_action_id: AtomicU64,
+    /// docs/18 §9's own named "`best_effort_reconstruction` via the Event System (31)" gap:
+    /// real, optional (the same `Option<...>` shape this workspace uses for every other optional
+    /// backend) once [`Self::with_events`] wires it. Holds the id of the one long-lived, Durable,
+    /// kind-wide subscription every record's `begin`/`append_step`/`transition` call publishes an
+    /// event onto — see [`Self::with_events`]'s own doc comment for why one shared subscription,
+    /// not one per record.
+    events: Option<(Arc<EventBus>, SubscriptionId)>,
 }
 
 impl Default for ExplanationStore {
@@ -42,6 +53,68 @@ impl ExplanationStore {
             records: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             next_action_id: AtomicU64::new(1),
+            events: None,
+        }
+    }
+
+    /// Opts this store into docs/31-event-system.md's real broadcast bus, closing this crate's
+    /// own previously-named "no Event System crate exists yet anywhere in this workspace to
+    /// replay from" gap. Opens one long-lived, `AtLeastOnce`/`Durable`,
+    /// `TopicPattern::KindScoped(TopicKind::Custom)` subscription immediately — a single shared
+    /// log every record's `begin`/`append_step`/`transition` call publishes an event onto, not
+    /// one subscription per record, since this store cannot know in advance which id will ever
+    /// need reconstructing. `admin_token` must carry `GRANT` (`hyperion_events::EventBus`'s own
+    /// `KindScoped` authorization rule) — the same elevated, cross-subject visibility a docs/34
+    /// audit sink already needs for the identical reason. Every event is still published under
+    /// its own record's real Trust-Boundary owner (the token that called `begin`); this admin
+    /// subscription only grants this *store* the right to receive them all so it has something to
+    /// replay from later — [`Self::get_or_reconstruct`] re-applies the caller's own
+    /// Trust-Boundary check before ever returning a reconstructed record, exactly like
+    /// [`Self::get`] already does for an authoritative one.
+    pub fn with_events(
+        mut self,
+        monitor: &CapabilityMonitor,
+        admin_token: &CapabilityToken,
+        events: Arc<EventBus>,
+    ) -> Result<Self, ExplainabilityError> {
+        let sub = events
+            .subscribe(
+                monitor,
+                admin_token,
+                admin_token.origin(),
+                TopicPattern::KindScoped(TopicKind::Custom),
+                DeliveryClass::AtLeastOnce,
+                BackpressurePolicy::Durable,
+            )
+            .map_err(|_| ExplainabilityError::Unauthorized)?;
+        self.events = Some((events, sub.id()));
+        Ok(self)
+    }
+
+    fn publish_record_event(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        id: ExplanationId,
+        payload: serde_json::Value,
+    ) {
+        let Some((bus, _)) = &self.events else {
+            return;
+        };
+        let topic = Topic::new(
+            TopicKind::Custom,
+            SubjectId::Object(id),
+            "explainability.record_event.v1",
+        );
+        if let Err(e) = bus.publish(
+            monitor,
+            token,
+            token.origin(),
+            topic,
+            EventPayload::Inline(payload),
+            Vec::new(),
+        ) {
+            eprintln!("hyperion-explainability: failed to publish record event: {e}");
         }
     }
 
@@ -91,6 +164,20 @@ impl ExplanationStore {
         if !trust_boundary_span.contains(&caller_boundary) {
             trust_boundary_span.push(caller_boundary);
         }
+        self.publish_record_event(
+            monitor,
+            token,
+            id,
+            serde_json::json!({
+                "kind": "begin",
+                "action_id": action_id,
+                "triggering_intent_id": triggering_intent_id,
+                "agent_id": agent_id,
+                "capability_ref": capability_ref,
+                "created_at": now,
+                "trust_boundary_span": trust_boundary_span,
+            }),
+        );
         self.records.lock().unwrap().insert(
             id,
             ExplanationRecord {
@@ -136,10 +223,18 @@ impl ExplanationStore {
         evidence: Vec<EvidenceRef>,
     ) -> Result<(), ExplainabilityError> {
         self.require(monitor, token, RightsMask::WRITE)?;
+        let event_payload = serde_json::json!({
+            "kind": "step",
+            "step_index": step.step_index,
+            "description": step.description,
+            "capability_ref": step.capability_ref,
+        });
         self.with_record_mut(id, |record| {
             record.reasoning_chain.push(step);
             record.evidence.extend(evidence);
-        })
+        })?;
+        self.publish_record_event(monitor, token, id, event_payload);
+        Ok(())
     }
 
     pub fn set_confidence(
@@ -209,7 +304,17 @@ impl ExplanationStore {
         state: ControlState,
     ) -> Result<(), ExplainabilityError> {
         self.require(monitor, token, RightsMask::WRITE)?;
-        self.with_record_mut(id, |record| record.control_state = state)
+        self.with_record_mut(id, |record| record.control_state = state)?;
+        self.publish_record_event(
+            monitor,
+            token,
+            id,
+            serde_json::json!({
+                "kind": "transition",
+                "state": format!("{state:?}"),
+            }),
+        );
+        Ok(())
     }
 
     /// docs/18 §8's own "access to an `explain.query` result is gated by the same capability
@@ -234,6 +339,160 @@ impl ExplanationStore {
             .get(&id)
             .filter(|r| r.trust_boundary_span.contains(&caller_boundary))
             .cloned())
+    }
+
+    /// docs/18 §9's degrade path: "`explain.query` degrades to `best_effort_reconstruction`,
+    /// replaying [31 — Event System] logs to approximate the record and flagging the result as
+    /// reconstructed, never presenting a best-effort guess as an authoritative record." Tries
+    /// [`Self::get`] first; only replays the durable log (via [`Self::with_events`]'s own admin
+    /// subscription) when the real record is genuinely absent — e.g. the in-memory store never
+    /// had it (a real crash before this in-process `HashMap` was populated) or was never wired.
+    /// Re-applies the exact same Trust-Boundary check `Self::get` does (via the `begin` event's
+    /// own published `trust_boundary_span`) before ever returning a reconstructed record — the
+    /// admin subscription's own broad `GRANT`-based visibility must never become a side door
+    /// around a caller's real access grant.
+    pub fn get_or_reconstruct(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        id: ExplanationId,
+    ) -> Result<Option<ExplanationLookup>, ExplainabilityError> {
+        if let Some(record) = self.get(monitor, token, id)? {
+            return Ok(Some(ExplanationLookup::Authoritative(record)));
+        }
+        // `get`'s own `RightsMask::READ` check already ran above; a caller without it never
+        // reaches this reconstruction path either.
+        let Some((bus, sub_id)) = &self.events else {
+            return Ok(None);
+        };
+        let mut relevant: Vec<_> = bus
+            .replay_from(*sub_id, 0)
+            .map_err(|_| ExplainabilityError::NoSuchRecord)?
+            .into_iter()
+            .filter(|e| e.topic.subject.raw() == id)
+            .collect();
+        relevant.sort_by_key(|e| e.seq);
+        if relevant.is_empty() {
+            return Ok(None);
+        }
+
+        let caller_boundary = token.origin().0;
+        let mut action_id: ActionId = 0;
+        let mut triggering_intent_id = 0;
+        let mut agent_id = 0;
+        let mut capability_ref = String::new();
+        let mut created_at = 0;
+        let mut trust_boundary_span: Vec<u64> = Vec::new();
+        let mut reasoning_chain = Vec::new();
+        let mut control_state = ControlState::Proposed;
+
+        for event in &relevant {
+            let EventPayload::Inline(payload) = &event.payload else {
+                continue;
+            };
+            match payload["kind"].as_str() {
+                Some("begin") => {
+                    action_id = payload["action_id"].as_u64().unwrap_or(0);
+                    triggering_intent_id = payload["triggering_intent_id"].as_u64().unwrap_or(0);
+                    agent_id = payload["agent_id"].as_u64().unwrap_or(0);
+                    capability_ref = payload["capability_ref"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    created_at = payload["created_at"].as_u64().unwrap_or(0);
+                    trust_boundary_span = payload["trust_boundary_span"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|v| v.as_u64()).collect())
+                        .unwrap_or_default();
+                }
+                Some("step") => {
+                    reasoning_chain.push(ReasoningStep {
+                        step_index: payload["step_index"].as_u64().unwrap_or(0) as u32,
+                        description: payload["description"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                        capability_ref: payload["capability_ref"].as_str().map(String::from),
+                        inputs_ref: Vec::new(),
+                        output_ref: None,
+                    });
+                }
+                Some("transition") => {
+                    control_state = match payload["state"].as_str() {
+                        Some("Executing") => ControlState::Executing,
+                        Some("Completed") => ControlState::Completed,
+                        Some("Interrupted") => ControlState::Interrupted,
+                        Some("Modified") => ControlState::Modified,
+                        Some("RolledBack") => ControlState::RolledBack,
+                        _ => ControlState::Proposed,
+                    };
+                }
+                _ => {}
+            }
+        }
+
+        if !trust_boundary_span.contains(&caller_boundary) {
+            // Same "never reveal existence of what you can't see" discipline as `Self::get`.
+            return Ok(None);
+        }
+
+        Ok(Some(ExplanationLookup::Reconstructed(ExplanationRecord {
+            id,
+            action_id,
+            triggering_intent_id,
+            agent_id,
+            capability_ref,
+            created_at,
+            reasoning_chain,
+            evidence: Vec::new(),
+            confidence: None,
+            alternatives: Vec::new(),
+            undo_ref: None,
+            trust_boundary_span,
+            privacy_class: None,
+            parent_records: Vec::new(),
+            child_records: Vec::new(),
+            control_state,
+        })))
+    }
+
+    /// As [`Self::get_or_reconstruct`], but resolved by `action_id` — `resolve_why`'s own real
+    /// entry point (docs/18 §5/§6: callers know the effect's `action_id`, never an internal
+    /// record id). The real record is missing *and* unindexable by `action_id` once it's gone
+    /// from this store's in-memory map, so reconstruction here first finds which record's own
+    /// `begin` event claimed this `action_id` (a full, unfiltered scan of the durable log — this
+    /// store keeps no separate `action_id` index over reconstructable history, only over live
+    /// records), then reconstructs that one record exactly as [`Self::get_or_reconstruct`] would.
+    pub fn get_or_reconstruct_by_action(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        action_id: ActionId,
+    ) -> Result<Option<ExplanationLookup>, ExplainabilityError> {
+        if let Some(record) = self.get_by_action(monitor, token, action_id)? {
+            return Ok(Some(ExplanationLookup::Authoritative(record)));
+        }
+        self.require(monitor, token, RightsMask::READ)?;
+        let Some((bus, sub_id)) = &self.events else {
+            return Ok(None);
+        };
+        let all = bus
+            .replay_from(*sub_id, 0)
+            .map_err(|_| ExplainabilityError::NoSuchRecord)?;
+        let target_id = all.iter().find_map(|e| {
+            let EventPayload::Inline(payload) = &e.payload else {
+                return None;
+            };
+            if payload["kind"] == "begin" && payload["action_id"].as_u64() == Some(action_id) {
+                Some(e.topic.subject.raw())
+            } else {
+                None
+            }
+        });
+        match target_id {
+            Some(id) => self.get_or_reconstruct(monitor, token, id),
+            None => Ok(None),
+        }
     }
 
     fn get_by_action(
@@ -336,13 +595,4 @@ impl ExplanationStore {
             capability_ref,
         ))
     }
-}
-
-pub(crate) fn resolve_by_action(
-    store: &ExplanationStore,
-    monitor: &CapabilityMonitor,
-    token: &CapabilityToken,
-    action_id: ActionId,
-) -> Result<Option<ExplanationRecord>, ExplainabilityError> {
-    store.get_by_action(monitor, token, action_id)
 }

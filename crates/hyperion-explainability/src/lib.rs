@@ -61,10 +61,16 @@
 //!   workspace doesn't have, and `Ensemble` depends on
 //!   [23 — Multi-Model Orchestration](../23-multi-model-orchestration.md)'s actual candidate
 //!   models — neither is what [`self_consistency_confidence`] computes.
-//! - **`best_effort_reconstruction` via the Event System (31).** No Event
-//!   System crate exists yet anywhere in this workspace to replay from;
-//!   docs/18 §9's degrade path ("store unavailable → reconstruct, flagged
-//!   non-authoritative") has nothing to reconstruct from yet.
+//! - ~~**`best_effort_reconstruction` via the Event System (31).**~~ — now real:
+//!   [`ExplanationStore::with_events`] wires a real `hyperion-events::EventBus` and opens one
+//!   long-lived, `Durable` admin subscription; `begin`/`append_step`/`transition` each publish a
+//!   real event, and [`ExplanationStore::get_or_reconstruct`]/`get_or_reconstruct_by_action`
+//!   replay that log to approximate a record docs/18 §9's degrade path describes, re-applying the
+//!   same Trust-Boundary check [`ExplanationStore::get`] does before ever returning one. Honest
+//!   scope: only what was actually published is recoverable — `evidence`/`confidence`/
+//!   `alternatives`/`undo_ref`/the parent-child DAG are never reconstructed, and
+//!   [`ExplanationView::reconstructed`] flags the result rather than presenting it as
+//!   authoritative, exactly as docs/18 §9 requires.
 //! - ~~**`control.interrupt`/`control.modify`/`control.resume` signal plumbing.**~~ — all three
 //!   now real, delivered by `hyperion-coordination`: `CoordinationSession::apply_dispatch_results`
 //!   already transitions a task's record to `Interrupted` when its real dispatch comes back
@@ -127,6 +133,6 @@ pub use render::resolve_why;
 pub use store::ExplanationStore;
 pub use types::{
     ActionId, Alternative, CalibrationScore, ConfidenceMethod, ConfidenceScore, ControlState,
-    Depth, EvidenceRef, ExplainabilityError, ExplanationId, ExplanationRecord, ExplanationView,
-    ReasoningStep,
+    Depth, EvidenceRef, ExplainabilityError, ExplanationId, ExplanationLookup, ExplanationRecord,
+    ExplanationView, ReasoningStep,
 };

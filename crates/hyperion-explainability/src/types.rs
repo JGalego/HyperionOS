@@ -86,6 +86,31 @@ pub struct ExplanationRecord {
     pub control_state: ControlState,
 }
 
+/// docs/18 §9's own degrade-path contract: `explain.query` must never present a best-effort
+/// reconstruction as if it were the real, causally-recorded record. `Authoritative` came from
+/// [`crate::ExplanationStore::get`] itself; `Reconstructed` was rebuilt from
+/// [31 — Event System](../31-event-system.md) logs by
+/// [`crate::ExplanationStore::get_or_reconstruct`] because the real record was genuinely absent —
+/// see that function's own doc comment for exactly which fields a reconstruction can and can't
+/// recover.
+#[derive(Debug, Clone)]
+pub enum ExplanationLookup {
+    Authoritative(ExplanationRecord),
+    Reconstructed(ExplanationRecord),
+}
+
+impl ExplanationLookup {
+    pub fn record(&self) -> &ExplanationRecord {
+        match self {
+            ExplanationLookup::Authoritative(r) | ExplanationLookup::Reconstructed(r) => r,
+        }
+    }
+
+    pub fn is_reconstructed(&self) -> bool {
+        matches!(self, ExplanationLookup::Reconstructed(_))
+    }
+}
+
 /// docs/18 §6's `depth` parameter to `explain.query`/`resolve_why`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Depth {
@@ -102,6 +127,11 @@ pub struct ExplanationView {
     pub headline: String,
     pub full: Option<ExplanationRecord>,
     pub parents: Vec<ExplanationView>,
+    /// docs/18 §9: "never presenting a best-effort guess as an authoritative record." `true`
+    /// when [`crate::ExplanationStore::get_or_reconstruct`] had to rebuild this view from
+    /// [31 — Event System](../31-event-system.md) logs rather than the real, causally-recorded
+    /// store — a renderer must surface this, not silently drop it.
+    pub reconstructed: bool,
 }
 
 /// docs/18 §10/§13's "rolling Brier score per Agent/Capability... feeding an alert if an Agent's

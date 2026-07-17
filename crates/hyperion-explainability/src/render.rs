@@ -1,6 +1,6 @@
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
 
-use crate::store::{resolve_by_action, ExplanationStore};
+use crate::store::ExplanationStore;
 use crate::types::{ActionId, Depth, ExplainabilityError, ExplanationRecord, ExplanationView};
 
 fn headline_for(record: &ExplanationRecord) -> String {
@@ -29,10 +29,14 @@ fn headline_for(record: &ExplanationRecord) -> String {
 /// Trust-Boundary-filtered (2026-07-16): this crate's own literal `explain.query`
 /// implementation previously took no `monitor`/`token` at all, directly contradicting docs/18
 /// §8's "access to an `explain.query` result is gated by the same capability grant that gated
-/// the underlying data" and §13's explicit call for a test proving it. `resolve_by_action`/
-/// `Self::get`'s own real gating (`ExplanationStore::get`) is reused here rather than a second
-/// check invented in this module — a record (or a parent record, when walking `Depth::Full`)
-/// outside the caller's own Trust Boundary is silently excluded, never an error.
+/// the underlying data" and §13's explicit call for a test proving it. `Self::get`'s own real
+/// gating (`ExplanationStore::get`) is reused here rather than a second check invented in this
+/// module — a record (or a parent record, when walking `Depth::Full`) outside the caller's own
+/// Trust Boundary is silently excluded, never an error. docs/18 §9's degrade path is real too
+/// (2026-07-17): `ExplanationStore::get_or_reconstruct_by_action` is tried instead of a plain
+/// store lookup, and [`ExplanationView::reconstructed`] surfaces whether the result actually came
+/// from [31 — Event System](../31-event-system.md) replay rather than the authoritative,
+/// causally-recorded store — never silently presented as the same thing.
 pub fn resolve_why(
     store: &ExplanationStore,
     monitor: &CapabilityMonitor,
@@ -40,9 +44,11 @@ pub fn resolve_why(
     action_id: ActionId,
     depth: Depth,
 ) -> Result<Option<ExplanationView>, ExplainabilityError> {
-    let Some(record) = resolve_by_action(store, monitor, token, action_id)? else {
+    let Some(lookup) = store.get_or_reconstruct_by_action(monitor, token, action_id)? else {
         return Ok(None);
     };
+    let reconstructed = lookup.is_reconstructed();
+    let record = lookup.record().clone();
     let headline = headline_for(&record);
 
     let mut parents = Vec::new();
@@ -66,5 +72,6 @@ pub fn resolve_why(
             None
         },
         parents,
+        reconstructed,
     }))
 }
