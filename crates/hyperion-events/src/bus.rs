@@ -23,7 +23,13 @@ struct SubscriberState {
     backpressure: BackpressurePolicy,
     holder: CapabilityToken,
     queue: VecDeque<Event>,
-    coalesced: Option<Event>,
+    /// docs/31 §Algorithms: "the bus keeps one mailbox slot per `(Topic,
+    /// Subscription)`" — keyed by `Topic`, not a single slot per
+    /// subscription, so a `Subtree`/`KindScoped` pattern matching several
+    /// distinct topics (e.g. one Workspace watching several Panels' own
+    /// topics) coalesces each independently instead of one topic's rapid
+    /// updates silently clobbering another's still-pending one.
+    coalesced: HashMap<Topic, Event>,
     dropped: u64,
     last_acked_seq: u64,
     durable_path: Option<PathBuf>,
@@ -207,7 +213,7 @@ impl EventBus {
                 backpressure,
                 holder: token.clone(),
                 queue: VecDeque::new(),
-                coalesced: None,
+                coalesced: HashMap::new(),
                 dropped: 0,
                 last_acked_seq: 0,
                 durable_path,
@@ -333,7 +339,13 @@ impl Subscription {
 
 fn take_ready(st: &mut SubscriberState) -> Option<Event> {
     match st.backpressure {
-        BackpressurePolicy::Coalesce => st.coalesced.take(),
+        // Which distinct topic's pending slot drains first when several are
+        // pending is unspecified (docs/31 §Trade-offs already offers no
+        // cross-topic ordering guarantee) -- any one is a valid choice.
+        BackpressurePolicy::Coalesce => {
+            let key = st.coalesced.keys().next().cloned();
+            key.and_then(|k| st.coalesced.remove(&k))
+        }
         _ => st.queue.pop_front(),
     }
 }
@@ -342,10 +354,11 @@ fn deliver(mailbox: &Arc<Mailbox>, event: &Event) {
     let mut st = mailbox.state.lock().unwrap();
     match st.backpressure {
         BackpressurePolicy::Coalesce => {
-            // Overwrite the one pending slot instead of queuing -- bounds
-            // memory to O(subscriptions) regardless of publish rate
-            // (docs/31 §Algorithms).
-            st.coalesced = Some(event.clone());
+            // Overwrite this topic's own pending slot instead of queuing --
+            // bounds memory to O(distinct matching topics) regardless of
+            // publish rate (docs/31 §Algorithms), independently per topic
+            // for a Subtree/KindScoped subscription matching several.
+            st.coalesced.insert(event.topic.clone(), event.clone());
             mailbox.not_empty.notify_all();
         }
         BackpressurePolicy::Durable => {

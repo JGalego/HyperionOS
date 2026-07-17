@@ -75,6 +75,76 @@ fn coalesce_collapses_to_the_latest_value() {
 }
 
 #[test]
+fn coalesce_keeps_independent_slots_per_distinct_topic() {
+    // docs/31 §Algorithms: "one mailbox slot per (Topic, Subscription)" --
+    // a Subtree subscription matching two distinct topics must coalesce
+    // each independently, not let one topic's rapid updates clobber
+    // another's still-pending one.
+    let mut monitor = CapabilityMonitor::new();
+    let (publisher, subscriber) = mint_pair(&mut monitor);
+    let root = SubjectId::Agent(100);
+    let topic_a = Topic {
+        kind: TopicKind::AgentProgress,
+        subject: SubjectId::Agent(1),
+        schema_id: SchemaId::new("panel.a"),
+    };
+    let topic_b = Topic {
+        kind: TopicKind::AgentProgress,
+        subject: SubjectId::Agent(2),
+        schema_id: SchemaId::new("panel.b"),
+    };
+
+    let bus = EventBus::new(None);
+    let sub = bus
+        .subscribe(
+            &monitor,
+            &subscriber,
+            OWNER,
+            TopicPattern::Subtree {
+                kind: TopicKind::AgentProgress,
+                root,
+            },
+            DeliveryClass::AtMostOnce,
+            BackpressurePolicy::Coalesce,
+        )
+        .unwrap();
+
+    let publish = |topic: &Topic, n: u32| {
+        bus.publish(
+            &monitor,
+            &publisher,
+            OWNER,
+            topic.clone(),
+            inline(n),
+            vec![100],
+        )
+        .unwrap();
+    };
+    publish(&topic_a, 1);
+    publish(&topic_b, 1);
+    publish(&topic_a, 2); // topic_a's own slot updates; must not touch topic_b's.
+
+    let mut received: Vec<Event> = Vec::new();
+    while let Some(e) = sub.try_recv() {
+        received.push(e);
+    }
+    received.sort_by_key(|e| e.topic.schema_id.0.clone());
+    assert_eq!(
+        received.len(),
+        2,
+        "each distinct topic keeps its own coalesce slot"
+    );
+    assert_eq!(received[0].topic.schema_id.0, "panel.a");
+    assert_eq!(
+        received[0].payload,
+        inline(2),
+        "topic_a coalesced to its own latest value"
+    );
+    assert_eq!(received[1].topic.schema_id.0, "panel.b");
+    assert_eq!(received[1].payload, inline(1));
+}
+
+#[test]
 fn buffer_drops_oldest_past_capacity_and_counts_it() {
     let mut monitor = CapabilityMonitor::new();
     let (publisher, subscriber) = mint_pair(&mut monitor);
