@@ -2,12 +2,12 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 
-use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
 use hyperion_storage::{ObjectId as StorageObjectId, VersionId, Wal, WalRecord};
 
 use crate::types::{
     now, valid_combination, BackpressurePolicy, DeliveryClass, Event, EventFault, EventPayload,
-    SubjectId, SubscriptionId, Topic, TopicPattern,
+    SubscriptionId, Topic, TopicPattern,
 };
 
 /// Bound on a `Block`-class subscription's queue before `publish` stalls the
@@ -67,6 +67,16 @@ struct BusState {
 ///   hierarchy, supplies it instead — the same "the core doesn't know about
 ///   domain kinds" shape `hyperion-capability::CapabilityMonitor::cap_invoke`
 ///   already establishes by taking a caller-supplied dispatch closure.
+/// - "A token that dominates the topic's subject" (docs/31 §Security
+///   Considerations) is checked via Trust-Boundary owner equality
+///   (`CapabilityToken::origin()` against a caller-supplied `owner:
+///   TrustBoundaryId`), not `CapabilityToken::object_id()` — `object_id`
+///   names a *kernel* object in `hyperion-capability`'s own namespace,
+///   unrelated to a domain crate's own subject ids
+///   (`hyperion-knowledge-graph::NodeId`, `AgentId`, ...); the real
+///   equality check every domain crate's own read/write path already
+///   performs is owner-based (see `authorize_publish`/`authorize_subscribe`'s
+///   own doc comments).
 ///
 /// Federated (cross-device) topic propagation (docs/31 §Architecture: "at
 /// scale... sharded per device with cross-shard forwarding") is not this
@@ -98,20 +108,30 @@ impl EventBus {
     }
 
     /// `topic_publish` — docs/31 §Interfaces / APIs. Validates the caller's
-    /// capability against the topic's subject, assigns the next per-topic
-    /// `seq`, and fans out to every matching subscription independently
-    /// (§Algorithms: "the *same* `Event` can be delivered `AtMostOnce`/
-    /// `Coalesce` to one subscription and `AtLeastOnce`/`Durable` to
-    /// another in the same fan-out pass").
+    /// capability against `owner` — the subject's Trust-Boundary owner, the
+    /// same `owner: u64` every domain record in this workspace already
+    /// carries (`hyperion_knowledge_graph::NodeRecord::owner`, `EdgeRecord::owner`,
+    /// ...) and the same equality check their own read/write paths already
+    /// perform (`token.origin().0 == record.owner`) — then assigns the next
+    /// per-topic `seq` and fans out to every matching subscription
+    /// independently (§Algorithms: "the *same* `Event` can be delivered
+    /// `AtMostOnce`/`Coalesce` to one subscription and `AtLeastOnce`/
+    /// `Durable` to another in the same fan-out pass"). This crate does not
+    /// use `CapabilityToken::object_id()` for this check: that id names a
+    /// *kernel* object in `hyperion-capability`'s own namespace, a
+    /// different space entirely from a domain crate's own subject ids
+    /// (`hyperion-knowledge-graph::NodeId`, `AgentId`, ...) — see this
+    /// module's doc comment.
     pub fn publish(
         &self,
         monitor: &CapabilityMonitor,
         token: &CapabilityToken,
+        owner: TrustBoundaryId,
         topic: Topic,
         payload: EventPayload,
         ancestors: Vec<u64>,
     ) -> Result<u64, EventFault> {
-        authorize_publish(monitor, token, topic.subject)?;
+        authorize_publish(monitor, token, owner)?;
 
         let mut state = self.state.lock().unwrap();
         let seq_slot = state.next_seq.entry(topic.clone()).or_insert(0);
@@ -142,11 +162,15 @@ impl EventBus {
 
     /// `subscribe` — docs/31 §Interfaces / APIs, validated per §Pseudocode's
     /// delivery/backpressure compatibility table before anything is
-    /// registered.
+    /// registered. `owner` is ignored for a [`TopicPattern::KindScoped`]
+    /// subscription, which is authorized on `GRANT` rights alone (see
+    /// `authorize_subscribe`) — pass any value (e.g. the caller's own
+    /// origin) in that case.
     pub fn subscribe(
         &self,
         monitor: &CapabilityMonitor,
         token: &CapabilityToken,
+        owner: TrustBoundaryId,
         pattern: TopicPattern,
         delivery: DeliveryClass,
         backpressure: BackpressurePolicy,
@@ -157,7 +181,7 @@ impl EventBus {
                 backpressure,
             ));
         }
-        authorize_subscribe(monitor, token, &pattern)?;
+        authorize_subscribe(monitor, token, owner, &pattern)?;
 
         let mut state = self.state.lock().unwrap();
         let id = SubscriptionId(state.next_sub_id);
@@ -378,44 +402,47 @@ fn append_durable(st: &mut SubscriberState, event: &Event) {
 fn authorize_publish(
     monitor: &CapabilityMonitor,
     token: &CapabilityToken,
-    subject: SubjectId,
+    owner: TrustBoundaryId,
 ) -> Result<(), EventFault> {
     monitor
         .check_rights_ok_result(token, RightsMask::WRITE)
         .map_err(|_| EventFault::Unauthorized)?;
-    if token.object_id().0 != subject.raw() {
+    if token.origin().0 != owner.0 {
         return Err(EventFault::Unauthorized);
     }
     Ok(())
 }
 
 /// docs/31 §Security Considerations: "`subscribe` requires a token proving
-/// the subscriber already has read authority over that subject." A
-/// `TopicPattern::KindScoped` names no single subject, so it is authorized
-/// on rights alone: a `GRANT`-bearing token signals the same kind of
-/// elevated, cross-subject authority a docs/34 audit sink actually holds,
-/// reusing an existing bitflag rather than inventing an "admin" concept.
+/// the subscriber already has read authority over that subject." Translated
+/// onto this workspace's real (coarse, Trust-Boundary-owner-based) access
+/// model rather than `hyperion-capability`'s kernel-object-slot one: a
+/// subscriber must present a token from the *same* Trust Boundary as the
+/// subject's owner, exactly the equality check every domain crate's own
+/// read path already performs (`hyperion_knowledge_graph::KnowledgeGraph::get`,
+/// for one). A `TopicPattern::KindScoped` names no single subject, so it is
+/// authorized on rights alone: a `GRANT`-bearing token signals the same
+/// kind of elevated, cross-subject authority a docs/34 audit sink actually
+/// holds, reusing an existing bitflag rather than inventing an "admin"
+/// concept.
 fn authorize_subscribe(
     monitor: &CapabilityMonitor,
     token: &CapabilityToken,
+    owner: TrustBoundaryId,
     pattern: &TopicPattern,
 ) -> Result<(), EventFault> {
     monitor
         .check_rights_ok_result(token, RightsMask::READ)
         .map_err(|_| EventFault::Unauthorized)?;
-    match pattern.dominating_subject() {
-        Some(subject) => {
-            if token.object_id().0 != subject.raw() {
-                return Err(EventFault::Unauthorized);
-            }
+    if pattern.is_kind_scoped() {
+        if token.rights().contains(RightsMask::GRANT) {
             Ok(())
+        } else {
+            Err(EventFault::Unauthorized)
         }
-        None => {
-            if token.rights().contains(RightsMask::GRANT) {
-                Ok(())
-            } else {
-                Err(EventFault::Unauthorized)
-            }
-        }
+    } else if token.origin().0 == owner.0 {
+        Ok(())
+    } else {
+        Err(EventFault::Unauthorized)
     }
 }

@@ -7,36 +7,29 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
 use hyperion_events::{
     BackpressurePolicy, DeliveryClass, Event, EventBus, EventPayload, SchemaId, SubjectId, Topic,
     TopicKind, TopicPattern,
 };
 
-fn mint_pair(
-    monitor: &mut CapabilityMonitor,
-) -> (
-    hyperion_capability::CapabilityToken,
-    hyperion_capability::CapabilityToken,
-) {
-    let root = monitor.mint_root(
-        RightsMask::READ | RightsMask::WRITE,
-        TrustBoundaryId(1),
-        None,
-    );
+const OWNER: TrustBoundaryId = TrustBoundaryId(1);
+
+fn mint_pair(monitor: &mut CapabilityMonitor) -> (CapabilityToken, CapabilityToken) {
+    let root = monitor.mint_root(RightsMask::READ | RightsMask::WRITE, OWNER, None);
     let publisher = monitor
-        .cap_derive(&root, RightsMask::WRITE, None, TrustBoundaryId(1))
+        .cap_derive(&root, RightsMask::WRITE, None, OWNER)
         .unwrap();
     let subscriber = monitor
-        .cap_derive(&root, RightsMask::READ, None, TrustBoundaryId(1))
+        .cap_derive(&root, RightsMask::READ, None, OWNER)
         .unwrap();
     (publisher, subscriber)
 }
 
-fn topic_for(object_id: u64) -> Topic {
+fn topic() -> Topic {
     Topic {
         kind: TopicKind::AgentProgress,
-        subject: SubjectId::Agent(object_id),
+        subject: SubjectId::Agent(7),
         schema_id: SchemaId::new("agent.progress.v1"),
     }
 }
@@ -49,13 +42,14 @@ fn inline(n: u32) -> EventPayload {
 fn coalesce_collapses_to_the_latest_value() {
     let mut monitor = CapabilityMonitor::new();
     let (publisher, subscriber) = mint_pair(&mut monitor);
-    let topic = topic_for(publisher.object_id().0);
+    let topic = topic();
 
     let bus = EventBus::new(None);
     let sub = bus
         .subscribe(
             &monitor,
             &subscriber,
+            OWNER,
             TopicPattern::Exact(topic.clone()),
             DeliveryClass::AtMostOnce,
             BackpressurePolicy::Coalesce,
@@ -63,8 +57,15 @@ fn coalesce_collapses_to_the_latest_value() {
         .unwrap();
 
     for n in 1..=5 {
-        bus.publish(&monitor, &publisher, topic.clone(), inline(n), Vec::new())
-            .unwrap();
+        bus.publish(
+            &monitor,
+            &publisher,
+            OWNER,
+            topic.clone(),
+            inline(n),
+            Vec::new(),
+        )
+        .unwrap();
     }
 
     // Only ever "the current value" -- never the four intermediate ticks.
@@ -77,13 +78,14 @@ fn coalesce_collapses_to_the_latest_value() {
 fn buffer_drops_oldest_past_capacity_and_counts_it() {
     let mut monitor = CapabilityMonitor::new();
     let (publisher, subscriber) = mint_pair(&mut monitor);
-    let topic = topic_for(publisher.object_id().0);
+    let topic = topic();
 
     let bus = EventBus::new(None);
     let sub = bus
         .subscribe(
             &monitor,
             &subscriber,
+            OWNER,
             TopicPattern::Exact(topic.clone()),
             DeliveryClass::AtMostOnce,
             BackpressurePolicy::Buffer { capacity: 2 },
@@ -91,8 +93,15 @@ fn buffer_drops_oldest_past_capacity_and_counts_it() {
         .unwrap();
 
     for n in 1..=3 {
-        bus.publish(&monitor, &publisher, topic.clone(), inline(n), Vec::new())
-            .unwrap();
+        bus.publish(
+            &monitor,
+            &publisher,
+            OWNER,
+            topic.clone(),
+            inline(n),
+            Vec::new(),
+        )
+        .unwrap();
     }
 
     assert_eq!(bus.dropped_count(sub.id()).unwrap(), 1);
@@ -111,7 +120,7 @@ fn durable_never_drops_and_survives_a_bus_restart() {
     let tmp = tempfile::tempdir().unwrap();
     let mut monitor = CapabilityMonitor::new();
     let (publisher, subscriber) = mint_pair(&mut monitor);
-    let topic = topic_for(publisher.object_id().0);
+    let topic = topic();
 
     {
         let bus = EventBus::new(Some(tmp.path().to_path_buf()));
@@ -119,6 +128,7 @@ fn durable_never_drops_and_survives_a_bus_restart() {
             .subscribe(
                 &monitor,
                 &subscriber,
+                OWNER,
                 TopicPattern::Exact(topic.clone()),
                 DeliveryClass::AtLeastOnce,
                 BackpressurePolicy::Durable,
@@ -126,8 +136,15 @@ fn durable_never_drops_and_survives_a_bus_restart() {
             .unwrap();
 
         for n in 1..=3 {
-            bus.publish(&monitor, &publisher, topic.clone(), inline(n), Vec::new())
-                .unwrap();
+            bus.publish(
+                &monitor,
+                &publisher,
+                OWNER,
+                topic.clone(),
+                inline(n),
+                Vec::new(),
+            )
+            .unwrap();
         }
 
         // Live delivery still works for a Durable subscription.
@@ -150,6 +167,7 @@ fn durable_never_drops_and_survives_a_bus_restart() {
         .subscribe(
             &monitor,
             &subscriber,
+            OWNER,
             TopicPattern::Exact(topic),
             DeliveryClass::AtLeastOnce,
             BackpressurePolicy::Durable,
@@ -169,13 +187,15 @@ fn durable_never_drops_and_survives_a_bus_restart() {
 fn ack_is_rejected_for_a_non_at_least_once_subscription() {
     let mut monitor = CapabilityMonitor::new();
     let (publisher, subscriber) = mint_pair(&mut monitor);
-    let topic = topic_for(publisher.object_id().0);
+    let _ = &publisher;
+    let topic = topic();
 
     let bus = EventBus::new(None);
     let sub = bus
         .subscribe(
             &monitor,
             &subscriber,
+            OWNER,
             TopicPattern::Exact(topic),
             DeliveryClass::AtMostOnce,
             BackpressurePolicy::Coalesce,
@@ -189,13 +209,15 @@ fn ack_is_rejected_for_a_non_at_least_once_subscription() {
 fn replay_from_is_rejected_for_a_non_durable_subscription() {
     let mut monitor = CapabilityMonitor::new();
     let (publisher, subscriber) = mint_pair(&mut monitor);
-    let topic = topic_for(publisher.object_id().0);
+    let _ = &publisher;
+    let topic = topic();
 
     let bus = EventBus::new(None);
     let sub = bus
         .subscribe(
             &monitor,
             &subscriber,
+            OWNER,
             TopicPattern::Exact(topic),
             DeliveryClass::AtMostOnce,
             BackpressurePolicy::Buffer { capacity: 4 },
@@ -209,13 +231,14 @@ fn replay_from_is_rejected_for_a_non_durable_subscription() {
 fn block_stalls_the_producer_until_the_subscriber_drains() {
     let mut monitor = CapabilityMonitor::new();
     let (publisher, subscriber) = mint_pair(&mut monitor);
-    let topic = topic_for(publisher.object_id().0);
+    let topic = topic();
 
     let bus = Arc::new(EventBus::new(None));
     let sub = bus
         .subscribe(
             &monitor,
             &subscriber,
+            OWNER,
             TopicPattern::Exact(topic.clone()),
             DeliveryClass::AtMostOnce,
             BackpressurePolicy::Block,
@@ -225,8 +248,15 @@ fn block_stalls_the_producer_until_the_subscriber_drains() {
     // Fill the Block subscription's bounded queue (capacity 64) without
     // draining it.
     for n in 1..=64 {
-        bus.publish(&monitor, &publisher, topic.clone(), inline(n), Vec::new())
-            .unwrap();
+        bus.publish(
+            &monitor,
+            &publisher,
+            OWNER,
+            topic.clone(),
+            inline(n),
+            Vec::new(),
+        )
+        .unwrap();
     }
 
     // The 65th publish must stall until we drain one item -- prove it by
@@ -239,7 +269,14 @@ fn block_stalls_the_producer_until_the_subscriber_drains() {
     let topic_bg = topic.clone();
     let handle = thread::spawn(move || {
         bus_bg
-            .publish(&monitor_bg, &publisher_bg, topic_bg, inline(65), Vec::new())
+            .publish(
+                &monitor_bg,
+                &publisher_bg,
+                OWNER,
+                topic_bg,
+                inline(65),
+                Vec::new(),
+            )
             .unwrap();
     });
 

@@ -162,15 +162,11 @@ impl TopicPattern {
         }
     }
 
-    /// The one subject a token must dominate to be granted this pattern —
-    /// `None` for `KindScoped`, which is authorized on rights alone (see
-    /// `bus::authorize_subscribe`).
-    pub(crate) fn dominating_subject(&self) -> Option<SubjectId> {
-        match self {
-            TopicPattern::Exact(topic) => Some(topic.subject),
-            TopicPattern::Subtree { root, .. } => Some(*root),
-            TopicPattern::KindScoped(_) => None,
-        }
+    /// Whether this pattern is authorized on rights alone (`KindScoped`, see
+    /// `bus::authorize_subscribe`) or must additionally match the declared
+    /// Trust-Boundary owner of the subject it names.
+    pub(crate) fn is_kind_scoped(&self) -> bool {
+        matches!(self, TopicPattern::KindScoped(_))
     }
 }
 

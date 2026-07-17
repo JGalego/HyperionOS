@@ -9,20 +9,23 @@
 //!
 //! Real: every one of docs/31's core properties, translated for a
 //! single-process hosted simulator (see [`bus::EventBus`]'s own doc comment
-//! for the two deliberate translations — a `Subscription` handle standing
-//! in for a dedicated IPC `Notify` channel, and publisher-supplied
-//! `ancestors` standing in for KG-path trie indexing, since this crate
-//! cannot depend on `hyperion-knowledge-graph` without cycling back through
-//! it):
+//! for the three deliberate translations — a `Subscription` handle standing
+//! in for a dedicated IPC `Notify` channel, publisher-supplied `ancestors`
+//! standing in for KG-path trie indexing since this crate cannot depend on
+//! `hyperion-knowledge-graph` without cycling back through it, and
+//! Trust-Boundary owner equality standing in for `object_id` domination
+//! since a domain subject id and a `hyperion-capability` kernel-object id
+//! are different namespaces):
 //!
 //! - **Capability-scoped pub/sub** (docs/31 §Security Considerations):
-//!   `publish` requires a token that dominates the topic's subject with
-//!   `WRITE`; `subscribe` requires one that dominates it with `READ` (or,
-//!   for a kind-wide [`types::TopicPattern::KindScoped`] subscription like a
-//!   docs/34 audit sink, a token carrying `GRANT`). Topic existence is
-//!   never a discovery channel: an unauthorized `subscribe` is rejected the
-//!   same way an unauthorized capability check anywhere else in this
-//!   workspace is.
+//!   `publish` requires a token whose origin matches the subject's declared
+//!   Trust-Boundary owner, plus `WRITE`; `subscribe` requires the same
+//!   owner match plus `READ` (or, for a kind-wide
+//!   [`types::TopicPattern::KindScoped`] subscription like a docs/34 audit
+//!   sink, a token carrying `GRANT` instead of an owner match). Topic
+//!   existence is never a discovery channel: an unauthorized `subscribe` is
+//!   rejected the same way an unauthorized capability check anywhere else
+//!   in this workspace is.
 //! - **Per-subscription delivery class × backpressure policy**
 //!   (docs/31 §Data Structures / §Algorithms), each independently real:
 //!   `Coalesce` (one mailbox slot, latest-wins), `Buffer { capacity }`

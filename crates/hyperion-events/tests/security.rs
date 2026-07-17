@@ -19,16 +19,16 @@ fn topic() -> Topic {
 }
 
 #[test]
-fn subscribe_without_dominating_capability_is_denied() {
+fn subscribe_from_a_foreign_trust_boundary_is_denied() {
     let mut monitor = CapabilityMonitor::new();
-    // A token for a *different* object (7, not 42) -- does not dominate the topic's subject.
+    // Minted for Trust Boundary 1, but the subject's declared owner is Trust Boundary 2.
     let foreign = monitor.mint_root(RightsMask::READ, TrustBoundaryId(1), None);
-    assert_ne!(foreign.object_id().0, 42);
 
     let bus = EventBus::new(None);
     let result = bus.subscribe(
         &monitor,
         &foreign,
+        TrustBoundaryId(2),
         TopicPattern::Exact(topic()),
         DeliveryClass::AtMostOnce,
         BackpressurePolicy::Coalesce,
@@ -37,7 +37,7 @@ fn subscribe_without_dominating_capability_is_denied() {
 }
 
 #[test]
-fn subscribe_without_read_rights_is_denied_even_for_the_right_object() {
+fn subscribe_without_read_rights_is_denied_even_for_the_right_owner() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::WRITE, TrustBoundaryId(1), None);
     // Attenuate away READ entirely.
@@ -46,15 +46,11 @@ fn subscribe_without_read_rights_is_denied_even_for_the_right_object() {
         .unwrap();
 
     let bus = EventBus::new(None);
-    let topic = Topic {
-        kind: TopicKind::ObjectChanged,
-        subject: SubjectId::Object(write_only.object_id().0),
-        schema_id: SchemaId::new("kg.node.v1"),
-    };
     let result = bus.subscribe(
         &monitor,
         &write_only,
-        TopicPattern::Exact(topic),
+        TrustBoundaryId(1),
+        TopicPattern::Exact(topic()),
         DeliveryClass::AtMostOnce,
         BackpressurePolicy::Coalesce,
     );
@@ -74,15 +70,11 @@ fn publish_without_write_rights_is_denied() {
         .unwrap();
 
     let bus = EventBus::new(None);
-    let topic = Topic {
-        kind: TopicKind::ObjectChanged,
-        subject: SubjectId::Object(read_only.object_id().0),
-        schema_id: SchemaId::new("kg.node.v1"),
-    };
     let result = bus.publish(
         &monitor,
         &read_only,
-        topic,
+        TrustBoundaryId(1),
+        topic(),
         EventPayload::Inline(serde_json::json!({"changed": true})),
         Vec::new(),
     );
@@ -90,7 +82,25 @@ fn publish_without_write_rights_is_denied() {
 }
 
 #[test]
-fn kind_scoped_subscription_requires_grant_rights() {
+fn publish_from_a_foreign_trust_boundary_is_denied_even_with_write_rights() {
+    let mut monitor = CapabilityMonitor::new();
+    let writer = monitor.mint_root(RightsMask::WRITE, TrustBoundaryId(1), None);
+
+    let bus = EventBus::new(None);
+    // The subject's declared owner is Trust Boundary 2, not 1.
+    let result = bus.publish(
+        &monitor,
+        &writer,
+        TrustBoundaryId(2),
+        topic(),
+        EventPayload::Inline(serde_json::json!({})),
+        Vec::new(),
+    );
+    assert_eq!(result.err(), Some(EventFault::Unauthorized));
+}
+
+#[test]
+fn kind_scoped_subscription_requires_grant_rights_regardless_of_owner() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::READ, TrustBoundaryId(1), None);
 
@@ -98,6 +108,7 @@ fn kind_scoped_subscription_requires_grant_rights() {
     let denied = bus.subscribe(
         &monitor,
         &root,
+        TrustBoundaryId(1),
         TopicPattern::KindScoped(TopicKind::AgentProgress),
         DeliveryClass::AtMostOnce,
         BackpressurePolicy::Buffer { capacity: 8 },
@@ -109,9 +120,12 @@ fn kind_scoped_subscription_requires_grant_rights() {
         TrustBoundaryId(1),
         None,
     );
+    // Owner is irrelevant for a KindScoped pattern -- pass an unrelated boundary
+    // to prove GRANT rights alone are what authorize it.
     let allowed = bus.subscribe(
         &monitor,
         &admin,
+        TrustBoundaryId(999),
         TopicPattern::KindScoped(TopicKind::AgentProgress),
         DeliveryClass::AtMostOnce,
         BackpressurePolicy::Buffer { capacity: 8 },
@@ -123,17 +137,13 @@ fn kind_scoped_subscription_requires_grant_rights() {
 fn incompatible_delivery_backpressure_combinations_are_rejected() {
     let mut monitor = CapabilityMonitor::new();
     let token = monitor.mint_root(RightsMask::READ, TrustBoundaryId(1), None);
-    let topic = Topic {
-        kind: TopicKind::ObjectChanged,
-        subject: SubjectId::Object(token.object_id().0),
-        schema_id: SchemaId::new("kg.node.v1"),
-    };
 
     let bus = EventBus::new(None);
     let at_most_once_durable = bus.subscribe(
         &monitor,
         &token,
-        TopicPattern::Exact(topic.clone()),
+        TrustBoundaryId(1),
+        TopicPattern::Exact(topic()),
         DeliveryClass::AtMostOnce,
         BackpressurePolicy::Durable,
     );
@@ -148,7 +158,8 @@ fn incompatible_delivery_backpressure_combinations_are_rejected() {
     let at_least_once_coalesce = bus.subscribe(
         &monitor,
         &token,
-        TopicPattern::Exact(topic),
+        TrustBoundaryId(1),
+        TopicPattern::Exact(topic()),
         DeliveryClass::AtLeastOnce,
         BackpressurePolicy::Coalesce,
     );
@@ -165,17 +176,13 @@ fn incompatible_delivery_backpressure_combinations_are_rejected() {
 fn durable_subscription_without_a_configured_durable_dir_is_rejected() {
     let mut monitor = CapabilityMonitor::new();
     let token = monitor.mint_root(RightsMask::READ, TrustBoundaryId(1), None);
-    let topic = Topic {
-        kind: TopicKind::ObjectChanged,
-        subject: SubjectId::Object(token.object_id().0),
-        schema_id: SchemaId::new("kg.node.v1"),
-    };
 
     let bus = EventBus::new(None);
     let result = bus.subscribe(
         &monitor,
         &token,
-        TopicPattern::Exact(topic),
+        TrustBoundaryId(1),
+        TopicPattern::Exact(topic()),
         DeliveryClass::AtLeastOnce,
         BackpressurePolicy::Durable,
     );
@@ -193,15 +200,11 @@ fn revoked_publisher_can_no_longer_publish() {
     monitor.cap_revoke(&token);
 
     let bus = EventBus::new(None);
-    let topic = Topic {
-        kind: TopicKind::ObjectChanged,
-        subject: SubjectId::Object(token.object_id().0),
-        schema_id: SchemaId::new("kg.node.v1"),
-    };
     let result = bus.publish(
         &monitor,
         &token,
-        topic,
+        TrustBoundaryId(1),
+        topic(),
         EventPayload::Inline(serde_json::json!({})),
         Vec::new(),
     );

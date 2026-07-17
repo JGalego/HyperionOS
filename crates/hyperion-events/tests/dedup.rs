@@ -16,18 +16,16 @@ use hyperion_events::{
     TopicKind, TopicPattern,
 };
 
+const OWNER: TrustBoundaryId = TrustBoundaryId(1);
+
 #[test]
 fn duplicate_delivery_across_live_and_replayed_streams_dedupes_by_topic_and_seq() {
     let tmp = tempfile::tempdir().unwrap();
     let mut monitor = CapabilityMonitor::new();
-    let root = monitor.mint_root(
-        RightsMask::READ | RightsMask::WRITE,
-        TrustBoundaryId(1),
-        None,
-    );
+    let root = monitor.mint_root(RightsMask::READ | RightsMask::WRITE, OWNER, None);
     let topic = Topic {
         kind: TopicKind::ObjectChanged,
-        subject: SubjectId::Object(root.object_id().0),
+        subject: SubjectId::Object(1),
         schema_id: SchemaId::new("kg.node.v1"),
     };
 
@@ -36,6 +34,7 @@ fn duplicate_delivery_across_live_and_replayed_streams_dedupes_by_topic_and_seq(
         .subscribe(
             &monitor,
             &root,
+            OWNER,
             TopicPattern::Exact(topic.clone()),
             DeliveryClass::AtLeastOnce,
             BackpressurePolicy::Durable,
@@ -46,6 +45,7 @@ fn duplicate_delivery_across_live_and_replayed_streams_dedupes_by_topic_and_seq(
         bus.publish(
             &monitor,
             &root,
+            OWNER,
             topic.clone(),
             EventPayload::Inline(serde_json::json!({ "n": n })),
             Vec::new(),

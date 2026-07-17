@@ -12,18 +12,15 @@ use hyperion_events::{
     TopicKind, TopicPattern,
 };
 
+const OWNER: TrustBoundaryId = TrustBoundaryId(1);
+
 #[test]
 fn seq_is_monotonic_per_topic_under_concurrent_publishers() {
     let mut monitor = CapabilityMonitor::new();
-    let root = monitor.mint_root(
-        RightsMask::READ | RightsMask::WRITE,
-        TrustBoundaryId(1),
-        None,
-    );
-    let subject = root.object_id().0;
+    let root = monitor.mint_root(RightsMask::READ | RightsMask::WRITE, OWNER, None);
     let topic = Topic {
         kind: TopicKind::ObjectChanged,
-        subject: SubjectId::Object(subject),
+        subject: SubjectId::Object(1),
         schema_id: SchemaId::new("kg.node.v1"),
     };
 
@@ -32,6 +29,7 @@ fn seq_is_monotonic_per_topic_under_concurrent_publishers() {
         .subscribe(
             &monitor,
             &root,
+            OWNER,
             TopicPattern::Exact(topic.clone()),
             DeliveryClass::AtMostOnce,
             BackpressurePolicy::Buffer { capacity: 64 },
@@ -54,6 +52,7 @@ fn seq_is_monotonic_per_topic_under_concurrent_publishers() {
                     bus.publish(
                         &monitor,
                         &publisher,
+                        OWNER,
                         topic.clone(),
                         EventPayload::Inline(serde_json::json!({ "n": n })),
                         Vec::new(),
@@ -82,21 +81,16 @@ fn seq_is_monotonic_per_topic_under_concurrent_publishers() {
 #[test]
 fn no_cross_topic_ordering_guarantee_is_offered() {
     let mut monitor = CapabilityMonitor::new();
-    let root = monitor.mint_root(
-        RightsMask::READ | RightsMask::WRITE,
-        TrustBoundaryId(1),
-        None,
-    );
-    let subject = root.object_id().0;
+    let root = monitor.mint_root(RightsMask::READ | RightsMask::WRITE, OWNER, None);
 
     let topic_a = Topic {
         kind: TopicKind::ObjectChanged,
-        subject: SubjectId::Object(subject),
+        subject: SubjectId::Object(1),
         schema_id: SchemaId::new("a"),
     };
     let topic_b = Topic {
         kind: TopicKind::ObjectChanged,
-        subject: SubjectId::Object(subject),
+        subject: SubjectId::Object(1),
         schema_id: SchemaId::new("b"),
     };
 
@@ -106,6 +100,7 @@ fn no_cross_topic_ordering_guarantee_is_offered() {
         bus.publish(
             &monitor,
             &root,
+            OWNER,
             topic_b.clone(),
             EventPayload::Inline(serde_json::json!({})),
             Vec::new(),
@@ -116,6 +111,7 @@ fn no_cross_topic_ordering_guarantee_is_offered() {
         .publish(
             &monitor,
             &root,
+            OWNER,
             topic_a,
             EventPayload::Inline(serde_json::json!({})),
             Vec::new(),
