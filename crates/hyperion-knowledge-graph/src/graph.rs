@@ -74,12 +74,19 @@ impl KnowledgeGraph {
         self
     }
 
+    /// `ancestors` names every other object id this change is also relevant to — critically, for
+    /// an edge, its own `subject`/`target` node ids (see `Self::link`/`Self::unlink`'s call
+    /// sites). An edge's own id lives in the same numeric namespace as node ids but is otherwise
+    /// meaningless to a subscriber that only tracks node ids (e.g. `hyperion-semantic-fs`'s
+    /// `VirtualFolder` membership) — without this, "an edge touching node X changed" would be
+    /// unrecoverable from the event alone, only "some id Y (which happens to be an edge) changed."
     fn publish_changed(
         &self,
         monitor: &CapabilityMonitor,
         token: &CapabilityToken,
         subject_id: u64,
         owner: u64,
+        ancestors: Vec<u64>,
     ) {
         let Some(bus) = &self.events else {
             return;
@@ -99,7 +106,7 @@ impl KnowledgeGraph {
             TrustBoundaryId(owner),
             topic,
             payload,
-            Vec::new(),
+            ancestors,
         ) {
             eprintln!("hyperion-knowledge-graph: failed to publish object-changed event: {e}");
         }
@@ -216,7 +223,13 @@ impl KnowledgeGraph {
             self.storage
                 .put_object(monitor, token, id_arg, expected_version, payload)?;
         index.apply(assigned_id, Record::Edge(record));
-        self.publish_changed(monitor, token, assigned_id.0, owner);
+        self.publish_changed(
+            monitor,
+            token,
+            assigned_id.0,
+            owner,
+            vec![subject.0, target.0],
+        );
 
         Ok(if is_update {
             LinkOutcome::Updated(assigned_id)
@@ -265,7 +278,13 @@ impl KnowledgeGraph {
             payload,
         )?;
         index.apply(edge_id, Record::Edge(record));
-        self.publish_changed(monitor, token, edge_id.0, caller_boundary);
+        self.publish_changed(
+            monitor,
+            token,
+            edge_id.0,
+            caller_boundary,
+            vec![existing.subject.0, existing.target.0],
+        );
         Ok(())
     }
 
@@ -373,7 +392,7 @@ impl KnowledgeGraph {
             self.storage
                 .put_object(monitor, token, node_id, expected_version, payload)?;
         index.apply(assigned_id, Record::Node(record));
-        self.publish_changed(monitor, token, assigned_id.0, caller_boundary);
+        self.publish_changed(monitor, token, assigned_id.0, caller_boundary, Vec::new());
         Ok(assigned_id)
     }
 
@@ -444,7 +463,7 @@ impl KnowledgeGraph {
             payload,
         )?;
         index.apply(node_id, Record::Node(record));
-        self.publish_changed(monitor, token, node_id.0, caller_boundary);
+        self.publish_changed(monitor, token, node_id.0, caller_boundary, Vec::new());
         Ok(())
     }
 

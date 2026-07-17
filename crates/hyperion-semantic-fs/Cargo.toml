@@ -8,11 +8,15 @@ repository.workspace = true
 [dependencies]
 hyperion-capability = { workspace = true }
 hyperion-context = { workspace = true }
+hyperion-events = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
+# `NodeId` is a type alias for `hyperion_storage::ObjectId` -- a type alias doesn't carry the
+# tuple-struct constructor under the alias name, so reconstructing one from a raw wire event's u64
+# (see `SemanticFilesystem::drain_invalidations`) needs the real underlying type.
+hyperion-storage = { workspace = true }
 hyperion-workspace = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-hyperion-storage = { workspace = true }
 tempfile = { workspace = true }

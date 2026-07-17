@@ -5,10 +5,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_context::{ContextEngine, EntityResolution};
+use hyperion_events::{
+    BackpressurePolicy, DeliveryClass, EventBus, EventPayload, Subscription, TopicKind,
+    TopicPattern,
+};
 use hyperion_knowledge_graph::{EdgeOrigin, GraphError, GraphQuery, KnowledgeGraph, NodeId};
 
 use crate::path::PathMappingCache;
-use crate::types::{DirEntry, QuerySpec, VirtualFolder};
+use crate::types::{DirEntry, QueryCacheKey, QuerySpec, VirtualFolder};
 
 fn now() -> u64 {
     SystemTime::now()
@@ -54,8 +58,20 @@ pub struct SemanticFilesystem {
     graph: Arc<KnowledgeGraph>,
     context: Arc<ContextEngine>,
     folders: Mutex<HashMap<u64, VirtualFolder>>,
+    /// docs/10 §Performance Analysis's own "cached with a TTL and invalidated incrementally"
+    /// claim, made real for the first time: reuses an existing, still-fresh `VirtualFolder` for a
+    /// repeat query of the same structural shape (see [`QueryCacheKey`]) instead of always
+    /// re-materializing (this crate's previous, real behavior — every `query()` call minted a
+    /// brand new folder unconditionally).
+    folder_cache: Mutex<HashMap<QueryCacheKey, u64>>,
     path_cache: Mutex<PathMappingCache>,
     next_id: AtomicU64,
+    /// docs/10 §Performance Analysis's own named gap: "the Query Resolver subscribes to relevant
+    /// object/edge changes via the Event System and only re-materializes the specific folders
+    /// whose inputs actually changed." Real, optional, once [`Self::with_events`] wires it — see
+    /// its own doc comment for why this is one shared kind-wide subscription rather than one per
+    /// folder.
+    invalidation: Option<Subscription>,
 }
 
 impl SemanticFilesystem {
@@ -64,9 +80,98 @@ impl SemanticFilesystem {
             graph,
             context,
             folders: Mutex::new(HashMap::new()),
+            folder_cache: Mutex::new(HashMap::new()),
             path_cache: Mutex::new(PathMappingCache::default()),
             next_id: AtomicU64::new(1),
+            invalidation: None,
         }
+    }
+
+    /// Opts this filesystem into docs/31-event-system.md's real broadcast bus, closing this
+    /// crate's own previously-named "no live re-materialization to race against yet" gap for
+    /// real: once wired, a cached `VirtualFolder` is evicted the moment any Knowledge-Graph
+    /// write touches one of its own member objects or its query anchor (see
+    /// [`hyperion_knowledge_graph::KnowledgeGraph::with_events`], the publisher this subscribes
+    /// to), so the *next* `query()` for that shape re-materializes fresh rather than serving
+    /// stale membership until the cache's own TTL happens to expire.
+    ///
+    /// One shared `KindScoped(ObjectChanged)` subscription, not one `Exact` subscription per
+    /// cached folder: a personal-scale graph can have many live folders at once, and this crate
+    /// has no background thread to prune subscriptions for folders nobody queries again — a
+    /// single subscription plus a local scan (see [`Self::drain_invalidations`]) is real,
+    /// correct, and does not need active lifecycle management as folders come and go.
+    /// `admin_token` must carry `GRANT`, the same elevated cross-subject visibility a docs/34
+    /// audit sink already needs for the identical `KindScoped` reason.
+    pub fn with_events(
+        mut self,
+        monitor: &CapabilityMonitor,
+        admin_token: &CapabilityToken,
+        events: Arc<EventBus>,
+    ) -> Result<Self, FsError> {
+        let sub = events
+            .subscribe(
+                monitor,
+                admin_token,
+                admin_token.origin(),
+                TopicPattern::KindScoped(TopicKind::ObjectChanged),
+                DeliveryClass::AtMostOnce,
+                BackpressurePolicy::Buffer { capacity: 256 },
+            )
+            .map_err(|_| FsError::Unauthorized)?;
+        self.invalidation = Some(sub);
+        Ok(self)
+    }
+
+    /// Drains every pending `ObjectChanged` event and evicts any cached folder whose anchor or
+    /// membership it touches. Called at the top of [`Self::query`] rather than from a background
+    /// thread — this crate's own hosted-simulator convention (see e.g.
+    /// `hyperion-explainability::ExplanationStore`) of doing housekeeping lazily on the next real
+    /// call rather than running a daemon thread nothing else in this workspace does either.
+    fn drain_invalidations(&self) {
+        let Some(sub) = &self.invalidation else {
+            return;
+        };
+        let mut changed_ids: Vec<NodeId> = Vec::new();
+        while let Some(event) = sub.try_recv() {
+            // A node's own change is its own subject; an edge's change is relevant to the two
+            // *nodes* it connects, not to the edge's own id (a different, uninteresting id to
+            // this crate's folders) -- `hyperion_knowledge_graph::KnowledgeGraph::link`/`unlink`
+            // publish those two node ids as this event's own `ancestors` for exactly this reason.
+            if let EventPayload::Inline(payload) = &event.payload {
+                if let Some(id) = payload["object_id"].as_u64() {
+                    changed_ids.push(hyperion_storage::ObjectId(id));
+                }
+            }
+            changed_ids.extend(
+                event
+                    .ancestors
+                    .iter()
+                    .map(|&id| hyperion_storage::ObjectId(id)),
+            );
+        }
+        if changed_ids.is_empty() {
+            return;
+        }
+        let mut folders = self.folders.lock().unwrap();
+        let mut cache = self.folder_cache.lock().unwrap();
+        let stale: Vec<u64> = folders
+            .iter()
+            .filter(|(_, folder)| {
+                folder
+                    .query_spec
+                    .anchor
+                    .is_some_and(|anchor| changed_ids.contains(&anchor))
+                    || folder
+                        .member_object_ids
+                        .iter()
+                        .any(|member| changed_ids.contains(member))
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &stale {
+            folders.remove(id);
+        }
+        cache.retain(|_, folder_id| !stale.contains(folder_id));
     }
 
     fn require(
@@ -120,6 +225,29 @@ impl SemanticFilesystem {
     ) -> Result<VirtualFolder, FsError> {
         self.require(monitor, token, RightsMask::READ)?;
         let anchor = spec.anchor.ok_or(FsError::NoAnchor)?;
+
+        self.drain_invalidations();
+        // Caching is only ever consulted/populated once a real invalidation subscription is
+        // wired (see `Self::with_events`) -- without one, nothing would ever evict a stale entry,
+        // which would make `query()` silently return out-of-date membership forever instead of
+        // this crate's own real, previously-unconditional "always re-materialize fresh" behavior.
+        let cache_key = self
+            .invalidation
+            .as_ref()
+            .and_then(|_| QueryCacheKey::from_spec(spec));
+        if let Some(key) = &cache_key {
+            let cached_id = self.folder_cache.lock().unwrap().get(key).copied();
+            if let Some(folder_id) = cached_id {
+                let folders = self.folders.lock().unwrap();
+                if let Some(folder) = folders.get(&folder_id) {
+                    if now() <= folder.materialized_at + folder.ttl_secs {
+                        return Ok(folder.clone());
+                    }
+                }
+                // Expired or already evicted by drain_invalidations -- fall through and
+                // re-materialize fresh, replacing the stale cache entry below.
+            }
+        }
 
         let mut relational: Vec<(NodeId, usize)> = Vec::new();
         if spec.hop_bound > 0 {
@@ -177,6 +305,9 @@ impl SemanticFilesystem {
             .lock()
             .unwrap()
             .insert(folder_id, folder.clone());
+        if let Some(key) = cache_key {
+            self.folder_cache.lock().unwrap().insert(key, folder_id);
+        }
         Ok(folder)
     }
 

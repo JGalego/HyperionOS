@@ -38,14 +38,17 @@
 //!   here is a direct Rust method, consistent with this workspace's
 //!   hosted-simulator convention. [27 — Compatibility Layer](../27-compatibility-layer.md)
 //!   (Phase 9) would be what actually mounts something.
-//! - **Live VirtualFolder invalidation via a real Event System**
-//!   ([31 — Event System](../31-event-system.md), not built). This crate's
-//!   `snapshot_token` stability (docs/10 §Recovery Mechanisms) is achieved
-//!   trivially and correctly for a different reason: a [`VirtualFolder`]'s
-//!   member list is immutable once created, so every handle is already a
-//!   frozen snapshot by construction — there is no live re-materialization
-//!   to race against yet, so this is a real property, just not exercised
-//!   under real background mutation.
+//! - ~~**Live VirtualFolder invalidation via a real Event System**~~ — now real:
+//!   [`SemanticFilesystem::with_events`] wires a real `hyperion-events::EventBus` (subscribing to
+//!   `hyperion_knowledge_graph::KnowledgeGraph::with_events`'s own `ObjectChanged` publications),
+//!   and [`SemanticFilesystem::query`] now reuses a cached, still-fresh [`VirtualFolder`] for a
+//!   repeat query of the same structural shape instead of always re-materializing — the real
+//!   caching docs/10 §Performance Analysis always described. A cached folder is evicted the
+//!   moment a write touches its anchor or any of its own members, so the next `query()` call for
+//!   that shape re-materializes fresh rather than serving stale membership until TTL expiry. A
+//!   [`VirtualFolder`]'s *own* member list is still immutable once materialized (docs/10
+//!   §Recovery Mechanisms' `snapshot_token` stability), exactly as before — invalidation discards
+//!   a stale folder and its cache entry, it never mutates one in place.
 //! - **Per-object ACL re-check at materialization** (docs/10 §Security
 //!   Considerations) — this crate applies the same coarse capability-
 //!   rights check every call into `hyperion-knowledge-graph` already
