@@ -10,8 +10,16 @@ name = "hyperion-init"
 path = "src/main.rs"
 
 [dependencies]
+# Real, pure-Rust glyph rasterization + its embedded font bytes for the DRM/KMS boot-splash
+# renderer in src/linux/ui_render.rs -- see this crate's own doc comment there, and the workspace
+# Cargo.toml's comment on why these are already in this workspace's dependency tree.
+ab_glyph = { workspace = true }
 drm = { workspace = true }
+epaint_default_fonts = { workspace = true }
 hyperion-capability = { workspace = true }
+# The real Adaptive Complexity / Context Bundle this crate's own boot-splash workspace compiles
+# against -- see src/linux/ui_render.rs's own doc comment.
+hyperion-context = { workspace = true }
 hyperion-crypto = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
 hyperion-recovery = { workspace = true }
@@ -20,5 +28,12 @@ hyperion-storage = { workspace = true }
 hyperion-supervisor = { workspace = true }
 hyperion-trust-boundary = { workspace = true }
 hyperion-update = { workspace = true }
+# The real, structured `WorkspaceGraph`/`Panel`/`AccessibilityNode` tree the DRM boot-splash
+# renderer rasterizes -- see src/linux/ui_render.rs's own doc comment on why this crate now
+# depends on it.
+hyperion-workspace = { workspace = true }
 libc = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

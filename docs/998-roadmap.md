@@ -501,6 +501,28 @@ already made the same call). Everything beyond this bounded proof -- a real comp
 `WorkspaceGraph` rasterization, real font/text rendering, real input routing -- remains exactly as
 deferred as stage 1's own note already said, and is real, separate, large future work.
 
+**M7 stage 2 addendum (2026-07-17): real `WorkspaceGraph` rasterization + real font/text
+rendering, still not a compositor.** Two of this addendum's own still-open items closed: new
+`crates/hyperion-init/src/linux/ui_render.rs` replaces the fixed three-band pattern above with a
+real, minimal `WorkspaceGraph` this same boot compiles via the real `WorkspaceCompiler` (a real
+Intent node, a real Context Bundle, one real `system.boot_status` Capability UI Contract) and then
+rasterizes: one filled rectangle per real `Panel`, positioned by its own `region_affinity`
+(mirroring `hyperion-shell::app::render_region`'s own region split, ported to raw pixel
+rectangles), plus that panel's own `accessible_name` drawn as real glyphs via `ab_glyph` over
+`epaint_default_fonts`' already-vendored embedded TrueType bytes -- both already this workspace's
+own dependency tree (via `hyperion-shell`'s egui/epaint chain), so this is zero new external crate
+surface. `display_probe.rs`'s own `DISPLAY: PASS` message and `boot/scripts/verify-screendump.py`
+were both updated accordingly: the verifier now checks a real background fill plus a real
+near-white rasterized pixel inside the real Center panel's rect (computed from the same region
+fractions `ui_render.rs` itself uses, not a hardcoded resolution), and confirms the untouched
+top-left corner stays black -- proof this renders only the panels a real `WorkspaceGraph` actually
+has, not the whole screen. Still explicitly not a compositor: no window management, no input
+routing, no live re-render loop -- one compile-then-rasterize pass per boot, same bounded shape as
+the mode-set proof above. `hyperion-shell`'s own separate, windowed (`eframe`/`egui`) rendering of
+this exact same `WorkspaceGraph`/`AccessibilityTree` model remains out of scope here -- it needs a
+real desktop windowing stack this bare-metal/PID-1 boot path doesn't have, and is unrelated,
+already-real, separate work.
+
 **M7 stage 1 bug fix (2026-07-12): stale response text across multiple console turns.** Found by
 actually driving a real multi-turn interactive session against the real booted console (both in
 QEMU and reproduced natively on the host) -- never by reading code, and not caught by any existing

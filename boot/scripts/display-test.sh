@@ -4,8 +4,9 @@
 # this is the first to actually exercise crates/hyperion-init/src/linux/display_probe.rs), waits
 # for its own real DISPLAY: PASS/FAIL marker, then captures the *actual emulated display's* real
 # current pixel content via a real `screendump` HMP monitor command -- independent proof, from
-# outside the guest entirely, that real pixels are really being displayed, not just that the
-# guest-side ioctls happened to return success codes.
+# outside the guest entirely, that a real compiled WorkspaceGraph (crates/hyperion-init/src/linux/
+# ui_render.rs) is really being displayed, not just that the guest-side ioctls happened to return
+# success codes.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -3016,8 +3016,11 @@ dependencies = [
 name = "hyperion-init"
 version = "0.3.0"
 dependencies = [
+ "ab_glyph",
  "drm",
+ "epaint_default_fonts",
  "hyperion-capability",
+ "hyperion-context",
  "hyperion-crypto",
  "hyperion-knowledge-graph",
  "hyperion-recovery",
@@ -3026,8 +3029,10 @@ dependencies = [
  "hyperion-supervisor",
  "hyperion-trust-boundary",
  "hyperion-update",
+ "hyperion-workspace",
  "libc",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

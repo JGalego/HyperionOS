@@ -93,3 +93,12 @@ serde_json = "1"
 tempfile = "3"
 libc = "0.2"
 drm = "0.15"
+# Real, pure-Rust glyph rasterization for hyperion-init's DRM/KMS boot-splash renderer -- already
+# present in this workspace's own dependency tree (a transitive dependency of hyperion-shell's
+# egui/epaint), promoted to a direct workspace dependency rather than pulling in a new crate
+# (fontdue/rusttype/freetype) for the same job.
+ab_glyph = "0.2"
+# The real, already-vendored (via the same egui/epaint dependency chain) embedded TrueType font
+# bytes hyperion-init's boot-splash renderer rasterizes with ab_glyph -- zero new external font
+# asset, zero new license to track.
+epaint_default_fonts = "0.29"

@@ -1,10 +1,14 @@
 //! docs/998-roadmap.md M7 stage 2: real DRM/KMS mode-set, the minimal bounded proof this
 //! roadmap's own text scoped stage 2 down to -- real pixels on a real display device, not a full
-//! compositor (no window management, no GPU acceleration, no input routing; docs/13's own
-//! structured UI trees still render to nothing here, exactly as before). Uses the kernel's
+//! compositor (no window management, no GPU acceleration, no input routing). Uses the kernel's
 //! generic "dumb buffer" API (a plain CPU-writable framebuffer any KMS driver supports, no
 //! GPU-specific rendering pipeline needed) via the real `drm` crate, mirroring that crate's own
 //! `legacy_modeset` example almost exactly.
+//!
+//! What's actually written to that buffer is no longer a fixed three-band color pattern:
+//! `super::ui_render` compiles a real `hyperion_workspace::WorkspaceGraph` and rasterizes its
+//! real panels/text into it -- docs/13's own structured UI trees now render to real pixels here,
+//! see that module's own doc comment.
 //!
 //! Inert (logs a note, does nothing else) if `/dev/dri/card0` doesn't exist at all -- real
 //! hardware or a QEMU boot with no GPU device attached (every other boot script in this repo:
@@ -25,6 +29,10 @@ use drm::control::{connector, crtc, Device as ControlDevice};
 use drm::Device;
 
 const CARD_PATH: &str = "/dev/dri/card0";
+
+/// A real (tmpfs, ephemeral) scratch directory for `super::ui_render::compile_boot_workspace`'s
+/// own Knowledge Graph -- never the console's own, which doesn't exist yet at this point in boot.
+const BOOT_UI_KG_DIR: &str = "/run/hyperion/display-ui";
 
 struct Card(std::fs::File);
 
@@ -47,16 +55,6 @@ impl Card {
     }
 }
 
-/// A simple, deliberate three-band color pattern -- not a solid fill, so a real screenshot
-/// showing exactly these three bands in this exact order is strong evidence of a real, working
-/// mode-set (rendering *specific, controlled* pixel data), not stale/garbage VRAM content a
-/// solid fill could be mistaken for.
-const BAND_COLORS_BGRX: [[u8; 4]; 3] = [
-    [0x4a, 0x2c, 0x6b, 0x00], // deep violet (Hyperion's own band)
-    [0xff, 0xff, 0xff, 0x00], // white
-    [0x6b, 0x2c, 0x4a, 0x00], // deep magenta
-];
-
 /// Runs the real DRM/KMS mode-set proof if (and only if) a real display device is present at
 /// [`CARD_PATH`].
 pub fn run_display_probe() {
@@ -73,6 +71,8 @@ pub fn run_display_probe() {
     };
 
     let result = (|| -> Result<(String, (u32, u32)), String> {
+        let workspace = super::ui_render::compile_boot_workspace(Path::new(BOOT_UI_KG_DIR))?;
+
         let res = card
             .resource_handles()
             .map_err(|e| format!("couldn't load real resource handles: {e}"))?;
@@ -108,19 +108,12 @@ pub fn run_display_probe() {
             let mut map = card
                 .map_dumb_buffer(&mut db)
                 .map_err(|e| format!("couldn't map the real dumb buffer: {e}"))?;
-            let buf = map.as_mut();
-            let band_height = (height as usize) / BAND_COLORS_BGRX.len();
-            let stride = (width as usize) * 4;
-            for row in 0..(height as usize) {
-                let band = (row / band_height.max(1)).min(BAND_COLORS_BGRX.len() - 1);
-                let color = BAND_COLORS_BGRX[band];
-                for col in 0..(width as usize) {
-                    let offset = row * stride + col * 4;
-                    if offset + 4 <= buf.len() {
-                        buf[offset..offset + 4].copy_from_slice(&color);
-                    }
-                }
-            }
+            super::ui_render::rasterize_workspace(
+                map.as_mut(),
+                width.into(),
+                height.into(),
+                &workspace,
+            );
         }
 
         let fb = card
@@ -143,8 +136,8 @@ pub fn run_display_probe() {
         Ok((mode, (w, h))) => {
             println!(
                 "[hyperion-init] DISPLAY: PASS -- real DRM/KMS mode-set applied, {w}x{h}, real \
-                 mode {mode}, three-band color pattern written to a real dumb buffer and \
-                 displayed"
+                 mode {mode}, a real compiled WorkspaceGraph rasterized (panels + real glyph \
+                 text) into a real dumb buffer and displayed"
             );
         }
         Err(e) => println!("[hyperion-init] DISPLAY: FAIL -- {e}"),

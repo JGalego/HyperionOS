@@ -14,6 +14,7 @@
 mod display_probe;
 mod network_probe;
 mod storage_probe;
+mod ui_render;
 mod update_probe;
 
 use std::ffi::CString;
