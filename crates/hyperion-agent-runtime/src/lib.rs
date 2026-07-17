@@ -96,16 +96,22 @@
 //!   [`AgentInstance`] record gated by a [`hyperion_capability::CapabilityToken`],
 //!   the same hosted-simulator translation every other crate in this
 //!   workspace already uses for a Trust Boundary.
-//! - **Real Capability dispatch / Plugin Framework** ([24 — Plugin
-//!   Framework](../24-plugin-framework.md), Phase 9) — `invoke()` now dispatches
+//! - ~~**Real Capability dispatch / Plugin Framework**~~ ([24 — Plugin
+//!   Framework](../24-plugin-framework.md), Phase 9) — `invoke()` dispatches
 //!   `assistant.respond`/`web.research`/`document.draft`/`web.search` (plus the three cloud
-//!   capabilities) through a real backend apiece; every *other*, undeclared capability still
-//!   falls through to [`stubs::dispatch`]'s catch-all echo, not a real registry lookup. A
-//!   capability call can be made to *fail* deterministically (pass `{"force_fail": true}` in
-//!   `args`) specifically so the circuit breaker and `hyperion-coordination`'s
-//!   failure-containment logic have something real to react to without needing a real Capability
-//!   that can actually fail on its own — both new real dispatch functions honor this the same way
-//!   [`stubs::dispatch`] always has.
+//!   capabilities) through a real backend apiece; every *other* `capability_ref` is now a real
+//!   [`runtime::PluginRegistry::query`] lookup — when a caller wired one in (`plugins: Some(...)`,
+//!   e.g. `hyperion-console`'s own `ConsoleSession`) and it names an installed capability backed
+//!   by `hyperion_plugin_framework::ImplementationKind::NativeBinary`, the call runs for real
+//!   under that registry's Landlock/seccomp sandbox via
+//!   `hyperion_plugin_framework::PluginRegistry::invoke_native_binary`. Only a capability *no*
+//!   wired registry has installed still falls through to [`stubs::dispatch`]'s catch-all echo
+//!   still falls through to [`stubs::dispatch`]'s catch-all echo — never a silent stub for one a
+//!   registry actually knows about. A capability call can be made to *fail* deterministically
+//!   (pass `{"force_fail": true}` in `args`) specifically so the circuit breaker and
+//!   `hyperion-coordination`'s failure-containment logic have something real to react to without
+//!   needing a real Capability that can actually fail on its own — both new real dispatch
+//!   functions honor this the same way [`stubs::dispatch`] always has.
 //! - **Proving the Scheduler gate can actually deny.** `invoke()` already
 //!   holds a single global lock across its own entire body, and releases
 //!   its Scheduler reservation the instant its (synchronous) dispatch
