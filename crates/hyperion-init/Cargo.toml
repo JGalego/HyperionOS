@@ -1,6 +1,6 @@
 [package]
 name = "hyperion-init"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 license.workspace = true
 description = "Hyperion's PID 1 on the Linux-hosted MVP: mounts the real root filesystem and runs the real supervision tree (docs/998-roadmap.md M1/M5)."

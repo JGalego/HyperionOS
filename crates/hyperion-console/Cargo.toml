@@ -1,6 +1,6 @@
 [package]
 name = "hyperion-console"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 license.workspace = true
 description = "Real text console: a typed utterance drives the real Intent Engine, real Agent invocation, and hyperion-workspace's real compiled accessibility tree, rendered as real text (docs/998-roadmap.md M7, stage 1)."
