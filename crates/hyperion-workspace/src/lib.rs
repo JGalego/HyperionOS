@@ -42,10 +42,15 @@
 //! - **Real rendering/compositor and pixel layout solve** — see this
 //!   crate's own scope note above. [`compiler::WorkspaceCompiler::mount`]
 //!   transitions lifecycle state; it does not paint anything.
-//! - **Live incremental re-render over a real Event System** ([31 — Event
-//!   System](../31-event-system.md), not built) — this crate has no
-//!   `LiveUpdateEvent` subscription; a caller can re-derive/re-bind by
-//!   calling compile again, which is correct but not incremental.
+//! - ~~**Live incremental re-render over a real Event System**~~ — now real:
+//!   [`WorkspaceCompiler::with_events`] wires a real `hyperion-events::EventBus`;
+//!   [`WorkspaceCompiler::subscribe_live`] opens one real
+//!   `TopicPattern::Subtree`/`Coalesce` subscription per Workspace (every
+//!   Panel's own topic coalesces independently — see `hyperion-events`'s
+//!   own per-topic coalesce fix), [`WorkspaceCompiler::publish_live_update`]
+//!   is the producer half, and [`WorkspaceCompiler::apply_live_update`]
+//!   is docs/13 §5.5 made real: it diffs and patches exactly the one named
+//!   `Panel`'s `render_state`/binding, never recompiling the whole graph.
 //! - **Real-time translation, captioning, ADHD reduced-distraction mode,
 //!   dyslexia typography/pacing.** All four need either a real local
 //!   translation/speech-to-text backend
@@ -82,5 +87,6 @@ pub use modality::{project, Modality, ModalityInterface};
 pub use plugin_contracts::known_contract_for;
 pub use types::{
     AccessibilityNode, AccessibilityTree, Binding, BindingMode, CompiledLayoutTemplate,
-    LifecycleState, Panel, RenderState, WorkspaceGraph, WorkspaceIntentKey,
+    LifecycleState, LiveUpdateEvent, LiveUpdateEventKind, Panel, RenderState, WorkspaceGraph,
+    WorkspaceIntentKey,
 };

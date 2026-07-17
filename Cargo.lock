@@ -3365,6 +3365,7 @@ dependencies = [
  "hyperion-capability",
  "hyperion-context",
  "hyperion-crypto",
+ "hyperion-events",
  "hyperion-intent",
  "hyperion-knowledge-graph",
  "hyperion-plugin-framework",

@@ -88,6 +88,27 @@ pub struct WorkspaceGraph {
     pub created_at: u64,
 }
 
+/// docs/13 §4's `LiveUpdateEvent.event_type`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveUpdateEventKind {
+    ResultReady,
+    Progress,
+    Error,
+}
+
+/// docs/13 §4's `LiveUpdateEvent` — consumed from
+/// [31 — Event System](../31-event-system.md). `payload_ref` names where the
+/// actual new result lives (a Knowledge Graph node), matching `Binding.target`'s
+/// own `NodeId` type — the same reference a rebind writes into the affected
+/// Panel's own `Binding`.
+#[derive(Debug, Clone, Copy)]
+pub struct LiveUpdateEvent {
+    pub workspace_id: u64,
+    pub panel_id: u64,
+    pub event_type: LiveUpdateEventKind,
+    pub payload_ref: Option<NodeId>,
+}
+
 /// docs/14 §4's `AccessibilityTree` — isomorphic to the Workspace UI
 /// Graph; `focus_order` is the screen-reader/switch-scan traversal order.
 #[derive(Debug, Clone)]
