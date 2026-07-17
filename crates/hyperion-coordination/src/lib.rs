@@ -69,10 +69,16 @@
 //!   [`WriteOutcome`]/[`ConflictRecord`]/[`ConflictKind`]/[`ConflictResolution`]
 //!   all gained real `Serialize`/`Deserialize` impls to make that
 //!   possible.
-//! - **Progress/escalation broadcast over a real Event System**
-//!   ([31 — Event System](../31-event-system.md), not built) —
-//!   [`CoordinationSession::progress`] and `.escalations()` are pull-based
-//!   accessors a caller polls, not a push subscription.
+//! - ~~**Progress/escalation broadcast over a real Event System**~~ — now
+//!   real: [`engine::CoordinationSession::with_events`] wires a real
+//!   `hyperion-events::EventBus`; [`engine::CoordinationSession::allocate`]
+//!   publishes a real `AgentProgress`/`coordination.task_progress.v1`
+//!   event on every task's `Done` transition, and a real `AgentProgress`/
+//!   `coordination.escalation.v1` event whenever a real
+//!   [`types::Escalation`] is raised (both in `allocate`'s own failure path
+//!   and in [`engine::CoordinationSession::arbitrate_contradiction`]).
+//!   [`engine::CoordinationSession::progress`]/`.escalations()` remain —
+//!   pull and push are complementary, not a replacement for each other.
 //! - ~~Object-affinity plan partitioning~~ (docs/12 §12, a scale
 //!   optimization for tens of concurrent Agents) — now real:
 //!   [`engine::task_partition_key`] groups tasks into the same real

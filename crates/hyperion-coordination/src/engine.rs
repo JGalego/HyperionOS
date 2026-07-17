@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_agent_runtime::{AgentError, AgentRuntime, InvokeOutcome, LifecycleState, TrustTier};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_events::{EventBus, EventPayload, SubjectId, Topic, TopicKind};
 use hyperion_explainability::{
     ControlState, ExplanationId, ExplanationRecord, ExplanationStore, ReasoningStep,
 };
@@ -277,6 +278,10 @@ pub struct CoordinationSession {
     /// leaf as genuinely `Completed` once its real dispatch succeeds -- see
     /// [`Self::with_intent_engine`]'s own doc comment for what wiring one in actually does.
     intent_engine: Option<Arc<IntentEngine>>,
+    /// docs/31-event-system.md's own named "progress/escalation broadcast over a real Event
+    /// System" gap for this crate: real, optional, the same `Option<Arc<...>>` shape as
+    /// `recovery`/`intent_engine` above. See [`Self::with_events`].
+    events: Option<Arc<EventBus>>,
 }
 
 impl CoordinationSession {
@@ -309,6 +314,76 @@ impl CoordinationSession {
             recovery: None,
             last_explanation_by_task: Mutex::new(HashMap::new()),
             intent_engine: None,
+            events: None,
+        }
+    }
+
+    /// Opts this session into docs/31-event-system.md's real broadcast bus: closes this crate's
+    /// own previously-named "`CoordinationSession::progress`/`.escalations()` are pull-based
+    /// accessors a caller polls, not a push subscription" gap. Once wired, [`Self::allocate`]
+    /// publishes a real `AgentProgress`/`coordination.task_progress.v1` event on every task's
+    /// `Done` transition, and a real `AgentProgress`/`coordination.escalation.v1` event whenever
+    /// a real [`Escalation`] is raised (both here and in [`Self::arbitrate_contradiction`]) —
+    /// deliberately the *same* topic kind for both, distinguished by `schema_id`, since docs/31
+    /// itself declares no dedicated "escalation" `TopicKind` and an escalation genuinely is a
+    /// progress signal (a task's progress just became "stuck," not merely "advancing").
+    /// Published under the *acting* token's own origin (`token.origin()`), not a single
+    /// session-wide owner — this crate has no such single owner today (any `WRITE`-rights token
+    /// may call `allocate` for any `session_id`), so "who authorized this progress update" is
+    /// genuinely "whoever's `allocate`/`arbitrate_contradiction` call produced it."
+    pub fn with_events(mut self, events: Arc<EventBus>) -> Self {
+        self.events = Some(events);
+        self
+    }
+
+    fn publish_progress(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        session_id: u64,
+        task_id: NodeId,
+        status: TaskStatus,
+    ) {
+        let Some(bus) = &self.events else {
+            return;
+        };
+        let topic = Topic::new(
+            TopicKind::AgentProgress,
+            SubjectId::Agent(session_id),
+            "coordination.task_progress.v1",
+        );
+        let payload = EventPayload::Inline(serde_json::json!({
+            "session_id": session_id,
+            "task_id": task_id.0,
+            "status": format!("{status:?}"),
+        }));
+        if let Err(e) = bus.publish(monitor, token, token.origin(), topic, payload, Vec::new()) {
+            eprintln!("hyperion-coordination: failed to publish task progress event: {e}");
+        }
+    }
+
+    fn publish_escalation(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        session_id: u64,
+        escalation: &Escalation,
+    ) {
+        let Some(bus) = &self.events else {
+            return;
+        };
+        let topic = Topic::new(
+            TopicKind::AgentProgress,
+            SubjectId::Agent(session_id),
+            "coordination.escalation.v1",
+        );
+        let payload = EventPayload::Inline(serde_json::json!({
+            "session_id": session_id,
+            "task_id": escalation.task_id.0,
+            "reason": escalation.reason,
+        }));
+        if let Err(e) = bus.publish(monitor, token, token.origin(), topic, payload, Vec::new()) {
+            eprintln!("hyperion-coordination: failed to publish escalation event: {e}");
         }
     }
 
@@ -504,7 +579,14 @@ impl CoordinationSession {
         }
     }
 
-    fn handle_task_failure(&self, plan: &mut SharedPlan, idx: usize, session_id: u64) {
+    fn handle_task_failure(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        plan: &mut SharedPlan,
+        idx: usize,
+        session_id: u64,
+    ) {
         plan.nodes[idx].attempts += 1;
         if plan.nodes[idx].attempts <= RETRY_LIMIT {
             // docs/12 §11: "requeued through the allocation algorithm
@@ -516,18 +598,20 @@ impl CoordinationSession {
             plan.nodes[idx].status = TaskStatus::Failed;
             let task_id = plan.nodes[idx].task_id;
             let description = plan.nodes[idx].description.clone();
+            let escalation = Escalation {
+                task_id,
+                reason: format!(
+                    "'{description}' failed after {} attempt(s) and needs a decision",
+                    plan.nodes[idx].attempts
+                ),
+            };
+            self.publish_escalation(monitor, token, session_id, &escalation);
             self.escalations
                 .lock()
                 .unwrap()
                 .entry(session_id)
                 .or_default()
-                .push(Escalation {
-                    task_id,
-                    reason: format!(
-                        "'{description}' failed after {} attempt(s) and needs a decision",
-                        plan.nodes[idx].attempts
-                    ),
-                });
+                .push(escalation);
         }
     }
 
@@ -863,10 +947,11 @@ impl CoordinationSession {
                             IntentStatus::Completed,
                         );
                     }
+                    self.publish_progress(monitor, token, session_id, d.task_id, TaskStatus::Done);
                     (ControlState::Completed, TaskStatus::Done)
                 }
                 InvokeOutcome::Failed(_) => {
-                    self.handle_task_failure(plan, d.idx, session_id);
+                    self.handle_task_failure(monitor, token, plan, d.idx, session_id);
                     Self::bump_partition_version(plan, d.task_id);
                     (ControlState::RolledBack, plan.nodes[d.idx].status)
                 }
@@ -1155,10 +1240,19 @@ impl CoordinationSession {
         };
         plan.conflicts.push(conflict.clone());
         if resolution == ConflictResolution::Pending {
-            self.escalations.lock().unwrap().entry(session_id).or_default().push(Escalation {
+            let escalation = Escalation {
                 task_id: task_a,
-                reason: format!("'{pred_a}' and '{pred_b}' disagree and neither is prioritized — needs a decision"),
-            });
+                reason: format!(
+                    "'{pred_a}' and '{pred_b}' disagree and neither is prioritized — needs a decision"
+                ),
+            };
+            self.publish_escalation(monitor, token, session_id, &escalation);
+            self.escalations
+                .lock()
+                .unwrap()
+                .entry(session_id)
+                .or_default()
+                .push(escalation);
         }
         Ok(conflict)
     }

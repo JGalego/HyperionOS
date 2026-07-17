@@ -2919,6 +2919,7 @@ dependencies = [
  "hyperion-capability",
  "hyperion-context",
  "hyperion-crypto",
+ "hyperion-events",
  "hyperion-explainability",
  "hyperion-federation",
  "hyperion-intent",
