@@ -13,7 +13,9 @@ pub enum InterventionLevel {
     RequireBackupFirst,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Declared in ascending severity, matching [`InterventionLevel`]'s own convention, so a derived
+/// `Ord` lets [`crate::engine::verify_action`] escalate via `.max(...)` rather than a manual match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SensitivityHint {
     Public,
     Personal,

@@ -427,6 +427,7 @@ impl ApiGateway {
         let risk_assessment = hyperion_security::assess_and_prepare(
             monitor,
             token,
+            &self.graph,
             &self.recovery,
             &pending_action,
             now,

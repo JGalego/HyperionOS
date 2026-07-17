@@ -56,19 +56,24 @@
 //!   `device_origin` per node (its own crate doc's "Per-object ACL
 //!   enforcement" deferral); layering a trust score on top with no
 //!   consumer yet is deferred alongside that.
-//! - **Blast-radius/sensitivity/reversibility *classifiers*.**
-//!   [`types::PendingAction`] takes these as caller-supplied hints
-//!   (`scope_size`, `SensitivityHint`, a `reversible` boolean) rather than
-//!   computing them from real content inspection — docs/15 §7 assumes
-//!   these classifiers exist upstream; this crate is the scoring/
-//!   decision layer that consumes their output, not the classifiers
-//!   themselves.
+//! - ~~**Blast-radius/sensitivity/reversibility *classifiers*.**~~ — narrowed, not fully closed:
+//!   [`engine::verify_action`] (wired into [`engine::assess_and_prepare`], the one real
+//!   production entry point) re-derives `scope_size` from the real `object_refs.len()` rather
+//!   than trusting a separately claimed number, and downgrades `reversible`/escalates
+//!   `sensitivity` whenever any referenced object can't actually be read back by this same token
+//!   via `hyperion-knowledge-graph` — a caller can no longer claim a safe, reversible,
+//!   low-sensitivity action against objects it cannot itself verify are real, live, and theirs.
+//!   Full *content-based* sensitivity classification (what does this object's real content mean
+//!   for privacy risk) is still future work — docs/15 §7's real classifier pipeline this crate's
+//!   own scoring layer consumes — since no crate in this workspace maintains a real per-object
+//!   sensitivity registry to query yet (`hyperion-privacy::ResidencyTag` is a plain struct
+//!   threaded call-to-call today, not a store).
 
 mod engine;
 mod model_integrity;
 mod types;
 
-pub use engine::{assess, assess_and_prepare, cross_agent_delegation_verify};
+pub use engine::{assess, assess_and_prepare, cross_agent_delegation_verify, verify_action};
 pub use model_integrity::canary_gate_model_promotion;
 pub use types::{
     ActionId, CanaryResult, IntentProvenanceChain, InterventionLevel, ModelIntegrityRecord,

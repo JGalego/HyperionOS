@@ -30,9 +30,16 @@ fn assess_and_prepare_requires_exec_rights() {
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
-    let recovery = RecoveryService::new(graph);
+    let recovery = RecoveryService::new(graph.clone());
 
-    let result = assess_and_prepare(&monitor, &write_only, &recovery, &trivial_action(), 1_000);
+    let result = assess_and_prepare(
+        &monitor,
+        &write_only,
+        &graph,
+        &recovery,
+        &trivial_action(),
+        1_000,
+    );
     assert!(matches!(result, Err(SecurityError::Unauthorized)));
 }
 
@@ -45,14 +52,29 @@ fn revoking_a_token_blocks_further_access_re_checked_live() {
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
-    let recovery = RecoveryService::new(graph);
+    let recovery = RecoveryService::new(graph.clone());
 
-    assert!(assess_and_prepare(&monitor, &delegate, &recovery, &trivial_action(), 1_000).is_ok());
+    assert!(assess_and_prepare(
+        &monitor,
+        &delegate,
+        &graph,
+        &recovery,
+        &trivial_action(),
+        1_000
+    )
+    .is_ok());
 
     monitor.cap_revoke(&delegate);
 
     assert!(matches!(
-        assess_and_prepare(&monitor, &delegate, &recovery, &trivial_action(), 1_001),
+        assess_and_prepare(
+            &monitor,
+            &delegate,
+            &graph,
+            &recovery,
+            &trivial_action(),
+            1_001
+        ),
         Err(SecurityError::Unauthorized)
     ));
 }

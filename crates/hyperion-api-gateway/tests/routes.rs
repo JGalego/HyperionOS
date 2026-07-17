@@ -16,7 +16,7 @@ use hyperion_context::ContextEngine;
 use hyperion_crypto::Keystore;
 use hyperion_explainability::ExplanationStore;
 use hyperion_intent::IntentEngine;
-use hyperion_knowledge_graph::{GraphQuery, KnowledgeGraph};
+use hyperion_knowledge_graph::{GraphQuery, KnowledgeGraph, NodeId};
 use hyperion_memory::MemoryEngine;
 use hyperion_model_router::ModelRouter;
 use hyperion_plugin_framework::{
@@ -750,16 +750,35 @@ fn among_two_equally_healthy_candidates_the_higher_quality_one_wins() {
     );
 }
 
-fn risky_pending_action_hints() -> RiskHints {
+/// Ten real, existing objects — `hyperion_security::verify_action` now re-derives `scope_size`
+/// from the real `object_refs.len()` rather than trusting a separately claimed number, so this
+/// fixture must actually back its own claim with real Knowledge-Graph state.
+fn make_real_objects(
+    graph: &KnowledgeGraph,
+    monitor: &CapabilityMonitor,
+    token: &hyperion_capability::CapabilityToken,
+    n: usize,
+) -> Vec<NodeId> {
+    (0..n)
+        .map(|_| {
+            graph
+                .put_node(monitor, token, None, "Note", None, serde_json::json!({}))
+                .unwrap()
+        })
+        .collect()
+}
+
+fn risky_pending_action_hints(object_refs: Vec<NodeId>) -> RiskHints {
     // scope_size >= 10 saturates blast radius to 1.0; reversible: false
     // zeroes reversibility — together they trip docs/15 §7's
     // unconditional "irreversible + wide blast radius" floor straight to
     // `RequireBackupFirst`, regardless of the other (deliberately mild)
     // inputs, so this test isn't sensitive to the weighted-composite
-    // arithmetic.
+    // arithmetic. `scope_size` is nominal here -- `verify_action` recomputes it for
+    // real from `object_refs.len()`.
     RiskHints {
-        object_refs: vec![],
-        scope_size: 10,
+        scope_size: object_refs.len() as u32,
+        object_refs,
         reversible: false,
         sensitivity: hyperion_security::SensitivityHint::Sensitive,
         intent_confidence: 0.5,
@@ -774,6 +793,7 @@ fn a_risky_action_is_rejected_without_confirmation() {
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let graph_handle = graph.clone();
     let context = Arc::new(ContextEngine::new(graph.clone()));
     let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
@@ -828,6 +848,7 @@ fn a_risky_action_is_rejected_without_confirmation() {
         )
         .unwrap();
 
+    let touched = make_real_objects(&graph_handle, &monitor, &root, 10);
     let result = gateway.invoke_capability(
         &monitor,
         &root,
@@ -836,7 +857,7 @@ fn a_risky_action_is_rejected_without_confirmation() {
             inputs: serde_json::json!({"query": "hyperion os"}),
             agent_id: 1,
             intent_id: 1,
-            risk: risky_pending_action_hints(),
+            risk: risky_pending_action_hints(touched),
             confirmed: false,
         },
         1_000,
@@ -856,6 +877,7 @@ fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let graph_handle = graph.clone();
     let context = Arc::new(ContextEngine::new(graph.clone()));
     let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
@@ -910,6 +932,7 @@ fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as
         )
         .unwrap();
 
+    let touched = make_real_objects(&graph_handle, &monitor, &root, 10);
     let response = gateway
         .invoke_capability(
             &monitor,
@@ -919,7 +942,7 @@ fn a_risky_action_confirmed_by_the_caller_gets_a_real_recovery_point_attached_as
                 inputs: serde_json::json!({"query": "hyperion os"}),
                 agent_id: 1,
                 intent_id: 1,
-                risk: risky_pending_action_hints(),
+                risk: risky_pending_action_hints(touched),
                 confirmed: true,
             },
             1_000,
@@ -1082,6 +1105,7 @@ fn an_ensemble_agreement_between_two_stub_dispatched_candidates_boosts_confidenc
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let dir = tempfile::tempdir().unwrap();
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let graph_handle = graph.clone();
     let context = Arc::new(ContextEngine::new(graph.clone()));
     let intent = Arc::new(IntentEngine::new(graph.clone(), context.clone()));
     let memory = Arc::new(MemoryEngine::new(graph.clone()));
@@ -1175,6 +1199,7 @@ fn an_ensemble_agreement_between_two_stub_dispatched_candidates_boosts_confidenc
         )
         .unwrap();
 
+    let touched = make_real_objects(&graph_handle, &monitor, &root, 10);
     let response = gateway
         .invoke_capability(
             &monitor,
@@ -1184,7 +1209,7 @@ fn an_ensemble_agreement_between_two_stub_dispatched_candidates_boosts_confidenc
                 inputs: serde_json::json!({"query": "hyperion os"}),
                 agent_id: 1,
                 intent_id: 1,
-                risk: risky_pending_action_hints(), // HighStakes -> needs_verification
+                risk: risky_pending_action_hints(touched), // HighStakes -> needs_verification
                 confirmed: true,
             },
             1_002,

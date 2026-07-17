@@ -1,7 +1,10 @@
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_knowledge_graph::KnowledgeGraph;
 use hyperion_recovery::{RecoveryService, Trigger};
 
-use crate::types::{InterventionLevel, PendingAction, RiskAssessment, SecurityError};
+use crate::types::{
+    InterventionLevel, PendingAction, RiskAssessment, SecurityError, SensitivityHint,
+};
 
 /// docs/15 §7's four score bands.
 const SILENT_MAX: f32 = 0.2;
@@ -35,6 +38,50 @@ fn score_reversibility(action: &PendingAction) -> f32 {
     } else {
         0.0
     }
+}
+
+/// docs/15 §7's own named gap, closed for the three dimensions this workspace already has real,
+/// independently-checkable data for — see this crate's doc comment's "Blast-radius/sensitivity/
+/// reversibility classifiers" deferral, narrowed rather than removed: full content-based
+/// classification is still future work, but a caller can no longer *lie* about these three in a
+/// way real Knowledge-Graph state would immediately contradict. Never widens a caller's own
+/// claim — a caller under-stating their own confidence is out of scope; over-stating safety
+/// against real, checkable evidence is what this closes:
+///
+/// - `scope_size` becomes the real `object_refs.len()`, never the caller's separately claimed
+///   number — the two could previously disagree arbitrarily (an empty `object_refs` with a
+///   claimed `scope_size: 1` looked "minimal," a 10,000-entry `object_refs` with a claimed
+///   `scope_size: 1` looked identical to the scorer).
+/// - `reversible` is downgraded to `false` if any referenced object cannot be read back by this
+///   same token (`KnowledgeGraph::get` returns `Err` for a foreign, tombstoned, or nonexistent
+///   object, deliberately conflated per that crate's own "never reveal existence of what you
+///   can't see" doc comment) — claiming an action is safely undoable when this caller cannot even
+///   confirm the object is real, live, and theirs is exactly the unverified claim docs/15 §7
+///   assumed an upstream classifier would already have caught.
+/// - `sensitivity` is escalated to at least [`SensitivityHint::Sensitive`] under the same
+///   unverifiable-reference condition — touching data you cannot yourself confirm exists is not
+///   a "routine, low-sensitivity" action regardless of what the caller claims.
+pub fn verify_action(
+    monitor: &CapabilityMonitor,
+    token: &CapabilityToken,
+    graph: &KnowledgeGraph,
+    mut action: PendingAction,
+) -> PendingAction {
+    action.scope_size = action.object_refs.len() as u32;
+
+    // Vacuously verified when there's nothing to check -- an action touching no object at all
+    // poses no real per-object risk this dimension can speak to, and already scores a `0.0`
+    // blast radius above; it must not be escalated for touching "nothing verifiable."
+    let all_verified = action
+        .object_refs
+        .iter()
+        .all(|&id| graph.get(monitor, token, id).is_ok());
+
+    if !all_verified {
+        action.reversible = false;
+        action.sensitivity = action.sensitivity.max(SensitivityHint::Sensitive);
+    }
+    action
 }
 
 /// docs/15 §7's risk-assessment algorithm, exactly: a weighted composite
@@ -103,19 +150,21 @@ fn require(
 pub fn assess_and_prepare(
     monitor: &CapabilityMonitor,
     token: &CapabilityToken,
+    graph: &KnowledgeGraph,
     recovery: &RecoveryService,
     action: &PendingAction,
     now: u64,
 ) -> Result<RiskAssessment, SecurityError> {
     require(monitor, token, RightsMask::EXEC)?;
 
-    let mut assessment = assess(action);
+    let verified = verify_action(monitor, token, graph, action.clone());
+    let mut assessment = assess(&verified);
     if assessment.intervention_level == InterventionLevel::RequireBackupFirst {
         let point = recovery.recovery_point_create(
             monitor,
             token,
             Trigger::PreRiskyAction,
-            &action.object_refs,
+            &verified.object_refs,
             now,
         )?;
         assessment.recovery_point_ref = Some(point);
