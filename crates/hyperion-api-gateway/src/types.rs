@@ -22,6 +22,26 @@ pub enum ApiScope {
     ContextAssemble,
 }
 
+/// docs/26's own named "Rate/quota enforcement... no algorithm given" gap: a real, per-caller
+/// fixed-window counter policy for [`crate::gateway::ApiGateway::invoke_capability`], the same
+/// algorithm `hyperion-netstack`'s own `DomainEgressGrant` rate limiting already established.
+/// `Default` is a generous, always-applied floor every caller gets until
+/// [`crate::gateway::ApiGateway::set_rate_limit`] overrides it for one specific token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RateLimitPolicy {
+    pub calls_per_window: u32,
+    pub window_secs: u64,
+}
+
+impl Default for RateLimitPolicy {
+    fn default() -> Self {
+        RateLimitPolicy {
+            calls_per_window: 60,
+            window_secs: 60,
+        }
+    }
+}
+
 /// docs/26 §2's Intent API `SubmitIntentRequest`, narrowed to what
 /// `hyperion-intent::IntentEngine::handle_utterance` actually takes.
 #[derive(Debug, Clone)]
@@ -178,6 +198,11 @@ pub enum ApiError {
     OutOfScopeObject,
     #[error("no eligible implementation could satisfy this capability invocation")]
     NoEligibleImplementation,
+    /// docs/26's own named "Rate/quota enforcement... no algorithm given" gap, closed with a
+    /// real, per-caller fixed-window counter -- see [`crate::gateway::ApiGateway::
+    /// check_rate_limit`]'s own doc comment for the algorithm.
+    #[error("rate limit exceeded for this token's current window")]
+    RateLimited,
     #[error("this action was assessed as {0:?} and requires explicit confirmation before it can proceed")]
     ConfirmationRequired(InterventionLevel),
     /// docs/23 §Pseudocode's `reconcile_ensemble`'s `EscalateToHuman` case, real for the first

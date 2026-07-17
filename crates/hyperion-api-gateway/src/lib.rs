@@ -149,8 +149,15 @@
 //!   docs/26 itself writes these as HTTP verbs, but this hosted simulator
 //!   has no real network; `RawRequest`/`RawResponse` framing is not
 //!   modeled since nothing serializes across a wire.
-//! - **Rate/quota enforcement.** Named only as a diagram box in docs/26,
-//!   with no algorithm given — not implemented.
+//! - ~~**Rate/quota enforcement.**~~ (2026-07-18) — named only as a diagram box in docs/26, with
+//!   no algorithm given, so a real one was supplied: [`gateway::ApiGateway::invoke_capability`]
+//!   (the gateway's single most expensive real dispatch path — real risk assessment, real Model
+//!   Router selection, real inference) is now bounded by a real, per-caller fixed-window counter
+//!   ([`types::RateLimitPolicy`]), the same algorithm `hyperion-netstack`'s own
+//!   `DomainEgressGrant` rate limiting already established. A generous default applies to every
+//!   token until [`gateway::ApiGateway::set_rate_limit`] overrides it for one specific caller.
+//!   Every *other* endpoint here remains unbounded, matching how narrowly docs/26 itself scoped
+//!   this gap (a single diagram box, not "every endpoint").
 //! - **API schema versioning / cross-version compatibility.** Docs/26
 //!   states the invariant (an old-schema request must be served or
 //!   typed-rejected, never silently misinterpreted) but gives no
@@ -163,6 +170,6 @@ mod types;
 pub use gateway::ApiGateway;
 pub use hyperion_context::{Budget, ContextBundle, Scope};
 pub use types::{
-    ApiError, ApiScope, InvokeRequest, InvokeResponse, RiskHints, SubmitIntentRequest,
-    SubmitIntentResponse,
+    ApiError, ApiScope, InvokeRequest, InvokeResponse, RateLimitPolicy, RiskHints,
+    SubmitIntentRequest, SubmitIntentResponse,
 };

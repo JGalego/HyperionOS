@@ -21,9 +21,16 @@ use crate::router_bridge::{
     to_confidence_and_alternatives, to_router_descriptor,
 };
 use crate::types::{
-    ApiError, ApiScope, EnsembleOutcome, InvokeRequest, InvokeResponse, SkillDelegationSignal,
-    SubmitIntentRequest, SubmitIntentResponse,
+    ApiError, ApiScope, EnsembleOutcome, InvokeRequest, InvokeResponse, RateLimitPolicy,
+    SkillDelegationSignal, SubmitIntentRequest, SubmitIntentResponse,
 };
+
+/// One caller's real, live rate-limit window state -- see [`ApiGateway::check_rate_limit`].
+struct RateLimitState {
+    policy: RateLimitPolicy,
+    window_started_at: u64,
+    calls_this_window: u32,
+}
 
 /// docs/26 — the API Gateway: "a thin, uniform gateway in front of five
 /// subsystem servers." See this crate's doc comment for the full real/
@@ -49,6 +56,9 @@ pub struct ApiGateway {
     /// now writes — see this crate's doc comment.
     audit: Arc<AuditLedger>,
     scope_grants: Mutex<HashMap<TokenId, HashSet<ApiScope>>>,
+    /// [`Self::invoke_capability`]'s own real, per-caller rate-limit state -- see
+    /// [`Self::check_rate_limit`]'s own doc comment.
+    rate_limits: Mutex<HashMap<TokenId, RateLimitState>>,
     /// `None` — the default, plain [`Self::new`] — keeps every existing caller's behavior
     /// unchanged: `cloud_consent` stays the permissive `true` default (see
     /// `crate::router_bridge::build_invocation`'s own doc comment for why that default is safe).
@@ -92,6 +102,7 @@ impl ApiGateway {
             ai_runtime,
             audit,
             scope_grants: Mutex::new(HashMap::new()),
+            rate_limits: Mutex::new(HashMap::new()),
             consent_ledger: None,
         }
     }
@@ -168,6 +179,61 @@ impl ApiGateway {
         if !granted.contains(&scope) {
             return Err(ApiError::InsufficientScope(scope));
         }
+        Ok(())
+    }
+
+    /// docs/26's own named "Rate/quota enforcement... no algorithm given" gap, closed for
+    /// [`Self::invoke_capability`] -- the gateway's single most expensive real dispatch path
+    /// (real risk assessment, real Model Router selection, real inference) and the natural place
+    /// to bound abuse. A real, per-caller fixed-window counter: the exact same algorithm
+    /// `hyperion-netstack`'s own `DomainEgressGrant` rate limiting already established (reset the
+    /// window once `window_secs` has elapsed, reject once `calls_per_window` is reached within
+    /// it). [`RateLimitPolicy::default`] applies to any token until [`Self::set_rate_limit`]
+    /// overrides it.
+    fn check_rate_limit(&self, token: &CapabilityToken, now: u64) -> Result<(), ApiError> {
+        let mut limits = self.rate_limits.lock().unwrap();
+        let state = limits
+            .entry(token.token_id())
+            .or_insert_with(|| RateLimitState {
+                policy: RateLimitPolicy::default(),
+                window_started_at: now,
+                calls_this_window: 0,
+            });
+        if now.saturating_sub(state.window_started_at) >= state.policy.window_secs {
+            state.window_started_at = now;
+            state.calls_this_window = 0;
+        }
+        if state.calls_this_window >= state.policy.calls_per_window {
+            return Err(ApiError::RateLimited);
+        }
+        state.calls_this_window += 1;
+        Ok(())
+    }
+
+    /// Sets a real, per-token override for [`Self::invoke_capability`]'s rate limit -- e.g. a
+    /// trusted service-account token that legitimately needs a higher ceiling than
+    /// [`RateLimitPolicy::default`]. Mirrors [`Self::grant_scopes`]'s own shape exactly: a live
+    /// token declaring its own state, the same "this gateway mints no separate identity model"
+    /// simplification that method's own doc comment already establishes -- not a new security
+    /// boundary this method introduces.
+    pub fn set_rate_limit(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        policy: RateLimitPolicy,
+        now: u64,
+    ) -> Result<(), ApiError> {
+        if !monitor.is_live(token) {
+            return Err(ApiError::Unauthorized);
+        }
+        self.rate_limits.lock().unwrap().insert(
+            token.token_id(),
+            RateLimitState {
+                policy,
+                window_started_at: now,
+                calls_this_window: 0,
+            },
+        );
         Ok(())
     }
 
@@ -400,6 +466,7 @@ impl ApiGateway {
         now: u64,
     ) -> Result<InvokeResponse, ApiError> {
         self.authorize(monitor, token, ApiScope::CapabilityInvoke)?;
+        self.check_rate_limit(token, now)?;
 
         let entry = self
             .registry
