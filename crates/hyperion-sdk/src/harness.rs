@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use hyperion_ai_runtime::{cosine_similarity, embed};
+
 use crate::types::{
     CaseVerdict, GoldenCase, HarnessReport, ImplementationReport, MockContextBundle,
 };
@@ -34,27 +36,18 @@ fn shape_matches(actual: &serde_json::Value, expected: &serde_json::Value) -> bo
     }
 }
 
-fn token_overlap(a: &str, b: &str) -> f32 {
-    let ta: HashSet<&str> = a.split_whitespace().collect();
-    let tb: HashSet<&str> = b.split_whitespace().collect();
-    if ta.is_empty() && tb.is_empty() {
-        return 1.0;
-    }
-    if ta.is_empty() || tb.is_empty() {
+/// docs/25 §3's `embeddingDistance`, now scored against a real embedding similarity
+/// (`hyperion_ai_runtime::embed`/`cosine_similarity`) rather than a token-overlap-ratio proxy —
+/// closes this crate's own previously-named gap, the same one `hyperion-netstack`'s entity
+/// resolution closed the same way. `0.0` = identical (or both sides empty); `1.0` or above = no
+/// meaningful similarity (a hashed-embedding cosine similarity can go slightly negative for
+/// genuinely disjoint vocabulary, which correctly reports as *more* than maximally distant rather
+/// than being clamped away).
+fn content_distance(actual: &serde_json::Value, expected: &serde_json::Value) -> f32 {
+    if actual == expected {
         return 0.0;
     }
-    let intersection = ta.intersection(&tb).count() as f32;
-    let union = ta.union(&tb).count() as f32;
-    intersection / union
-}
-
-/// docs/25 §3's `embeddingDistance` — no real embedding model exists in
-/// this pipeline (the same gap `hyperion-netstack`'s entity resolution
-/// already documents), so a token-overlap ratio over each value's
-/// stringified form stands in for semantic distance. `0.0` = identical,
-/// `1.0` = no overlap at all.
-fn content_distance(actual: &serde_json::Value, expected: &serde_json::Value) -> f32 {
-    1.0 - token_overlap(&actual.to_string(), &expected.to_string())
+    1.0 - cosine_similarity(&embed(&actual.to_string()), &embed(&expected.to_string()))
 }
 
 /// docs/25 §3's `runHarness(contract, impls, goldens)`: Layer 1 is an

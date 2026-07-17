@@ -3218,6 +3218,7 @@ dependencies = [
 name = "hyperion-sdk"
 version = "0.3.0"
 dependencies = [
+ "hyperion-ai-runtime",
  "hyperion-capability",
  "hyperion-crypto",
  "hyperion-plugin-framework",

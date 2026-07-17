@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+hyperion-ai-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
 hyperion-crypto = { workspace = true }
 hyperion-plugin-framework = { workspace = true }

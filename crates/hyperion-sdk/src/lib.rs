@@ -86,10 +86,11 @@
 //!   prepare_invoke` is the real consumer: it looks a capability's installed implementation up
 //!   and submits its declared reservation to the real Scheduler admission algorithm, falling back
 //!   to the same fixed request as before when no implementation declares one.
-//! - **A real embedding model for `embeddingDistance`.** [`harness::run_harness`]'s
-//!   content-distance check is a token-overlap heuristic, the same
-//!   documented downgrade `hyperion-netstack`'s entity resolution already
-//!   uses in this workspace.
+//! - ~~**A real embedding model for `embeddingDistance`.**~~ — now real:
+//!   [`harness::run_harness`]'s content-distance check scores via
+//!   `hyperion_ai_runtime::embed`/`cosine_similarity` (a real, deterministic feature-hashing
+//!   embedding — see that crate's own doc comment for why not a neural one), the same fix
+//!   `hyperion-netstack`'s entity resolution already applied to the identical gap.
 
 mod codegen;
 mod execution_engine;
