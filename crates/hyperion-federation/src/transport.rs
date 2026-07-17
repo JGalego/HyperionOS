@@ -221,10 +221,36 @@ fn handle_connection(
     Ok(())
 }
 
+/// A same-host TCP handshake into a listener whose accept-loop thread hasn't reached its first
+/// `accept()` poll yet has no guaranteed instant readiness, even on loopback -- observed as a
+/// transient `ConnectionReset`/`BrokenPipe`/`ConnectionRefused` on some platforms' TCP stacks
+/// under load. Retried the same real number of times [`wait_for_ledger`]-style callers already
+/// tolerate on the receiving side.
+const CONNECT_RETRIES: u32 = 20;
+const CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(50);
+
+fn is_transient_connect_error(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::BrokenPipe
+    )
+}
+
+fn send_publication(addr: &str, wire: &[u8]) -> io::Result<()> {
+    let mut stream = TcpStream::connect(addr)?;
+    stream.write_all(&(wire.len() as u32).to_le_bytes())?;
+    stream.write_all(wire)?;
+    Ok(())
+}
+
 /// The real client half of [`serve_ledger_publications`]: seals `publication`'s real wire bytes
 /// via `hub.seal_for_peer(shared_secret, publication.device_id, ..)` (so the receiving hub can
 /// verify genuine authorship via its own `open_from_peer`), then sends the resulting
-/// [`SyncEnvelope`] length-prefixed over a real `TcpStream` to `addr`.
+/// [`SyncEnvelope`] length-prefixed over a real `TcpStream` to `addr`. Resending on a transient
+/// connect/write failure is safe: a `LedgerPublication` resend is idempotent from the receiving
+/// hub's perspective (it only ever overwrites `device_id`'s ledger with the latest values).
 pub fn publish_ledger_over_socket(
     hub: &FederationHub,
     addr: &str,
@@ -237,8 +263,17 @@ pub fn publish_ledger_over_socket(
         &publication.to_bytes(),
     );
     let wire = envelope.to_wire_bytes();
-    let mut stream = TcpStream::connect(addr)?;
-    stream.write_all(&(wire.len() as u32).to_le_bytes())?;
-    stream.write_all(&wire)?;
-    Ok(())
+
+    let mut last_err = None;
+    for attempt in 0..=CONNECT_RETRIES {
+        match send_publication(addr, &wire) {
+            Ok(()) => return Ok(()),
+            Err(e) if attempt < CONNECT_RETRIES && is_transient_connect_error(&e) => {
+                last_err = Some(e);
+                std::thread::sleep(CONNECT_RETRY_INTERVAL);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last_err.expect("loop only exits via a returned Ok/Err or after storing last_err"))
 }
