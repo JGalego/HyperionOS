@@ -33,6 +33,11 @@ use hyperion_crypto::{Keystore, SecretStore};
 use hyperion_intent::{HandleOutcome, IntentEngine};
 use hyperion_knowledge_graph::{GraphError, KnowledgeGraph, NodeId};
 use hyperion_memory::{MemoryEngine, MemoryTier};
+use hyperion_plugin_framework::{
+    CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind,
+    NativeBinaryDescriptor, Operation, PluginManifest, PluginRegistry,
+    PrivacyTier as PluginPrivacyTier, SemanticContract, SideEffect, TrustDepth,
+};
 
 use crate::graph_explorer::GraphExplorer;
 use hyperion_netstack::{DomainEgressGrant, NetstackHub};
@@ -167,6 +172,12 @@ pub struct ConsoleSession {
     /// `/meaningful yes|no` reflects on, since a human wouldn't type a raw Intent `NodeId`. `None`
     /// until this session's first real goal utterance.
     last_utterance: Option<String>,
+    /// Real capability install registry, shared with `agent_runtime` (see [`Self::open`]) so
+    /// `AgentRuntime::invoke`'s own real, Landlock/seccomp-sandboxed `NativeBinary` dispatch path
+    /// -- previously unreachable from any production binary in this workspace, since every real
+    /// caller constructed `AgentRuntime` with `plugins: None` -- is actually reachable from this
+    /// session. See the `/install-binary` meta-command.
+    plugins: Arc<PluginRegistry>,
 }
 
 /// The real prompt and capability this session is waiting to re-invoke once a live
@@ -366,9 +377,11 @@ impl ConsoleSession {
         let intent_engine = IntentEngine::new(graph.clone(), context.clone());
         let memory = MemoryEngine::new(graph.clone());
 
-        let agent_runtime = Arc::new(AgentRuntime::new_with_netstack(
+        let plugins = Arc::new(PluginRegistry::new());
+        let agent_runtime = Arc::new(AgentRuntime::new_with_netstack_and_plugins(
             ai_runtime.clone(),
             Some(netstack.clone()),
+            Some(plugins.clone()),
         ));
         let coordination = CoordinationSession::new(agent_runtime.clone(), graph);
 
@@ -436,6 +449,7 @@ impl ConsoleSession {
             pending_think_root: None,
             memory,
             last_utterance: None,
+            plugins,
         })
     }
 
@@ -790,6 +804,26 @@ impl ConsoleSession {
             return Some(self.run_teach(topic));
         }
 
+        // Makes `AgentRuntime::invoke`'s own real, Landlock/seccomp-sandboxed `NativeBinary`
+        // capability dispatch reachable from the one real bootable entry point this workspace
+        // has -- every production caller previously constructed `AgentRuntime` with
+        // `plugins: None`, so that dispatch path existed only in library tests. `self.plugins`
+        // is this session's own `PluginRegistry`, shared with `self.agent_runtime`.
+        if lower.starts_with("/install-binary") {
+            let rest = trimmed["/install-binary".len()..].trim();
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let capability_id = parts.next().unwrap_or("").trim();
+            let program = parts.next().unwrap_or("").trim();
+            if capability_id.is_empty() || program.is_empty() {
+                return Some(vec![
+                    "\"/install-binary\" needs a capability id and a program path, e.g. \
+                     \"/install-binary local.word_count /usr/bin/wc\"."
+                        .to_string(),
+                ]);
+            }
+            return Some(self.install_binary(capability_id, program));
+        }
+
         // docs/998-roadmap.md's Backlog "Protect the Human" item: an opt-in, per-session pause
         // before Hyperion decomposes a goal -- "a moment for the human's own reasoning to run
         // first," never a default. `/think`/`/think on`/`/think off` toggle it;
@@ -1142,6 +1176,10 @@ impl ConsoleSession {
             "  /teach <topic>                              explain the underlying principle \
              behind something, not just the answer, e.g. \"/teach how DNS resolution works\""
                 .to_string(),
+            "  /install-binary <capability id> <program>   install a real, sandboxed \
+             capability backed by a native program, e.g. \"/install-binary local.word_count \
+             /usr/bin/wc\""
+                .to_string(),
             "  /help                                        show this message".to_string(),
         ]
     }
@@ -1493,6 +1531,62 @@ impl ConsoleSession {
             Ok(InvokeOutcome::QuotaExceeded) => vec!["over quota right now".to_string()],
             Ok(InvokeOutcome::Failed(reason)) => vec![format!("failed -- {reason}")],
             Err(e) => vec![format!("failed -- {e}")],
+        }
+    }
+
+    /// Installs `program` as a real, sandboxed `NativeBinary` capability named `capability_id` --
+    /// the real counterpart to docs/24 §5's `plugin_install`, invoked directly from a slash
+    /// command rather than a discovered manifest file, since this console has no plugin
+    /// marketplace to discover one from yet. Self-signed with this session's own device identity
+    /// (`self.keystore`), the same trust a locally-typed command already implicitly carries.
+    fn install_binary(&mut self, capability_id: &str, program: &str) -> Vec<String> {
+        let mut manifest = PluginManifest {
+            plugin_id: now(),
+            publisher: "console-local".to_string(),
+            signature: None,
+            sdk_version: 1,
+            contributions: vec![Contribution::Capability(CapabilityManifest {
+                capability_id: capability_id.to_string(),
+                contract: SemanticContract {
+                    inputs: vec!["args".to_string()],
+                    outputs: vec!["result".to_string()],
+                    side_effects: vec![SideEffect::None],
+                },
+                implementation_kind: ImplementationKind::NativeBinary,
+                quality_score: 1.0,
+                version: 1,
+                native_binary: Some(NativeBinaryDescriptor {
+                    program: PathBuf::from(program),
+                    args: Vec::new(),
+                }),
+                privacy_tier: PluginPrivacyTier::Local,
+                resource_profile: None,
+            })],
+            requested_permissions: vec![CapabilityGrantRequest {
+                operation: Operation::Execute,
+                scope: capability_id.to_string(),
+                justification: format!(
+                    "user-installed native binary via /install-binary: {program}"
+                ),
+            }],
+            min_trust_depth: TrustDepth::D2,
+        };
+        manifest.signature = Some(hyperion_plugin_framework::sign(&manifest, &self.keystore));
+        let verifying_key = self.keystore.verifying_key();
+        match self.plugins.install(
+            &mut self.monitor,
+            &self.token,
+            manifest,
+            TrustDepth::D2,
+            true,
+            now(),
+            &verifying_key,
+        ) {
+            Ok(_handle) => vec![format!(
+                "Installed \"{capability_id}\" -- it runs {program} under a real Landlock/seccomp \
+                 sandbox whenever invoked."
+            )],
+            Err(e) => vec![format!("I couldn't install that: {e}")],
         }
     }
 

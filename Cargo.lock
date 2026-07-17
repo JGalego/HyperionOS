@@ -2886,6 +2886,7 @@ dependencies = [
  "hyperion-knowledge-graph",
  "hyperion-memory",
  "hyperion-netstack",
+ "hyperion-plugin-framework",
  "hyperion-workspace",
  "libc",
  "mdns-sd",

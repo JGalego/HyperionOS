@@ -22,6 +22,11 @@ hyperion-knowledge-graph = { workspace = true }
 # Backlog "Protect the Human" item) -- see the `/meaningful` meta-command in `src/session.rs`.
 hyperion-memory = { workspace = true }
 hyperion-netstack = { workspace = true }
+# Real, sandboxed (Landlock/seccomp) NativeBinary capability dispatch -- see the `/install-binary`
+# meta-command in `src/session.rs`. `AgentRuntime::invoke`'s own real dispatch path for this was
+# previously unreachable from any production binary: every real caller in this workspace
+# constructed `AgentRuntime` with `plugins: None`.
+hyperion-plugin-framework = { workspace = true }
 hyperion-workspace = { workspace = true }
 # Real mDNS/DNS-SD advertise+discover for `/mcp-server`/`/a2a-server` (docs/998-roadmap.md's
 # Social pillar) -- a pure-Rust mDNS-SD implementation, no C/system daemon dependency. Optional,
