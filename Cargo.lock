@@ -2966,6 +2966,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-events"
+version = "0.3.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-storage",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "hyperion-explainability"
 version = "0.3.0"
 dependencies = [

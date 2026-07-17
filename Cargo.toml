@@ -12,6 +12,7 @@ members = [
     "crates/hyperion-coordination",
     "crates/hyperion-crypto",
     "crates/hyperion-device",
+    "crates/hyperion-events",
     "crates/hyperion-explainability",
     "crates/hyperion-federation",
     "crates/hyperion-init",
@@ -58,6 +59,7 @@ hyperion-console = { path = "crates/hyperion-console" }
 hyperion-coordination = { path = "crates/hyperion-coordination" }
 hyperion-crypto = { path = "crates/hyperion-crypto" }
 hyperion-device = { path = "crates/hyperion-device" }
+hyperion-events = { path = "crates/hyperion-events" }
 hyperion-explainability = { path = "crates/hyperion-explainability" }
 hyperion-federation = { path = "crates/hyperion-federation" }
 hyperion-init = { path = "crates/hyperion-init" }
