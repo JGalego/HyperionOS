@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 hyperion-capability = { workspace = true }
 hyperion-context = { workspace = true }
+hyperion-events = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
 hyperion-workspace = { workspace = true }
 serde = { workspace = true }

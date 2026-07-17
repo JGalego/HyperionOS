@@ -4,6 +4,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TokenId};
+use hyperion_events::{EventBus, EventPayload, SubjectId, Topic, TopicKind};
 use hyperion_knowledge_graph::{EdgeOrigin, GraphQuery, KnowledgeGraph, NodeId};
 
 use crate::canonical;
@@ -126,6 +127,7 @@ pub struct NetstackHub {
     circuit_breakers: Mutex<HashMap<String, CircuitState>>,
     audit_log: Mutex<Vec<AuditEntry>>,
     quarantine_queue: Mutex<Vec<(String, String)>>,
+    events: Option<Arc<EventBus>>,
 }
 
 impl NetstackHub {
@@ -143,6 +145,64 @@ impl NetstackHub {
             circuit_breakers: Mutex::new(HashMap::new()),
             audit_log: Mutex::new(Vec::new()),
             quarantine_queue: Mutex::new(Vec::new()),
+            events: None,
+        }
+    }
+
+    /// Same as [`Self::new`], but wired to a real
+    /// [31 — Event System](../31-event-system.md) bus so
+    /// [`Self::web_research`] publishes a real `web.entity.resolved` event
+    /// (docs/19 §6) on every resolution — closing this crate's own
+    /// previously-named "no Event System crate exists yet" gap. `Option`,
+    /// not a required constructor parameter: most existing callers (every
+    /// test in this crate) have no bus to wire and should not be forced to
+    /// acquire one, the same `Option<Arc<T>>` shape `hyperion-agent-runtime`
+    /// already uses for its own optional dependencies.
+    pub fn new_with_events(
+        graph: Arc<KnowledgeGraph>,
+        fetch_backend: Box<dyn FetchBackend>,
+        extraction_backend: Box<dyn ExtractionBackend>,
+        events: Arc<EventBus>,
+    ) -> Self {
+        NetstackHub {
+            events: Some(events),
+            ..Self::new(graph, fetch_backend, extraction_backend)
+        }
+    }
+
+    /// docs/19 §6: "Event `web.entity.resolved`, published on the Event
+    /// System, lets other Agents/Workspaces react to newly resolved
+    /// entities without polling." A no-op if this hub has no bus wired
+    /// (see [`Self::new_with_events`]) — publishing is additive, never a
+    /// precondition for `web_research` itself succeeding. Authorized by
+    /// `token.origin()`: by the time this is called, `graph.put_node` has
+    /// already accepted this same token against this same node, which
+    /// (per `KnowledgeGraph::put_node`'s own owner check) only succeeds
+    /// when `token.origin() == the node's owner` — so it is always the
+    /// right Trust-Boundary owner to publish as.
+    fn publish_entity_resolved(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        object_id: NodeId,
+        needs_review: bool,
+        now: u64,
+    ) {
+        let Some(bus) = &self.events else {
+            return;
+        };
+        let topic = Topic::new(
+            TopicKind::ObjectChanged,
+            SubjectId::Object(object_id.0),
+            "web.entity.resolved",
+        );
+        let payload = EventPayload::Inline(serde_json::json!({
+            "object_id": object_id.0,
+            "needs_review": needs_review,
+            "resolved_at": now,
+        }));
+        if let Err(e) = bus.publish(monitor, token, token.origin(), topic, payload, Vec::new()) {
+            eprintln!("hyperion-netstack: failed to publish web.entity.resolved: {e}");
         }
     }
 
@@ -598,6 +658,7 @@ impl NetstackHub {
             },
         );
         self.audit(request.agent_id, now, "resolved", &final_canonical_form);
+        self.publish_entity_resolved(monitor, token, object_id, needs_review, now);
 
         Ok(SemanticObjectRef {
             object_id,

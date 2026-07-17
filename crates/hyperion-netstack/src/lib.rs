@@ -89,10 +89,15 @@
 //!   checked against the grant's `max_depth` as an authorization bound
 //!   only (§8's security contract); this crate performs exactly one
 //!   entity resolution per `web.research` call, never a recursive crawl.
-//! - **The Event System's `web.entity.resolved` publish** ([31 — Event
-//!   System](../31-event-system.md)) — no Event System crate exists yet
-//!   in this workspace; the hook point is named in docs/19 §6 but not
-//!   wired here.
+//! - ~~**The Event System's `web.entity.resolved` publish**~~ — now real:
+//!   [`hub::NetstackHub::new_with_events`] wires a real
+//!   [`hyperion_events::EventBus`], and [`hub::NetstackHub::web_research`]
+//!   publishes a real `ObjectChanged`/`web.entity.resolved` event on every
+//!   resolution (docs/19 §6), authorized as the same Trust-Boundary owner
+//!   `graph.put_node` already accepted this token against. `Option`-typed,
+//!   like this crate's other optional dependencies: a hub built via
+//!   plain [`hub::NetstackHub::new`] (every existing test) publishes
+//!   nothing, which is a real, valid configuration, not a stub.
 //! - **A real, model-driven disambiguation *decision*.**
 //!   [`workspace_bridge::present_disambiguation_as_workspace`] now
 //!   surfaces a `needs_review`-flagged [`types::SemanticObjectRef`]
