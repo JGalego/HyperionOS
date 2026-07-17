@@ -2,6 +2,7 @@
 //! gated cloud upgrade, and disable only when nothing else fits.
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use hyperion_privacy::{ConsentLedger, DataScope};
 use hyperion_scalability::{
     degrade_capability, CapacityDescriptor, DegradationOutcome, DegradationPolicy, HardwareProfile,
@@ -104,6 +105,7 @@ fn without_a_fitting_local_tier_a_consented_cloud_upgrade_is_used() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let ledger = ConsentLedger::new();
+    let device_key = Keystore::ephemeral();
     ledger
         .request(
             &monitor,
@@ -113,6 +115,7 @@ fn without_a_fitting_local_tier_a_consented_cloud_upgrade_is_used() {
             "vision generation on this device",
             None,
             1_000,
+            &device_key,
         )
         .unwrap();
 

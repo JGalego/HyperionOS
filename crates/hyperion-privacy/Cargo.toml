@@ -7,6 +7,8 @@ repository.workspace = true
 
 [dependencies]
 hyperion-capability = { workspace = true }
+# Real Ed25519 signing/verification for ConsentGrant.proof -- see consent.rs's own doc comment.
+hyperion-crypto = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
 hyperion-recovery = { workspace = true }
 serde_json = { workspace = true }

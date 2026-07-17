@@ -46,21 +46,24 @@
 //!
 //! Deliberately deferred, and why:
 //!
+//! - ~~**`ConsentGrant.proof`.**~~ (2026-07-18) — now real: [`types::ConsentGrant`]'s
+//!   `proof: Signature` (docs/16 §4) is minted by [`consent::ConsentLedger::request`] using the
+//!   issuing device's own `hyperion_crypto::Keystore`, over the grant's own canonical bytes
+//!   (mirroring `hyperion_plugin_framework`'s own signed-manifest convention). The real consumer
+//!   this crate's own doc previously said didn't exist yet: [`consent::ConsentLedger::import`]
+//!   verifies that signature against a caller-supplied `VerifyingKey` before ever trusting a
+//!   grant this ledger didn't itself mint — the shape a grant relayed from another device over
+//!   `hyperion-federation`'s own real, already-signed `SyncEnvelope` transport needs. This crate
+//!   still has no *automatic* transport wiring into `hyperion-federation` itself (that's a
+//!   separate, larger "real ambient Knowledge Graph replication across devices" feature, not a
+//!   consent-ledger concern) — `import` is the real, callable, independently-tested building
+//!   block that work would use, not the transport-level automation itself.
 //! - **Real encryption at rest, key wrapping, and Shamir secret-sharing
-//!   recovery.** `hyperion-crypto` (Phase 8/M9) means "no crate in this
-//!   workspace performs real cryptography yet" is no longer why this is
-//!   deferred, but adding [`types::ConsentGrant`]'s `proof: Signature`
-//!   (docs/16 §4) today would be signing with no real verifier: this
-//!   ledger is purely local and capability-gated, with no import/sync
-//!   path anywhere that would ever check such a signature — the same
-//!   gap as the bullet below (multi-device sync doesn't exist here yet).
-//!   A real signature with nothing to verify it against is exactly the
-//!   kind of mechanism-with-no-consumer this workspace's own convention
-//!   avoids; it belongs with that sync work, not bolted on alone.
-//!   [`types::ResidencyTag`]'s `encryption_key_ref` is a further, larger
+//!   recovery.** [`types::ResidencyTag`]'s `encryption_key_ref` remains a
 //!   gap: real encryption of arbitrary Knowledge Graph node metadata
 //!   would need to intercept `hyperion-storage`'s own WAL write/read
-//!   path with per-tag key material — a real, separate feature, not a
+//!   path with per-tag key material (narrower than `hyperion-storage::StorageEngine::
+//!   open_encrypted`'s own whole-graph key, landed 2026-07-17) — a real, separate feature, not a
 //!   field addition. Key wrapping and Shamir secret-sharing recovery
 //!   remain out of scope the same way M9's own completion note already
 //!   scoped them: docs/28's fuller DEK/KEK/master-key hierarchy, deferred

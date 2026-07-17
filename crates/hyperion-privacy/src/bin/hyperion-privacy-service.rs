@@ -14,6 +14,7 @@ use std::io::Write;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId, WireToken};
+use hyperion_crypto::Keystore;
 use hyperion_privacy::{
     route_capability_call, ConsentLedger, DataScope, PrivacyProfile, PrivacyTier, RoutingDecision,
 };
@@ -44,6 +45,10 @@ fn main() {
     let ledger = ConsentLedger::new();
     let subject = claim.token_id;
     let now = now_unix();
+    // A real, process-lifetime-only device identity -- this is a proof of the real signing/
+    // verification path (see hyperion_privacy::consent's own doc comment), not a persistent
+    // device that needs to survive a restart.
+    let device_key = Keystore::ephemeral();
 
     let grant = ledger
         .request(
@@ -54,6 +59,7 @@ fn main() {
             "real service instance proving docs/16 routing under a real spawn-time grant",
             None,
             now,
+            &device_key,
         )
         .expect("this process's own local capability check always authorizes its own request");
 

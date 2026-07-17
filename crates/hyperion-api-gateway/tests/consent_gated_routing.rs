@@ -230,6 +230,7 @@ fn after_a_real_consent_grant_the_consented_cloud_candidate_becomes_eligible() {
             "user asked to search the web",
             None,
             1_000,
+            &keystore,
         )
         .unwrap();
 

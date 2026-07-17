@@ -3,6 +3,7 @@
 //! `Restricted` objects even under `CloudAssisted`.
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use hyperion_privacy::{
     route_capability_call, ConsentLedger, DataScope, DegradeReason, PrivacyProfile, PrivacyTier,
     ResidencyTag, RoutingDecision, SensitivityClass,
@@ -92,6 +93,7 @@ fn local_preferred_with_a_standing_grant_dispatches_cloud() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let ledger = ConsentLedger::new();
+    let device_key = Keystore::ephemeral();
     let scope = DataScope::Domain("notes".to_string());
     let grant = ledger
         .request(
@@ -102,6 +104,7 @@ fn local_preferred_with_a_standing_grant_dispatches_cloud() {
             "summarize notes",
             None,
             1_000,
+            &device_key,
         )
         .unwrap();
 
@@ -126,6 +129,7 @@ fn a_revoked_grant_no_longer_stands_and_the_call_degrades() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let ledger = ConsentLedger::new();
+    let device_key = Keystore::ephemeral();
     let scope = DataScope::Domain("notes".to_string());
     let grant = ledger
         .request(
@@ -136,6 +140,7 @@ fn a_revoked_grant_no_longer_stands_and_the_call_degrades() {
             "summarize notes",
             None,
             1_000,
+            &device_key,
         )
         .unwrap();
     ledger.revoke(&monitor, &root, grant.id).unwrap();
@@ -161,6 +166,7 @@ fn an_expired_grant_no_longer_stands() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let ledger = ConsentLedger::new();
+    let device_key = Keystore::ephemeral();
     let scope = DataScope::Domain("notes".to_string());
     ledger
         .request(
@@ -171,6 +177,7 @@ fn an_expired_grant_no_longer_stands() {
             "summarize notes",
             Some(1_500),
             1_000,
+            &device_key,
         )
         .unwrap();
 
@@ -195,9 +202,19 @@ fn a_restricted_object_forbids_cloud_even_under_cloud_assisted_tier() {
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let ledger = ConsentLedger::new();
+    let device_key = Keystore::ephemeral();
     let scope = DataScope::Object(hyperion_storage::ObjectId(1));
     ledger
-        .request(&monitor, &root, 1, scope.clone(), "anything", None, 1_000)
+        .request(
+            &monitor,
+            &root,
+            1,
+            scope.clone(),
+            "anything",
+            None,
+            1_000,
+            &device_key,
+        )
         .unwrap();
 
     let residency = ResidencyTag::new(
@@ -235,6 +252,7 @@ fn cloud_assisted_with_a_standing_grant_and_permissive_residency_dispatches_clou
     let mut monitor = CapabilityMonitor::new();
     let root = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let ledger = ConsentLedger::new();
+    let device_key = Keystore::ephemeral();
     let scope = DataScope::Domain("weather".to_string());
     let grant = ledger
         .request(
@@ -245,6 +263,7 @@ fn cloud_assisted_with_a_standing_grant_and_permissive_residency_dispatches_clou
             "get forecast",
             None,
             1_000,
+            &device_key,
         )
         .unwrap();
 

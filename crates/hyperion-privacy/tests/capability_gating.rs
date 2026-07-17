@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
+use hyperion_crypto::Keystore;
 use hyperion_knowledge_graph::KnowledgeGraph;
 use hyperion_privacy::{erase, ConsentLedger, DataScope, ErasureMode, PrivacyError};
 use hyperion_recovery::RecoveryService;
@@ -16,6 +17,7 @@ fn consent_request_requires_write_rights() {
         .cap_derive(&root, RightsMask::READ, None, TrustBoundaryId(2))
         .unwrap();
     let ledger = ConsentLedger::new();
+    let device_key = Keystore::ephemeral();
 
     let result = ledger.request(
         &monitor,
@@ -25,6 +27,7 @@ fn consent_request_requires_write_rights() {
         "x",
         None,
         1_000,
+        &device_key,
     );
     assert!(matches!(result, Err(PrivacyError::Unauthorized)));
 }
@@ -60,6 +63,7 @@ fn revoking_a_token_blocks_further_access_re_checked_live() {
         .cap_derive(&root, RightsMask::all(), None, TrustBoundaryId(2))
         .unwrap();
     let ledger = ConsentLedger::new();
+    let device_key = Keystore::ephemeral();
 
     assert!(ledger
         .request(
@@ -69,7 +73,8 @@ fn revoking_a_token_blocks_further_access_re_checked_live() {
             DataScope::Domain("notes".to_string()),
             "x",
             None,
-            1_000
+            1_000,
+            &device_key,
         )
         .is_ok());
 
@@ -83,7 +88,8 @@ fn revoking_a_token_blocks_further_access_re_checked_live() {
             DataScope::Domain("notes".to_string()),
             "x",
             None,
-            1_001
+            1_001,
+            &device_key,
         ),
         Err(PrivacyError::Unauthorized)
     ));

@@ -85,9 +85,12 @@ pub enum DataScope {
 }
 
 /// docs/16 §4's `ConsentGrant` — `revocable` is always `true` per the doc
-/// (not a field a caller could set `false`), and `proof: Signature` is
-/// this crate's deferred real-crypto piece (see this crate's doc
-/// comment).
+/// (not a field a caller could set `false`). `proof` is a real Ed25519
+/// signature over this grant's own canonical bytes (see [`crate::consent::sign_grant`]/
+/// [`crate::consent::verify_grant`]), minted by the issuing device's own `Keystore` at
+/// [`crate::consent::ConsentLedger::request`] time — the real, independently-verifiable
+/// artifact [`crate::consent::ConsentLedger::import`] checks before trusting a grant that arrived
+/// from anywhere other than this device's own `request` call.
 #[derive(Debug, Clone)]
 pub struct ConsentGrant {
     pub id: u64,
@@ -96,6 +99,7 @@ pub struct ConsentGrant {
     pub purpose: String,
     pub expiry: Option<u64>,
     pub granted_at: u64,
+    pub proof: hyperion_crypto::Signature,
 }
 
 impl ConsentGrant {
@@ -153,4 +157,9 @@ pub enum PrivacyError {
     Graph(#[from] hyperion_knowledge_graph::GraphError),
     #[error("recovery error: {0}")]
     Recovery(#[from] hyperion_recovery::RecoveryError),
+    /// A `ConsentGrant.proof` that doesn't verify against the caller-supplied `VerifyingKey` --
+    /// never trusted, whether that means it's forged, corrupted in transit, or genuinely signed
+    /// by a different device than the one the importer expected.
+    #[error("consent grant's signature does not verify against the supplied key")]
+    SignatureInvalid,
 }
