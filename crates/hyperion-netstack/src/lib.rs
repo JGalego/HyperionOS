@@ -82,8 +82,14 @@
 //!   [`types::FetchedPage::robots_disallowed`] for real rather than always `false`.
 //!   `MockFetchBackend` is unaffected -- a fixture still declares the flag directly, exactly as
 //!   before.
-//! - **Real prompt-injection classification.** [`quarantine`] is a fixed
-//!   denylist substring scanner, not a model-based classifier.
+//! - ~~**Real prompt-injection classification.**~~ (2026-07-18) — now real: [`quarantine::scan`]
+//!   still runs its fixed denylist first (a fast, always-on floor), then -- when a caller wires
+//!   one in via [`hub::NetstackHub::with_ai_runtime`] -- asks a real local model to judge the
+//!   content directly, the same real-inference-with-graceful-degradation contract
+//!   `hyperion-memory::MemoryEngine::estimate_salience` already established. No `ai_runtime`
+//!   wired, no authorized token, nothing resident for `ModelClass::Slm`, or an unparseable
+//!   response all degrade to exactly the pre-existing denylist-only behavior, never a false
+//!   sense of security from a classifier call that silently didn't happen.
 //! - **Multi-hop citation-following crawls (§4's `depth`).** `depth` is
 //!   checked against the grant's `max_depth` as an authorization bound
 //!   only (§8's security contract); this crate performs exactly one

@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
+use hyperion_ai_runtime::LocalAiRuntime;
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TokenId};
 use hyperion_events::{EventBus, EventPayload, SubjectId, Topic, TopicKind};
 use hyperion_knowledge_graph::{EdgeOrigin, GraphQuery, KnowledgeGraph, NodeId};
@@ -143,6 +144,7 @@ pub struct NetstackHub {
     audit_log: Mutex<Vec<AuditEntry>>,
     quarantine_queue: Mutex<Vec<(String, String)>>,
     events: Option<Arc<EventBus>>,
+    ai_runtime: Option<Arc<LocalAiRuntime>>,
 }
 
 impl NetstackHub {
@@ -161,7 +163,19 @@ impl NetstackHub {
             audit_log: Mutex::new(Vec::new()),
             quarantine_queue: Mutex::new(Vec::new()),
             events: None,
+            ai_runtime: None,
         }
+    }
+
+    /// Opts this hub into a real local model classifier for [`crate::quarantine::scan`] --
+    /// closing this crate's own previously-named "fixed denylist substring scanner, not a
+    /// model-based classifier" gap. `Option`, not a required constructor parameter, the same
+    /// shape [`Self::new_with_events`] already uses: most existing callers (every test in this
+    /// crate) have no `ai_runtime` to wire and should not be forced to acquire one. Chainable
+    /// after [`Self::new`]/[`Self::new_with_events`].
+    pub fn with_ai_runtime(mut self, ai_runtime: Arc<LocalAiRuntime>) -> Self {
+        self.ai_runtime = Some(ai_runtime);
+        self
     }
 
     /// Same as [`Self::new`], but wired to a real
@@ -574,7 +588,13 @@ impl NetstackHub {
         }
 
         let structured_fields = page.structured.as_ref().map(|s| &s.fields);
-        let verdict = quarantine::scan(&page.text, structured_fields);
+        let verdict = quarantine::scan(
+            monitor,
+            token,
+            &page.text,
+            structured_fields,
+            self.ai_runtime.as_deref(),
+        );
         if verdict.suspicious {
             let reason = verdict.reason.unwrap_or_default();
             self.audit(request.agent_id, now, "quarantined", &reason);

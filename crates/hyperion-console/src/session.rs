@@ -377,7 +377,7 @@ impl ConsoleSession {
             graph.clone(),
             ai_runtime.clone(),
         ));
-        let netstack = Arc::new(Self::build_netstack(graph.clone()));
+        let netstack = Arc::new(Self::build_netstack(graph.clone(), ai_runtime.clone()));
         let graph_explorer = GraphExplorer::new(graph.clone());
         let intent_engine = IntentEngine::new(graph.clone(), context.clone());
         let memory = MemoryEngine::new(graph.clone());
@@ -1199,7 +1199,7 @@ impl ConsoleSession {
     /// image opts in explicitly; every host-side dev/test build of this console stays fast and
     /// network-free. Falls back to the mock backends (degrading, never panicking the whole
     /// console) if a `real-http` build's real client init fails for any reason.
-    fn build_netstack(graph: Arc<KnowledgeGraph>) -> NetstackHub {
+    fn build_netstack(graph: Arc<KnowledgeGraph>, ai_runtime: Arc<LocalAiRuntime>) -> NetstackHub {
         #[cfg(feature = "real-http")]
         let (fetch_backend, extraction_backend): (
             Box<dyn hyperion_netstack::FetchBackend>,
@@ -1229,7 +1229,12 @@ impl ConsoleSession {
             Box::new(hyperion_netstack::MockExtractionBackend),
         );
 
-        NetstackHub::new(graph, fetch_backend, extraction_backend)
+        // Real prompt-injection classification (hyperion-netstack's own previously-named "fixed
+        // denylist substring scanner, not a model-based classifier" gap, closed 2026-07-18): this
+        // session's own real `LocalAiRuntime` -- the same one every other capability-gated
+        // dispatch already uses -- judges quarantine candidates the fixed denylist doesn't
+        // already match, rather than relying on substring matching alone.
+        NetstackHub::new(graph, fetch_backend, extraction_backend).with_ai_runtime(ai_runtime)
     }
 
     /// Real utterance in, real rendered text lines out -- M7 stage 1's exit criterion, this

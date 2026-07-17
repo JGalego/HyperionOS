@@ -22,6 +22,7 @@ reqwest = { version = "0.12", optional = true, default-features = false, feature
 scraper = { version = "0.20", optional = true }
 
 [dev-dependencies]
+hyperion-crypto = { workspace = true }
 hyperion-storage = { workspace = true }
 tempfile = { workspace = true }
 
