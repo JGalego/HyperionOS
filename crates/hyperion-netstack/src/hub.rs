@@ -51,6 +51,21 @@ fn domain_matches(pattern: &str, domain: &str) -> bool {
     }
 }
 
+/// A real embedding for `candidate`'s own title/name text, computed via
+/// `hyperion_ai_runtime::embed` -- closes this crate's own previously-named "no embedding
+/// producer exists in this pipeline" gap on the write side (`resolve::find_match` closes the
+/// read/comparison side). `None` for an empty title rather than storing a useless all-zero
+/// vector that would still (incorrectly) score as "identical" against another empty-title node
+/// under a naive comparison.
+fn embedding_for(candidate: &ExtractedEntity) -> Option<Vec<f32>> {
+    let title = resolve::title_of(&candidate.fields);
+    if title.is_empty() {
+        None
+    } else {
+        Some(hyperion_ai_runtime::embed(&title))
+    }
+}
+
 fn inferred_target_type(predicate: &str) -> EntityType {
     match predicate {
         "authored_by" | "employs" => EntityType::Person,
@@ -585,6 +600,7 @@ impl NetstackHub {
             extract::extract_entity(&page, self.extraction_backend.as_ref(), &request.purpose);
         let decision = resolve::find_match(&self.graph, monitor, token, &candidate)?;
 
+        let embedding = embedding_for(&candidate);
         let (object_id, needs_review) = match decision {
             MatchDecision::ConfidentMatch(existing) => {
                 let metadata = build_metadata(&candidate, &final_canonical_form, now, false);
@@ -593,7 +609,7 @@ impl NetstackHub {
                     token,
                     Some(existing),
                     candidate.entity_type.as_object_type(),
-                    None,
+                    embedding,
                     metadata,
                 )?;
                 (existing, false)
@@ -605,7 +621,7 @@ impl NetstackHub {
                     token,
                     None,
                     candidate.entity_type.as_object_type(),
-                    None,
+                    embedding,
                     metadata,
                 )?;
                 (id, true)
@@ -617,7 +633,7 @@ impl NetstackHub {
                     token,
                     None,
                     candidate.entity_type.as_object_type(),
-                    None,
+                    embedding,
                     metadata,
                 )?;
                 (id, false)

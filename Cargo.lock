@@ -3108,6 +3108,7 @@ dependencies = [
 name = "hyperion-netstack"
 version = "0.3.0"
 dependencies = [
+ "hyperion-ai-runtime",
  "hyperion-capability",
  "hyperion-context",
  "hyperion-events",

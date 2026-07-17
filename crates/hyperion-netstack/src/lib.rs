@@ -58,14 +58,13 @@
 //!   fetched pages. `extract::HtmlHeuristicExtractionBackend`'s own `relationships: Vec::new()`
 //!   remains exactly as scoped — a real HTML heuristic has no nested entity structure to walk.
 //!   `MockFetchBackend` is unaffected — a fixture still declares `structured` directly.
-//! - **Real embeddings for entity-resolution similarity (§5.4).** No
-//!   embedding producer exists in this pipeline (Phase 3's Local AI
-//!   Runtime embeddings were never wired into web extraction). A
-//!   normalized title/name token-overlap ratio stands in for "high-
-//!   confidence embedding similarity" — see [`resolve`]'s doc comment;
-//!   this is a materially cruder proxy than this workspace's usual "pass
-//!   a pre-computed `Vec<f32>`" deferral, called out rather than dressed
-//!   up as equivalent.
+//! - ~~**Real embeddings for entity-resolution similarity (§5.4).**~~ — now real:
+//!   [`resolve::find_match`] scores candidates via `hyperion_ai_runtime::embed`/
+//!   `cosine_similarity` (a real, deterministic feature-hashing embedding — see that crate's own
+//!   doc comment for why not a neural one) instead of a token-overlap-ratio proxy, and
+//!   [`hub::NetstackHub::web_research`] now stores a real embedding on every resolved node
+//!   (previously always `None`) so a future embedding-based `graph.query` against these same
+//!   nodes has real data to search over, not silence.
 //! - **A real local-model extraction pass.** [`extract::ExtractionBackend`]
 //!   is a trait; [`extract::MockExtractionBackend`] deterministically
 //!   derives a low-confidence generic `WebPage` from the fetched text,

@@ -28,6 +28,15 @@
 //! Ollama/vLLM/self-hosted-LiteLLM server exposes -- one implementation, parameterized by
 //! `base_url`/`model`, standing in for in-process Candle when a real local engine is preferred.
 //!
+//! [`embedding::embed`] closes this workspace's own repeated "no embedding producer exists"
+//! deferral (`hyperion-netstack`'s entity resolution, `hyperion-sdk`'s harness,
+//! `hyperion-memory`'s entity clustering each named it independently): a real, deterministic
+//! feature-hashing text embedding, not a neural one — this crate's own real Candle backend has no
+//! encoder/embedding architecture wired in (see [`candle_backend`]'s own doc comment: causal-LM
+//! `llama2.c` weights only) — but a real, principled, well-established technique nonetheless,
+//! swappable for a real neural embedder later behind the same function signature with no
+//! consumer-side change.
+//!
 //! "Phase 2: cloud providers" adds real OpenAI (a preset atop the same `OpenAiCompatBackend`,
 //! since OpenAI's own API already speaks that same shape) plus two genuinely new backends behind
 //! their own Cargo features, [`anthropic_backend::AnthropicBackend`] and
@@ -69,6 +78,7 @@
 pub mod anthropic_backend;
 #[cfg(feature = "candle")]
 pub mod candle_backend;
+pub mod embedding;
 #[cfg(feature = "gemini")]
 pub mod gemini_backend;
 #[cfg(feature = "openai-compat")]
@@ -82,6 +92,7 @@ mod types;
 pub use anthropic_backend::{AnthropicBackend, AnthropicError};
 #[cfg(feature = "candle")]
 pub use candle_backend::{CandleBackend, CandleBackendError};
+pub use embedding::{cosine_similarity, embed, EMBEDDING_DIMS};
 #[cfg(feature = "gemini")]
 pub use gemini_backend::{GeminiBackend, GeminiError};
 #[cfg(feature = "openai-compat")]
