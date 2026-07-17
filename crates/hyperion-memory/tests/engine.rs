@@ -340,6 +340,82 @@ fn extraction_promotes_only_after_the_frequency_gate() {
     assert_eq!(semantic[0].content["fact"], "prefers_dark_mode");
 }
 
+/// docs/08 §5.4's own "cluster... by shared entities and embedding similarity" — a real property
+/// the old exact-string `entity_key`/`fact` match could never exhibit: two paraphrases of the
+/// same real-world fact must cluster together even though their `fact` text is not byte-identical.
+#[test]
+fn near_paraphrase_facts_cluster_by_real_embedding_similarity_not_exact_text() {
+    let (_dir, monitor, token, engine) = setup();
+    let facts = [
+        "prefers oat milk",
+        "prefers oat milk in coffee",
+        "prefers oat milk in coffee",
+    ];
+    for fact in facts {
+        engine
+            .remember(
+                &monitor,
+                &token,
+                MemoryTier::Episodic,
+                json!({"entity_key": "user", "fact": fact}),
+                None,
+                0.1,
+                false,
+                Vec::new(),
+            )
+            .unwrap();
+    }
+
+    let receipt = engine.run_extraction_pass(&monitor, &token, 3).unwrap();
+    assert_eq!(
+        receipt.promoted.len(),
+        1,
+        "three real paraphrases of the same fact must cluster into one promotion, not three separate never-promoted groups"
+    );
+}
+
+/// The other half of the same property: two genuinely different facts about the same entity,
+/// sharing only an incidental word, must never be merged into one cluster.
+#[test]
+fn distinct_facts_sharing_one_incidental_word_are_never_merged() {
+    let (_dir, monitor, token, engine) = setup();
+    for _ in 0..3 {
+        engine
+            .remember(
+                &monitor,
+                &token,
+                MemoryTier::Episodic,
+                json!({"entity_key": "user", "fact": "prefers oat milk"}),
+                None,
+                0.1,
+                false,
+                Vec::new(),
+            )
+            .unwrap();
+    }
+    for _ in 0..3 {
+        engine
+            .remember(
+                &monitor,
+                &token,
+                MemoryTier::Episodic,
+                json!({"entity_key": "user", "fact": "dislikes almond milk"}),
+                None,
+                0.1,
+                false,
+                Vec::new(),
+            )
+            .unwrap();
+    }
+
+    let receipt = engine.run_extraction_pass(&monitor, &token, 3).unwrap();
+    assert_eq!(
+        receipt.promoted.len(),
+        2,
+        "sharing only the word 'milk' must not merge two otherwise-distinct facts"
+    );
+}
+
 #[test]
 fn decay_pass_promotes_a_frequently_recalled_important_record_but_not_a_fresh_unimportant_one() {
     let (_dir, monitor, token, engine) = setup();

@@ -2,7 +2,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass};
+use hyperion_ai_runtime::{
+    cosine_similarity, embed, CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass,
+};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
 use hyperion_knowledge_graph::{EdgeOrigin, GraphError, GraphQuery, KnowledgeGraph, NodeId};
 use hyperion_scheduler::{
@@ -33,6 +35,23 @@ const ALL_TIERS: [MemoryTier; 4] = [
     MemoryTier::Procedural,
     MemoryTier::LongTerm,
 ];
+
+/// [`MemoryEngine::run_extraction_pass`]'s real embedding-clustering threshold. Calibrated
+/// empirically, the same way `hyperion-netstack`'s own `MERGE_THRESHOLD` was: a feature-hashed
+/// bag-of-words cosine similarity has no semantic weighting, so this is deliberately conservative
+/// (paraphrases sharing most of their words, not merely a couple) rather than tuned to a
+/// docs/08-mandated number (the doc names no specific value).
+const FACT_CLUSTER_SIMILARITY: f32 = 0.7;
+
+/// A group of Episodic records about the same real-world fact, clustered by real embedding
+/// similarity (see [`MemoryEngine::run_extraction_pass`]'s own doc comment) rather than requiring
+/// byte-identical `fact` text.
+struct FactCluster {
+    entity_key: String,
+    representative_fact: String,
+    representative_embedding: Vec<f32>,
+    episodes: Vec<MemoryRecord>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum MemoryError {
@@ -555,13 +574,14 @@ impl MemoryEngine {
         Ok(ExtractionReceipt { promoted })
     }
 
-    /// docs/08 §5.4/§7's extraction half of `consolidation_cycle`: groups
-    /// non-erased, not-yet-consolidated Episodic records sharing the same
-    /// caller-supplied `entity_key`/`fact` pair (see this crate's doc
-    /// comment on the embedding-clustering deferral) and promotes any group
-    /// with `count >= min_occurrences` to a Semantic record with
-    /// `confidence = 1 - 0.5^count` — the frequency gate that prevents a
-    /// one-off event from being mislearned as a standing preference.
+    /// docs/08 §5.4's own "cluster recent unconsolidated episodes by shared entities and
+    /// embedding similarity" — real for the first time (previously an exact-string `entity_key`/
+    /// `fact` match, which this crate's own doc comment named as standing in for it): within the
+    /// same `entity_key`, a `fact` joins an existing cluster when its real embedding
+    /// (`hyperion_ai_runtime::embed`) is at/above [`FACT_CLUSTER_SIMILARITY`] cosine similarity to
+    /// that cluster's first (representative) fact, rather than requiring byte-identical text —
+    /// "prefers oat milk" and "prefers oat milk in coffee" now cluster together; "prefers oat
+    /// milk" and "dislikes almond milk" (sharing only "milk") do not.
     pub fn run_extraction_pass(
         &self,
         monitor: &CapabilityMonitor,
@@ -578,8 +598,7 @@ impl MemoryEngine {
             },
         )?;
 
-        let mut groups: std::collections::HashMap<(String, String), Vec<MemoryRecord>> =
-            std::collections::HashMap::new();
+        let mut clusters: Vec<FactCluster> = Vec::new();
         for episode in episodes {
             let already_consolidated = episode
                 .content
@@ -591,28 +610,44 @@ impl MemoryEngine {
             }
             let entity_key = episode.content.get("entity_key").and_then(|v| v.as_str());
             let fact = episode.content.get("fact").and_then(|v| v.as_str());
-            if let (Some(entity_key), Some(fact)) = (entity_key, fact) {
-                groups
-                    .entry((entity_key.to_string(), fact.to_string()))
-                    .or_default()
-                    .push(episode);
+            let (Some(entity_key), Some(fact)) = (entity_key, fact) else {
+                continue;
+            };
+            let embedding = embed(fact);
+            let existing = clusters.iter_mut().find(|c| {
+                c.entity_key == entity_key
+                    && cosine_similarity(&c.representative_embedding, &embedding)
+                        >= FACT_CLUSTER_SIMILARITY
+            });
+            match existing {
+                Some(cluster) => cluster.episodes.push(episode),
+                None => clusters.push(FactCluster {
+                    entity_key: entity_key.to_string(),
+                    representative_fact: fact.to_string(),
+                    representative_embedding: embedding,
+                    episodes: vec![episode],
+                }),
             }
         }
 
         let mut promoted = Vec::new();
-        for ((entity_key, fact), episodes) in groups {
-            if episodes.len() < min_occurrences {
+        for cluster in clusters {
+            if cluster.episodes.len() < min_occurrences {
                 continue;
             }
-            let count = episodes.len();
+            let count = cluster.episodes.len();
             let confidence = 1.0 - 0.5_f32.powi(count as i32);
-            let provenance: Vec<NodeId> = episodes.iter().map(|e| e.id).collect();
+            let provenance: Vec<NodeId> = cluster.episodes.iter().map(|e| e.id).collect();
 
             let semantic_id = self.remember(
                 monitor,
                 token,
                 MemoryTier::Semantic,
-                serde_json::json!({"entity_key": entity_key, "fact": fact, "confidence": confidence}),
+                serde_json::json!({
+                    "entity_key": cluster.entity_key,
+                    "fact": cluster.representative_fact,
+                    "confidence": confidence,
+                }),
                 None,
                 confidence,
                 false,
@@ -620,7 +655,7 @@ impl MemoryEngine {
             )?;
             promoted.push(semantic_id);
 
-            for mut episode in episodes {
+            for mut episode in cluster.episodes {
                 episode.content["consolidated"] = serde_json::json!(true);
                 self.rewrite(monitor, token, &episode)?;
             }

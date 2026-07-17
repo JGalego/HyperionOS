@@ -29,14 +29,13 @@
 //!   degrades to the caller's own `explicit_flag` alone. [`engine::MemoryEngine::distill_working_memory`]
 //!   is the real caller: it takes the real `max(explicit_flag, model_estimated_salience)` per
 //!   docs/08's own literal formula before persisting `importance`/`decay_score`.
-//! - **Embedding-similarity clustering for extraction** (§5.4's "cluster
-//!   recent unconsolidated episodes by shared entities and embedding
-//!   similarity") — this crate groups by an explicit, caller-supplied
-//!   `entity_key` string on Episodic content instead of real embedding
-//!   clustering, which needs [22 — Local AI Runtime](../22-local-ai-runtime.md)'s
-//!   real backend to produce meaningful embeddings to cluster over. The
-//!   frequency gate itself (≥3 independent occurrences before promotion) is
-//!   real and tested.
+//! - ~~**Embedding-similarity clustering for extraction** (§5.4's "cluster recent unconsolidated
+//!   episodes by shared entities and embedding similarity")~~ — now real:
+//!   [`engine::MemoryEngine::run_extraction_pass`] clusters same-`entity_key` episodes by real
+//!   `hyperion_ai_runtime::embed`/`cosine_similarity` rather than requiring byte-identical `fact`
+//!   text — "prefers oat milk" and "prefers oat milk in coffee" now cluster together; "prefers
+//!   oat milk" and "dislikes almond milk" (sharing only "milk") do not. The frequency gate itself
+//!   (≥3 independent occurrences before promotion) is unchanged, real, and tested.
 //! - ~~**Working → Episodic distillation via a local model**~~ (§5.1, 2026-07-16) — now real:
 //!   [`engine::MemoryEngine::new_with_ai_runtime`] wires a real `hyperion_ai_runtime::LocalAiRuntime`
 //!   in (the same real path `hyperion-context::ContextEngine::new_with_ai_runtime` already
