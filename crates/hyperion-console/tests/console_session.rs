@@ -1266,3 +1266,112 @@ mod redo_and_steer {
         assert!(done[0].contains("market_research"), "got: {done:?}");
     }
 }
+
+/// `hyperion-context`'s own previously-named Adaptive Complexity gap: this session already holds
+/// both a real dispatch outcome and this session's own `ContextEngine` handle at once, so it's
+/// the real, non-cyclic side that pushes docs/06 §5.4's own "Capability tier reached for" and
+/// "error-recovery pattern" signals.
+mod adaptive_complexity {
+    use super::open_session;
+    use hyperion_context::ExpertiseLevel;
+
+    #[test]
+    fn a_decomposed_plan_pushes_a_real_guided_workflow_signal() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let estimate = session.current_expertise("general");
+        assert!(
+            estimate
+                .evidence
+                .iter()
+                .any(|e| e.contains("raw Capability directly 0/1")),
+            "got: {:?}",
+            estimate.evidence
+        );
+    }
+
+    #[test]
+    fn an_undecomposed_goal_pushes_a_real_raw_api_signal() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("what is the weather like today");
+
+        let estimate = session.current_expertise("general");
+        assert!(
+            estimate
+                .evidence
+                .iter()
+                .any(|e| e.contains("raw Capability directly 1/1")),
+            "got: {:?}",
+            estimate.evidence
+        );
+    }
+
+    #[test]
+    fn a_real_successful_redo_pushes_a_real_self_corrected_signal() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+        session.handle_utterance("/redo market_research focus on Europe");
+
+        let estimate = session.current_expertise("general");
+        assert!(
+            estimate
+                .evidence
+                .iter()
+                .any(|e| e.contains("self-corrected with more precise steering 1/1")),
+            "got: {:?}",
+            estimate.evidence
+        );
+    }
+
+    #[test]
+    fn a_failed_redo_never_pushes_a_self_corrected_signal() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+        session.handle_utterance("/redo not_a_real_task with more detail");
+
+        let estimate = session.current_expertise("general");
+        assert!(
+            !estimate
+                .evidence
+                .iter()
+                .any(|e| e.contains("self-corrected")),
+            "a failed /redo must never be recorded as real self-correction activity, got: {:?}",
+            estimate.evidence
+        );
+    }
+
+    #[test]
+    fn teach_pushes_a_real_asked_for_explanation_signal() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("/teach how DNS resolution works");
+
+        let estimate = session.current_expertise("general");
+        assert!(
+            estimate
+                .evidence
+                .iter()
+                .any(|e| e.contains("self-corrected with more precise steering 0/1")),
+            "got: {:?}",
+            estimate.evidence
+        );
+    }
+
+    /// All the real signals this session pushes blend into one estimate that can genuinely climb
+    /// above the honest zero-confidence default -- not just individually present in `evidence`.
+    #[test]
+    fn a_session_with_real_activity_across_every_signal_reports_a_real_non_default_estimate() {
+        let (_dir, mut session) = open_session();
+
+        let before = session.current_expertise("general");
+        assert_eq!(before.level, ExpertiseLevel::Novice);
+        assert_eq!(before.confidence, 0.0);
+
+        session.handle_utterance("I need to launch my startup");
+        session.handle_utterance("/redo market_research focus on Europe");
+
+        let after = session.current_expertise("general");
+        assert!(after.confidence > before.confidence);
+        assert_eq!(after.evidence.len(), 4, "got: {:?}", after.evidence);
+    }
+}

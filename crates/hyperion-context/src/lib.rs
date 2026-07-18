@@ -41,22 +41,35 @@
 //!   [`types::Scope::anchors`] — no dedicated `device_id`-as-anchor
 //!   special case was needed the way [`types::Scope::intent_id`] required
 //!   one, since `anchors` was never an inert field to begin with.
-//! - **Adaptive Complexity / `ExpertiseEstimate`** (docs/06 §5.4) is fully a
+//! - ~~**Adaptive Complexity / `ExpertiseEstimate`** (docs/06 §5.4) is fully a
 //!   read over vocabulary complexity, capability tier, and error-recovery
 //!   behavior in docs/06's fuller design — sources this crate still cannot
 //!   read from directly: `hyperion-intent` already depends on this crate (it
 //!   passes a real `ContextEngine` into `IntentEngine::new`), so a reverse
 //!   dependency back onto Intent Engine or Agent Runtime would be a real
-//!   cycle, not just an unwired gap, even though both now exist (Phases 3/4).
-//!   [`engine::ContextEngine::current_expertise`] instead reads the one real
-//!   signal this crate does have a source for — the calling session's own
-//!   working-set activity (how many distinct Semantic Objects it has
-//!   touched, how repeatedly) — narrower than docs/06's full design but a
-//!   genuinely computed, non-fabricated estimate once a session has real
-//!   activity to read, rather than an always-fixed stub; a session with no
-//!   activity yet still reports the same fixed, zero-confidence `Novice`
-//!   estimate this method always returned, honestly labeled as such in its
-//!   own `evidence` field.
+//!   cycle, not just an unwired gap, even though both now exist (Phases 3/4).~~
+//!   (2026-07-18) — now real, all three signals, without ever taking the reverse
+//!   dependency: [`types::ExpertiseSignal`] is a narrowed local type this crate
+//!   defines itself (the same "narrow the type, never take the reverse edge"
+//!   precedent `hyperion-explainability`'s own `RecoveryPointId`/`SensitivityClass`
+//!   and `hyperion-security`'s own `SensitivityHint` already established), and
+//!   [`engine::ContextEngine::record_expertise_signal`] lets whichever real caller
+//!   already depends on both sides push a real, already-computed sample in.
+//!   `hyperion-intent::IntentEngine::handle_utterance` pushes a real
+//!   [`expertise::vocabulary_complexity`] score for every real utterance (this
+//!   crate's own scoring function, so both sides of that push agree on what
+//!   "complex" means); `hyperion-console::ConsoleSession` pushes the other two —
+//!   it already holds a real dispatch outcome and this session's own
+//!   `ContextEngine` handle at once — mapping docs/06's own "raw API vs. guided
+//!   workflow" onto whether a turn dispatched a single undecomposed Capability or
+//!   a full HTN plan, and its own "self-corrects... or asks Hyperion to explain"
+//!   onto the real `/redo` vs. `/teach` meta-commands.
+//!   [`engine::ContextEngine::current_expertise`] blends all four real signals
+//!   (working-set breadth/repetition plus whichever of the three pushed samples a
+//!   session actually has) into one estimate, naming exactly which signals
+//!   contributed in its own `evidence` field — a session with no activity or
+//!   pushed samples yet still reports the same fixed, zero-confidence `Novice`
+//!   estimate this method always returned, honestly labeled as such.
 //! - ~~**Semantic summarization** (docs/06 §2's `summary` inclusion mode)~~ — now real:
 //!   [`engine::ContextEngine::new_with_ai_runtime`] wires a real
 //!   [`hyperion_ai_runtime::LocalAiRuntime`] in, and [`engine`]'s own `summarize` uses it to
@@ -95,16 +108,19 @@
 //!   round trip.
 
 mod engine;
+mod expertise;
 mod propagation;
 mod types;
 mod working_set;
 
 pub use engine::{ContextEngine, ContextError, EntityResolution, ExplainedEntry};
+pub use expertise::vocabulary_complexity;
 pub use propagation::{
     merge, ContextEnvelope, ContextPropagation, EnvelopeEntry, EnvelopeProvenance,
     EnvelopeStaleness, FreshnessReport, FreshnessStatus, Integrity, MergeOutcome, PropagationError,
     RedactionAction, RedactionPolicy, Representation, TrustLevel,
 };
 pub use types::{
-    Budget, ContextBundle, ContextEntry, ExpertiseEstimate, ExpertiseLevel, InclusionMode, Scope,
+    Budget, CapabilityTierReach, ContextBundle, ContextEntry, ErrorRecoveryPattern,
+    ExpertiseEstimate, ExpertiseLevel, ExpertiseSignal, InclusionMode, Scope,
 };

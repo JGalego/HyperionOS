@@ -614,6 +614,18 @@ impl ConsoleSession {
         self.current_backend.label()
     }
 
+    /// This session's own real, current docs/06 §5.4 Adaptive Complexity read -- blends this
+    /// session's own working-set activity with whichever of vocabulary complexity, Capability-
+    /// tier reach, and error-recovery pattern this session has actually shown so far (see
+    /// [`hyperion_context::ExpertiseSignal`]'s own doc comment for the real signals this session
+    /// pushes and where). Exposed here the same way [`Self::backend_label`] exposes other
+    /// internal session state -- a real caller (a future Dynamic UI Runtime complexity-tier
+    /// resolution, docs/06's own named consumer) reads the same estimate this session's own
+    /// pushes actually inform.
+    pub fn current_expertise(&self, domain: &str) -> hyperion_context::ExpertiseEstimate {
+        self.context.current_expertise(&self.session_id, domain)
+    }
+
     /// Real model selection for this session's own `assistant.respond` calls (see
     /// [`Self::run_undecomposed_goal`]) -- a real, small, CPU-only [`hyperion_ai_runtime::CandleBackend`]
     /// when this binary is built with `--features candle`, [`MockBackend`] otherwise, the exact
@@ -1554,6 +1566,22 @@ impl ConsoleSession {
             Err(e) => return vec![format!("I understood that, but couldn't act on it: {e}")],
         };
 
+        // `hyperion-context`'s own previously-named Adaptive Complexity gap: this session already
+        // holds both a real dispatch outcome and this session's own `ContextEngine` handle at
+        // once, so it's the real, non-cyclic side that pushes docs/06's own "Capability tier the
+        // user has been reaching for" signal -- an undecomposed goal reaches directly for one
+        // Capability (docs/06's own "raw API" reach), a decomposed plan is docs/06's own "guided
+        // workflow" reach.
+        let tier_reach = if ticket.ready_leaves.is_empty() {
+            hyperion_context::CapabilityTierReach::RawApi
+        } else {
+            hyperion_context::CapabilityTierReach::GuidedWorkflow
+        };
+        self.context.record_expertise_signal(
+            &self.session_id,
+            hyperion_context::ExpertiseSignal::CapabilityTierReach(tier_reach),
+        );
+
         let (predicate, outcomes) = if ticket.ready_leaves.is_empty() {
             self.run_undecomposed_goal(root, utterance)
         } else {
@@ -1701,6 +1729,16 @@ impl ConsoleSession {
     /// or -- worse -- silently bypass it while still calling the very same active `ai_runtime`
     /// backend, including a real, paid cloud one.
     fn run_teach(&mut self, topic: &str) -> Vec<String> {
+        // `hyperion-context`'s own previously-named Adaptive Complexity gap: `/teach` is this
+        // session's own real, observable shape of docs/06's own "asks Hyperion to explain"
+        // error-recovery pattern.
+        self.context.record_expertise_signal(
+            &self.session_id,
+            hyperion_context::ExpertiseSignal::ErrorRecovery(
+                hyperion_context::ErrorRecoveryPattern::AskedForExplanation,
+            ),
+        );
+
         let capability_ref = self.current_backend.capability_ref();
         let prompt = format!(
             "Teach me about {topic}. Explain the underlying principle and the reasoning behind \
@@ -2071,6 +2109,16 @@ impl ConsoleSession {
             }
             Err(e) => return vec![format!("I couldn't redo \"{task_name}\": {e}")],
         };
+
+        // `hyperion-context`'s own previously-named Adaptive Complexity gap: a real, successful
+        // `/redo` with the user's own extra steering is this session's own real, observable shape
+        // of docs/06's own "self-corrects with technical vocabulary" error-recovery pattern.
+        self.context.record_expertise_signal(
+            &self.session_id,
+            hyperion_context::ExpertiseSignal::ErrorRecovery(
+                hyperion_context::ErrorRecoveryPattern::SelfCorrected,
+            ),
+        );
 
         self.drive_ticks_to_completion(session_id, on_progress);
 

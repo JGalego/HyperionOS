@@ -366,6 +366,18 @@ impl IntentEngine {
             .or_insert_with(|| WorkingMemory::new(session_id, WORKING_MEMORY_TURN_CAPACITY))
             .push_turn(utterance);
 
+        // This crate's own real half of `hyperion-context`'s previously-named Adaptive
+        // Complexity gap: this crate already depends on `hyperion-context` (the reverse edge
+        // would be a real cycle), so it pushes a real, already-computed vocabulary-complexity
+        // sample for every real utterance rather than `hyperion-context` ever reading this
+        // crate's own utterances directly.
+        self.context.record_expertise_signal(
+            session_id,
+            hyperion_context::ExpertiseSignal::VocabularyComplexity(
+                hyperion_context::vocabulary_complexity(utterance),
+            ),
+        );
+
         let lower = utterance.to_lowercase();
         if CANCEL_KEYWORDS.iter().any(|kw| lower.contains(kw)) {
             let active_root = self

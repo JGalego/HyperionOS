@@ -9,7 +9,8 @@ use hyperion_knowledge_graph::{GraphError, GraphQuery, KnowledgeGraph, NodeId, P
 use hyperion_storage::ObjectId;
 
 use crate::types::{
-    Budget, ContextBundle, ContextEntry, ExpertiseEstimate, ExpertiseLevel, InclusionMode, Scope,
+    Budget, ContextBundle, ContextEntry, ExpertiseEstimate, ExpertiseLevel, ExpertiseSignal,
+    InclusionMode, Scope,
 };
 use crate::working_set::WorkingSet;
 
@@ -502,5 +503,20 @@ impl ContextEngine {
                 confidence: 0.0,
             },
         }
+    }
+
+    /// This crate's own previously-named "Adaptive Complexity" gap, closed for real: pushes one
+    /// real, already-computed [`ExpertiseSignal`] sample for `session_id`, so [`Self::
+    /// current_expertise`]'s next call blends it in -- see [`ExpertiseSignal`]'s own doc comment
+    /// for why this crate never computes these three signals itself, and which real callers
+    /// (`hyperion-intent`, `hyperion-console`) push them. Creates `session_id`'s own working set
+    /// if this is the very first real activity recorded for it, the same "first touch creates
+    /// the entry" convention [`Self::resolve_entity`] already established.
+    pub fn record_expertise_signal(&self, session_id: &str, signal: ExpertiseSignal) {
+        let mut working_sets = self.working_sets.lock().unwrap();
+        working_sets
+            .entry(session_id.to_string())
+            .or_default()
+            .record_expertise_signal(signal);
     }
 }

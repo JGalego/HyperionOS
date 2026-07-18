@@ -340,3 +340,40 @@ fn mark_status_really_transitions_a_leafs_status_and_bumps_updated_at() {
         .unwrap();
     assert_eq!(legal.status, IntentStatus::Planned);
 }
+
+/// `hyperion-context`'s own previously-named Adaptive Complexity gap: this crate already depends
+/// on `hyperion-context`, so it's the real, non-cyclic side that pushes a real vocabulary-
+/// complexity sample for every real utterance -- proven here against the same, shared
+/// `ContextEngine` handle both crates hold.
+#[test]
+fn handle_utterance_pushes_a_real_vocabulary_complexity_signal_into_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut monitor = CapabilityMonitor::new();
+    let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let context = Arc::new(ContextEngine::new(graph.clone()));
+    let engine = IntentEngine::new(graph, context.clone());
+
+    let before = context.current_expertise("session-vocab", "general");
+    assert_eq!(before.confidence, 0.0);
+
+    engine
+        .handle_utterance(
+            &monitor,
+            &token,
+            "instantiate the asynchronous dependency-injection configuration",
+            "session-vocab",
+        )
+        .unwrap();
+
+    let after = context.current_expertise("session-vocab", "general");
+    assert!(
+        after
+            .evidence
+            .iter()
+            .any(|e| e.contains("vocabulary complexity")),
+        "got: {:?}",
+        after.evidence
+    );
+    assert!(after.confidence > before.confidence);
+}
