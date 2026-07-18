@@ -34,6 +34,11 @@
 //! [`Self::load`] already proves the mechanism against. Both prove the same real forward-pass
 //! mechanism against the two file formats a real caller pointing this backend at an arbitrary
 //! downloaded checkpoint would actually have.
+//!
+//! Every `load*` constructor also runs [`crate::model_catalog::verify_file_hash`] against
+//! [`crate::model_catalog::ModelCatalog::built_in`] before ever loading a downloaded file's real
+//! bytes -- this module's own previously-unnamed "no real integrity check on a downloaded model"
+//! gap. See [`verify_known_download`].
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -176,6 +181,31 @@ fn download_file(
         })
 }
 
+/// This crate's own previously-unnamed "no real integrity check on a downloaded model" gap,
+/// closed via `crate::model_catalog`: when `repo`/`filename` match one of
+/// [`crate::model_catalog::ModelCatalog::built_in`]'s own real, hash-pinned entries, `path`'s
+/// real content must hash to exactly what that entry pins -- a corrupted or substituted download
+/// is caught here, before any of this module's `load*` constructors ever loads it. A caller
+/// pointing this backend at a repo/filename outside the built-in catalog (no known hash to check
+/// against) is unaffected, the same "only pins what this crate itself verified" restraint
+/// [`TINYLLAMAS_REVISION`] already established for revision pinning.
+fn verify_known_download(
+    path: &std::path::Path,
+    repo: &str,
+    filename: &str,
+) -> Result<(), CandleBackendError> {
+    let catalog = crate::model_catalog::ModelCatalog::built_in();
+    if let Some(entry) = catalog
+        .entries
+        .iter()
+        .find(|e| e.repo == repo && e.filename == filename)
+    {
+        crate::model_catalog::verify_file_hash(path, entry)
+            .map_err(|e| CandleBackendError::Load(anyhow::anyhow!(e)))?;
+    }
+    Ok(())
+}
+
 /// The one, shared real LLaMA-family tokenizer every constructor here downloads -- see
 /// [`LLAMA_TOKENIZER_REVISION`]'s own doc comment.
 fn download_llama_tokenizer() -> Result<Tokenizer, CandleBackendError> {
@@ -217,6 +247,7 @@ impl CandleBackend {
             weights_revision,
             "model weights",
         )?;
+        verify_known_download(&weights_path, model_id, weights_filename)?;
 
         let mut file = std::fs::File::open(&weights_path).map_err(|e| {
             CandleBackendError::Load(anyhow::anyhow!("opening {weights_path:?}: {e}"))
@@ -262,6 +293,7 @@ impl CandleBackend {
             weights_revision,
             "quantized model weights",
         )?;
+        verify_known_download(&weights_path, model_id, filename)?;
 
         let mut file = std::fs::File::open(&weights_path).map_err(|e| {
             CandleBackendError::Load(anyhow::anyhow!("opening {weights_path:?}: {e}"))
@@ -323,6 +355,7 @@ impl CandleBackend {
         let weights_revision =
             (model_id == STORIES15M_SAFETENSORS_REPO).then_some(STORIES15M_SAFETENSORS_REVISION);
         let weights_path = download_file(model_id, filename, weights_revision, "model weights")?;
+        verify_known_download(&weights_path, model_id, filename)?;
 
         let mut tensors = candle_core::safetensors::load(&weights_path, &device)
             .map_err(|e| CandleBackendError::Load(e.into()))?;

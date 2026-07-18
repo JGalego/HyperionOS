@@ -73,6 +73,15 @@
 //!   checksum a forger could reproduce without the real signing key. `hyperion-context`'s own
 //!   envelope-integrity checksum is a separate, not-yet-touched stand-in of the same shape —
 //!   named, not silently implied fixed by this crate's own upgrade.
+//! - ~~**A signed catalog naming exactly which real model sources this crate trusts, with a real
+//!   integrity check on what actually gets downloaded.**~~ — now real: [`model_catalog::
+//!   ModelCatalog`] names [`candle_backend`]'s own three real download constants (repo/revision/
+//!   filename/format) plus a real BLAKE3 hash of each real file, [`model_catalog::sign_catalog`]/
+//!   [`model_catalog::verify_catalog`] mirror [`sign`]/[`verify`]'s own real Ed25519-over-
+//!   canonical-bytes shape, and [`model_catalog::verify_file_hash`] is now checked by every
+//!   `candle_backend::CandleBackend::load*` constructor before a downloaded file's real bytes are
+//!   ever loaded. Deliberately not yet wired into a persisted, user-editable file — see backlog
+//!   item 28's own `model_selection.json` follow-up, which this module is the real primitive for.
 
 #[cfg(feature = "anthropic")]
 pub mod anthropic_backend;
@@ -81,6 +90,7 @@ pub mod candle_backend;
 pub mod embedding;
 #[cfg(feature = "gemini")]
 pub mod gemini_backend;
+pub mod model_catalog;
 #[cfg(feature = "openai-compat")]
 pub mod openai_compat_backend;
 mod registry;
@@ -95,6 +105,10 @@ pub use candle_backend::{CandleBackend, CandleBackendError};
 pub use embedding::{cosine_similarity, embed, EMBEDDING_DIMS};
 #[cfg(feature = "gemini")]
 pub use gemini_backend::{GeminiBackend, GeminiError};
+pub use model_catalog::{
+    sign_catalog, verify_catalog, verify_file_hash, ModelCatalog, ModelCatalogEntry,
+    ModelCatalogError, ModelFormat,
+};
 #[cfg(feature = "openai-compat")]
 pub use openai_compat_backend::{OpenAiCompatBackend, OpenAiCompatError};
 pub use registry::{sign, verify, MockBackend};
