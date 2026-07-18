@@ -17,8 +17,16 @@ hyperion-storage = { workspace = true }
 hyperion-workspace = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-# The real FUSE adapter (see `posix` module) -- pure-Rust mount path, see the workspace-level
-# dependency comment in the root `Cargo.toml` for why this needs no system libfuse headers here.
+
+# The real FUSE adapter (see the `posix` module) is Linux-only: `fuser`'s own build.rs only
+# auto-selects its no-system-dependency pure-Rust mount path on Linux (verified empirically in the
+# sandbox this was built in) -- on macOS its build.rs unconditionally requires a real `fuse.pc`
+# (macFUSE, a separate kernel-extension-based install this workspace's own macOS CI runner does
+# not have), so a plain, unconditional dependency here would fail to even *build* there. Scoping
+# it to `cfg(target_os = "linux")` keeps every other platform building exactly as before, and
+# matches this workspace's own actual deployment target anyway (a real Linux boot image, per
+# docs/998-roadmap.md's own boot-image milestones).
+[target.'cfg(target_os = "linux")'.dependencies]
 fuser = { workspace = true }
 libc = { workspace = true }
 

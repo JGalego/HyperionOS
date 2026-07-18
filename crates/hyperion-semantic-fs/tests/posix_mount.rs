@@ -10,6 +10,10 @@
 //! syscall (the path `umount_and_join` takes) does not behave the way a real, privileged host's
 //! does; `Drop`'s own best-effort fallback path is what actually works here, exactly the same way
 //! this workspace's other hosted-simulator real/honest-scope choices already are.
+//!
+//! Linux-only, matching `hyperion_semantic_fs::posix`'s own `cfg(target_os = "linux")` gate (see
+//! that module's doc comment for why).
+#![cfg(target_os = "linux")]
 
 use std::sync::Arc;
 

@@ -34,13 +34,18 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - ~~**Real POSIX/FUSE mount.**~~ — now real: [`posix::mount_posix`]/[`posix::spawn_mount_posix`]
-//!   mount a real `fuser::Filesystem` adapter (pure-Rust mount path, no system libfuse headers
-//!   needed — see that module's own doc comment) over this same [`SemanticFilesystem`], resolving
-//!   every VFS call through its already-real, capability-gated methods rather than a second data
-//!   model. See [`posix`]'s own doc comment for the real, honestly-named scope this operates
-//!   within (one fixed capability identity per mount; no `unlink`/`rmdir` yet, since this crate
-//!   itself exposes no delete operation to translate to).
+//! - ~~**Real POSIX/FUSE mount.**~~ — now real on Linux: [`posix::mount_posix`]/
+//!   [`posix::spawn_mount_posix`] mount a real `fuser::Filesystem` adapter (pure-Rust mount path,
+//!   no system libfuse headers needed — see that module's own doc comment) over this same
+//!   [`SemanticFilesystem`], resolving every VFS call through its already-real, capability-gated
+//!   methods rather than a second data model. See [`posix`]'s own doc comment for the real,
+//!   honestly-named scope this operates within (one fixed capability identity per mount; no
+//!   `unlink`/`rmdir` yet, since this crate itself exposes no delete operation to translate to).
+//!   The `posix` module (and its `fuser`/`libc` dependencies) only exist on
+//!   `cfg(target_os = "linux")` — `fuser`'s own build script unconditionally requires a real,
+//!   separately-installed macFUSE on macOS (unlike Linux's no-dependency pure-Rust path), which
+//!   this workspace's own macOS CI runner does not have; every other platform simply does not get
+//!   this capability rather than fail to build.
 //! - ~~**Live VirtualFolder invalidation via a real Event System**~~ — now real:
 //!   [`SemanticFilesystem::with_events`] wires a real `hyperion-events::EventBus` (subscribing to
 //!   `hyperion_knowledge_graph::KnowledgeGraph::with_events`'s own `ObjectChanged` publications),
@@ -63,6 +68,7 @@
 
 mod engine;
 mod path;
+#[cfg(target_os = "linux")]
 pub mod posix;
 mod types;
 mod workspace_bridge;
