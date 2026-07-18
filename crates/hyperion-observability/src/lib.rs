@@ -66,10 +66,15 @@
 //!   that never watched the chain grow in real time, couldn't distinguish from a legitimate one
 //!   signed later. Hardware-backed anchoring ("hardware root of trust where available") remains
 //!   real-hardware-only, same as this workspace's other TPM-adjacent deferrals.
-//! - **The Fleet aggregate-submission network endpoint**
-//!   (`Fleet.submitAggregate`). [`aggregate::build_aggregate`] produces
-//!   the gated report; nothing here sends it anywhere — no real network
-//!   transport exists in this hosted simulator.
+//! - ~~**The Fleet aggregate-submission network endpoint** (`Fleet.submitAggregate`).~~
+//!   (2026-07-18) — this crate has no transport primitive of its own, and can't gain one without
+//!   a Cargo cycle: `hyperion-federation` already depends on this crate, so the reverse direction
+//!   would be a hard cycle. [`AggregateReport`] now derives `Serialize`/`Deserialize` (the real
+//!   wire format), and `hyperion_federation::fleet::serve_fleet_submissions`/
+//!   `submit_aggregate_over_socket` is the real transport that carries [`aggregate::build_aggregate`]'s
+//!   own gated report between devices, closing this crate's half of the gap from the other side —
+//!   the same "already depends the other way, so the sibling crate must own the transport"
+//!   reasoning that placed real KG replication in `hyperion-federation` too.
 //! - ~~**`Scheduler.subscribeLoadSignal` wiring.**~~ (2026-07-18) — now real:
 //!   [`scheduler_feedback::publish_load_signal`] computes a real
 //!   `hyperion_scheduler::LoadSignal` from a real [`telemetry::TelemetryCollector`]'s own

@@ -123,6 +123,18 @@
 //!   [`LeaseHeartbeat`] already established. See [`kg_sync`]'s own doc comment for the real,
 //!   honestly-named boundaries this doesn't yet cross (translation table not persisted across a
 //!   restart; last-applied-wins, not true CRDT conflict merge).
+//! - ~~**The Fleet aggregate-submission network endpoint** (`Fleet.submitAggregate`).~~
+//!   (2026-07-18) — `hyperion-observability`'s own crate doc named this as its remaining gap
+//!   ("[`aggregate::build_aggregate`] produces the gated report; nothing here sends it anywhere --
+//!   no real network transport exists in this hosted simulator"), but that crate can't own the
+//!   transport itself: this crate already depends on it, so the reverse direction would be a hard
+//!   Cargo cycle -- the same reasoning that placed [`kg_sync`] here rather than in
+//!   `hyperion-knowledge-graph`. [`fleet::serve_fleet_submissions`]/
+//!   [`fleet::submit_aggregate_over_socket`] replicate [`transport`]'s own real socket shape
+//!   exactly (a real `TcpListener` background thread, real `seal_for_peer`/`open_from_peer`
+//!   authentication+encryption, length-prefixed frames), carrying a real
+//!   `hyperion_observability::AggregateReport` as JSON; [`fleet::FleetAggregateStore`] is the
+//!   real, honest, in-memory "Fleet" receiver this workspace had nowhere before.
 //! - **Cold-cache pre-staging** (docs/21 §Recovery's priority-sync batch
 //!   for a migration target with no local replica) — there is no Context
 //!   Bundle replica model across devices yet.
@@ -133,12 +145,17 @@
 //!   `acquire_lease` from "both sides" in a test, which is what the test
 //!   suite does.
 
+mod fleet;
 mod hub;
 mod kg_sync;
 mod offload_bridge;
 mod transport;
 mod types;
 
+pub use fleet::{
+    serve_fleet_submissions, submit_aggregate_over_socket, FleetAggregateStore,
+    FleetSubmissionServer, ReceivedAggregate,
+};
 pub use hub::{FederationError, FederationHub, LeaseHeartbeat};
 pub use kg_sync::{
     merge_snapshot, publish_snapshot_over_socket, serve_kg_snapshots, KgAntiEntropyHeartbeat,

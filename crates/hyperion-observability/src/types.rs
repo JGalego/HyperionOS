@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use hyperion_explainability::ExplanationRecord;
 use hyperion_model_router::Rationale;
+use serde::{Deserialize, Serialize};
 
 pub type TraceId = u64;
 
@@ -234,8 +235,10 @@ pub struct ConsentScope {
 }
 
 /// docs/34 §1's `AggregateReport` — `metric_summaries` narrowed to plain
-/// `(name, value)` pairs rather than full percentile rollups.
-#[derive(Debug, Clone)]
+/// `(name, value)` pairs rather than full percentile rollups. `Serialize`/`Deserialize` are the
+/// real wire format `hyperion-federation`'s `fleet` module sends this over — see that module's
+/// own doc comment for the "Fleet aggregate-submission network endpoint" gap this closes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateReport {
     pub cohort_size: u32,
     pub summaries: Vec<(String, f64)>,
