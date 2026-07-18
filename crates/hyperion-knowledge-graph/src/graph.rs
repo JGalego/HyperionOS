@@ -689,6 +689,22 @@ impl KnowledgeGraph {
         Ok(GraphSnapshot { nodes, edges })
     }
 
+    /// This crate's own previously-unnamed "no real JSON graph export API" gap: [`Self::dump`]'s
+    /// own snapshot already derives `Serialize`, but a bare `serde_json::to_string` on it
+    /// produces `Vec<(NodeId, NodeRecord)>`'s own awkward array-of-pairs shape, not something a
+    /// real external tool (or a person reading it) would want. This reshapes the same real,
+    /// visibility-filtered [`GraphSnapshot`] into a clean, self-contained JSON document (see
+    /// [`crate::export::to_json`]) — every node/edge id inlined as a plain field rather than left
+    /// tuple-positional.
+    pub fn export_json(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+    ) -> Result<String, GraphError> {
+        let snapshot = self.dump(monitor, token)?;
+        Ok(crate::export::to_json(&snapshot))
+    }
+
     fn satisfies_edge_constraint(
         index: &GraphIndex,
         node: NodeId,

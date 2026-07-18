@@ -1112,6 +1112,18 @@ mod graph_dump {
         let lines = session.handle_utterance("/graph svg").join("\n");
         assert!(lines.contains("isn't a format I know"), "got: {lines:?}");
     }
+
+    #[test]
+    fn graph_json_produces_a_real_self_contained_json_export() {
+        let (_dir, mut session) = open_session();
+        session.handle_utterance("I need to launch my startup");
+
+        let text = session.handle_utterance("/graph json").join("\n");
+        let parsed: serde_json::Value = serde_json::from_str(&text)
+            .unwrap_or_else(|e| panic!("expected valid JSON, got {e}: {text:?}"));
+        assert!(!parsed["nodes"].as_array().unwrap().is_empty());
+        assert!(!parsed["edges"].as_array().unwrap().is_empty());
+    }
 }
 
 /// `/redo <task> <extra instructions>` -- the real "steer this task with more information" verb,

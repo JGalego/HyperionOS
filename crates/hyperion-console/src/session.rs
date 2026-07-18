@@ -40,7 +40,7 @@ use hyperion_plugin_framework::{
     PrivacyTier as PluginPrivacyTier, SemanticContract, SideEffect, TrustDepth,
 };
 
-use crate::graph_explorer::GraphExplorer;
+use crate::graph_explorer::{GraphDumpFormat, GraphExplorer};
 use hyperion_netstack::{DomainEgressGrant, NetstackHub};
 use hyperion_workspace::{
     project, CapabilityUiContract, ComplexityTier, Modality, ModalityInterface, RegionAffinity,
@@ -978,19 +978,20 @@ impl ConsoleSession {
 
         if lower.starts_with("/graph") {
             let rest = trimmed["/graph".len()..].trim();
-            let as_dot = match rest {
-                "" => false,
-                "dot" => true,
+            let format = match rest {
+                "" => GraphDumpFormat::Text,
+                "dot" => GraphDumpFormat::Dot,
+                "json" => GraphDumpFormat::Json,
                 other => {
                     return Some(vec![format!(
-                        "\"/graph {other}\" isn't a format I know -- try \"/graph\" or \"/graph \
-                         dot\"."
+                        "\"/graph {other}\" isn't a format I know -- try \"/graph\", \"/graph \
+                         dot\", or \"/graph json\"."
                     )])
                 }
             };
             return Some(
                 self.graph_explorer
-                    .dump_graph(&self.monitor, &self.token, as_dot),
+                    .dump_graph(&self.monitor, &self.token, format),
             );
         }
 
@@ -1177,6 +1178,9 @@ impl ConsoleSession {
                 .to_string(),
             "  /graph dot                                  the same, as Graphviz DOT -- pipe to \
              \"dot -Tsvg\" to draw it"
+                .to_string(),
+            "  /graph json                                  the same, as a real, self-contained \
+             JSON export -- for another tool to read"
                 .to_string(),
             "  /think on|off                                pause before deciding what a new \
              goal means, until you say \"/think-proceed\" (bare, to check the current mode)"
