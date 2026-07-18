@@ -12,6 +12,7 @@
 //! background reaper for exactly those; `hyperion_supervisor::Supervisor` only reaps its own).
 
 mod display_probe;
+mod hardware_fit;
 mod network_probe;
 mod storage_probe;
 mod ui_render;
@@ -267,6 +268,17 @@ fn run_supervision_tree() -> ! {
         storage_probe::run_crash_consistency_probe(data_dir);
     }
 
+    // Resolved once, here, and reused below -- the same real directory both this crate's own
+    // hardware-fit probe and the real console itself end up using, rather than each independently
+    // recomputing (and, on the ephemeral tmpfs fallback path, redundantly re-creating) it.
+    let console_data_dir = console_data_dir(data_partition.as_deref());
+
+    // This crate's own previously-unnamed "no real hardware-fit check" gap: a real, physical
+    // probe of this machine's actual available RAM and free disk space, against the same real
+    // data directory the console below will actually use -- a warning, never a boot-blocking
+    // failure (see that module's own doc comment for why).
+    hardware_fit::run_hardware_fit_probe(&console_data_dir);
+
     let cgroup_parent = prepare_cgroup_parent();
     if cgroup_parent.is_none() {
         eprintln!(
@@ -307,7 +319,7 @@ fn run_supervision_tree() -> ! {
         }
     }
 
-    adopt_interactive_process(&mut supervisor, data_partition.as_deref());
+    adopt_interactive_process(&mut supervisor, console_data_dir);
 
     println!("[hyperion-init] supervision tree running");
     supervisor.run_forever();
@@ -344,8 +356,7 @@ fn console_data_dir(data_partition: Option<&Path>) -> PathBuf {
 /// broad, real-time interactive I/O access, the same reasoning M1/M5 already applied to the debug
 /// shell -- a real, properly capability-scoped interactive surface is a further, separate
 /// refinement M7 stage 2 (a real compositor) would need, not this stage.
-fn adopt_interactive_process(supervisor: &mut Supervisor, data_partition: Option<&Path>) {
-    let data_dir = console_data_dir(data_partition);
+fn adopt_interactive_process(supervisor: &mut Supervisor, data_dir: PathBuf) {
     match spawn_console(&data_dir) {
         Ok(pid) => {
             supervisor.adopt_plain("console", pid, move || spawn_console(&data_dir));
