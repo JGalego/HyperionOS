@@ -42,18 +42,33 @@
 //! this crate's and `hyperion-workspace`'s own "no legacy-application
 //! Workspace type exists yet" gap.
 //!
-//! Deliberately deferred, and why (all of these require real
-//! infrastructure a hosted simulator cannot provide):
+//! ~~**Real Linux container/namespace runtime.**~~ — now real:
+//! [`host::CompatHost::exec_in_sandbox`] spawns a genuine child process under real, kernel-
+//! enforced PID/UTS/IPC (and, per `NetworkPolicy`, network) namespace isolation via `bwrap`
+//! (bubblewrap) — see [`sandbox`]'s own doc comment for exactly what's kernel-enforced versus
+//! honestly narrowed (there is no separate guest root filesystem image; a sandboxed guest runs
+//! against this host's own base userland, confined to writing only the session's own declared
+//! `filesystem_roots`).
+//!
+//! ~~**A real browser rendering engine** for `LegacyTarget::Web`~~ — now real:
+//! [`host::CompatHost::render_web_page`] hands an already-`web_fetch`-authorized URL to a real,
+//! already-installed headless Chromium-family binary (via [`browser::render_dom`]) and returns its
+//! actual post-load, script-evaluated DOM — see that module's own doc comment for why this is a
+//! second, independent real fetch rather than a reuse of `web_fetch`'s own bytes.
+//!
+//! Still deliberately deferred, and why (these two specifically require infrastructure this
+//! hosted simulator was verified, not merely assumed, not to have — `/dev/kvm` exists as a device
+//! node but this environment's own user is not in the `kvm` group and no hypervisor/VM-image
+//! tooling (`qemu-system-x86_64`) is installed; no Android emulator, system image, or container
+//! runtime (`waydroid`/`anbox`) is present either, and `adb` alone is a debug-bridge *client*, not
+//! a container or ART runtime):
 //!
 //! - **Real Windows VM/hardware virtualization** (EPT/NPT, foreign guest
 //!   kernel, virtual GPU output) — docs/27 assumes full VM, not a Wine-
 //!   style API translation layer; nothing simulates a foreign kernel
 //!   here.
 //! - **Real Android container + translated permission surface + ART
-//!   runtime**, and **real Linux container/namespace runtime.**
-//! - **A real browser rendering engine** for `LegacyTarget::Web` — this
-//!   crate mediates the *network* half (via `hyperion-netstack`'s real
-//!   `web.fetch.raw`) but renders nothing.
+//!   runtime.**
 //! - **Real framebuffer/compositor capture and platform accessibility
 //!   bridges** (Windows UI Automation, Android `AccessibilityService`,
 //!   X11 AT-SPI, OCR-based pixel fallback). [`types::AccessibilityBridgeTier`]
@@ -79,13 +94,16 @@
 //!   Each crate declares its own four-value depth label rather than
 //!   sharing one — see [`types::TrustDepth`]'s own doc comment.
 
+mod browser;
 mod host;
+mod sandbox;
 mod types;
 mod workspace_bridge;
 
 pub use host::CompatHost;
 pub use types::{
     AccessibilityBridgeTier, CompatError, CompatSession, CompatibilityProfile, IngestedArtifact,
-    LegacyTarget, NetworkPolicy, PromotionPolicy, PromotionState, SessionId, TrustDepth,
+    LegacyTarget, NetworkPolicy, PromotionPolicy, PromotionState, RenderedPage, SandboxExecution,
+    SessionId, TrustDepth,
 };
 pub use workspace_bridge::present_as_workspace;

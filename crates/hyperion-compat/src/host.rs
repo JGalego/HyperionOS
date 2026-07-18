@@ -6,9 +6,12 @@ use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustB
 use hyperion_knowledge_graph::{KnowledgeGraph, NodeId};
 use hyperion_netstack::{DomainEgressGrant, FetchedPage, NetstackHub};
 
+use crate::browser;
+use crate::sandbox;
 use crate::types::{
     CompatError, CompatSession, CompatibilityProfile, IngestedArtifact, LegacyTarget,
-    NetworkPolicy, PromotionPolicy, PromotionState, SessionId, TrustDepth,
+    NetworkPolicy, PromotionPolicy, PromotionState, RenderedPage, SandboxExecution, SessionId,
+    TrustDepth,
 };
 
 /// docs/27 — Compatibility Layer. See this crate's doc comment for the
@@ -234,6 +237,62 @@ impl CompatHost {
         artifact.draft_metadata = Some(draft_metadata);
         artifact.promoted_object_id = Some(object_id);
         Ok(object_id)
+    }
+
+    /// This crate's own previously-named "Real Linux container/namespace runtime" gap, closed
+    /// for real via [`sandbox::exec_in_sandbox`] — see that module's own doc comment for the
+    /// real kernel-namespace guarantees this provides and its honestly-named scope. Only valid
+    /// for a session whose target is one this crate can actually run something real for: `Linux`,
+    /// `Container`, or `Cli` (`Windows`/`Android`/`Vm` would need a foreign kernel or ART runtime
+    /// this hosted simulator has neither of — see this crate's own doc comment).
+    pub fn exec_in_sandbox(
+        &self,
+        session_id: SessionId,
+        command: &str,
+        args: &[String],
+    ) -> Result<SandboxExecution, CompatError> {
+        let sessions = self.sessions.lock().unwrap();
+        let session = sessions
+            .get(&session_id)
+            .ok_or(CompatError::NoSuchSession)?;
+        if !matches!(
+            session.profile.target,
+            LegacyTarget::Linux | LegacyTarget::Container | LegacyTarget::Cli
+        ) {
+            return Err(CompatError::NotASandboxableSession);
+        }
+        let writable = session
+            .grants
+            .iter()
+            .any(|g| g.rights().contains(RightsMask::WRITE));
+        let roots = session.profile.filesystem_roots.clone();
+        let network_policy = session.profile.network_default.clone();
+        drop(sessions);
+
+        sandbox::exec_in_sandbox(&roots, writable, &network_policy, command, args)
+    }
+
+    /// This crate's own previously-named "a real browser rendering engine... renders nothing"
+    /// gap, closed for real: reuses [`Self::web_fetch`]'s own existing capability/SSRF/rate-limit
+    /// gate for `url` first (so a guest can never reach this for a domain it wasn't granted), then
+    /// hands that same URL to [`browser::render_dom`] for a genuine headless-browser render — see
+    /// that module's own doc comment for why the render itself is a second, independent real
+    /// fetch rather than reusing `web_fetch`'s own bytes.
+    pub fn render_web_page(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        session_id: SessionId,
+        url: &str,
+        agent_id: u64,
+        now: u64,
+    ) -> Result<RenderedPage, CompatError> {
+        let fetched = self.web_fetch(monitor, token, session_id, url, agent_id, now)?;
+        let rendered_dom = browser::render_dom(url, std::time::Duration::from_secs(10))?;
+        Ok(RenderedPage {
+            fetched,
+            rendered_dom,
+        })
     }
 
     /// docs/27 §5: the Web-target fetch path, mediated entirely by the

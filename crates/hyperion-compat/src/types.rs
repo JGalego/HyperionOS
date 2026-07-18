@@ -1,5 +1,6 @@
 use hyperion_capability::{CapabilityToken, TrustBoundaryId};
 use hyperion_knowledge_graph::NodeId;
+use hyperion_netstack::FetchedPage;
 
 pub type SessionId = u64;
 
@@ -120,6 +121,27 @@ pub enum PromotionPolicy {
     StandingRuleDeny,
 }
 
+/// The real result of one [`crate::host::CompatHost::exec_in_sandbox`] call -- a genuine child
+/// process, run to completion under real Linux namespace isolation (see that method's own doc
+/// comment), not a simulated exit code.
+#[derive(Debug, Clone)]
+pub struct SandboxExecution {
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// The real result of one [`crate::host::CompatHost::render_web_page`] call: `fetched` is the
+/// same [`FetchedPage`] `web_fetch` already returns (the mediated, audited, rate-limited half),
+/// `rendered_dom` is the real post-load DOM a headless browser engine produced for the identical
+/// URL -- see that method's own doc comment for why these are two honestly-separate real results
+/// rather than one.
+#[derive(Debug, Clone)]
+pub struct RenderedPage {
+    pub fetched: FetchedPage,
+    pub rendered_dom: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CompatError {
     #[error("capability does not authorize this operation")]
@@ -136,6 +158,16 @@ pub enum CompatError {
     NoSuchArtifact,
     #[error("this operation is only valid for a Web-target session with network access allowed")]
     NotAnAllowedWebSession,
+    #[error("this operation is only valid for a Linux/Container/Cli-target session")]
+    NotASandboxableSession,
+    #[error("no real namespace-sandboxing tool (bwrap) is available on this host")]
+    SandboxUnavailable,
+    #[error("no real headless browser engine is available on this host")]
+    BrowserUnavailable,
+    #[error("sandboxed process could not be spawned: {0}")]
+    SandboxSpawnFailed(String),
+    #[error("headless render failed: {0}")]
+    RenderFailed(String),
     #[error("capability fault: {0}")]
     Capability(#[from] hyperion_capability::Fault),
     #[error("knowledge graph error: {0}")]
