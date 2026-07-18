@@ -91,6 +91,17 @@ pub fn erase(
             }
             ErasureMode::CryptoShred => {
                 graph.delete_node(monitor, token, id)?;
+                // This crate's own previously-named "still not a byte-level deletion from the
+                // WAL's history" gap, closed for real: the tombstone above already makes the
+                // node genuinely gone from every read path, but its past versions would
+                // otherwise still sit, fully readable, in the underlying WAL. `NotFound` here
+                // is benign, not an error to propagate -- it means `delete_node` (or an earlier
+                // shred of the same id) already removed it from this graph's own index, which
+                // this call's own purge already covers or a prior one already completed.
+                match graph.purge_node_history(monitor, token, id) {
+                    Ok(_) | Err(hyperion_knowledge_graph::GraphError::NotFound) => {}
+                    Err(err) => return Err(err.into()),
+                }
             }
         }
     }
@@ -182,6 +193,18 @@ pub fn expire_lapsed_soft_deletes(
                         Err(err) => {
                             // Best-effort shredding: expiry itself already succeeded and must not
                             // be rolled back over a secondary write failure on one object.
+                            let _ = err;
+                        }
+                    }
+                    // This crate's own previously-named "still not a byte-level deletion from
+                    // the WAL's history" gap: an expired soft-delete now has the exact same real
+                    // irreversibility `ErasureMode::CryptoShred` gets at `erase` time -- its
+                    // history genuinely leaves the WAL too, not merely its current view. Same
+                    // best-effort convention as the `delete_node` call just above: expiry itself
+                    // already succeeded and must not be rolled back over this secondary failure.
+                    match graph.purge_node_history(monitor, token, id) {
+                        Ok(_) | Err(hyperion_knowledge_graph::GraphError::NotFound) => {}
+                        Err(err) => {
                             let _ = err;
                         }
                     }

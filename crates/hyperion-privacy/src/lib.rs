@@ -76,19 +76,29 @@
 //!   `hyperion-federation` and an erasure (a tombstone/physical-delete) is a different operation
 //!   from `kg_sync`'s own real merge (`put_node`/`link` upserts) — propagating a *deletion* across
 //!   devices through that same mechanism remains a real, separate gap this crate doesn't close.
-//! - **`CryptoShred`'s wire-indistinguishability guarantee.** ~~`hyperion-knowledge-graph` has no
-//!   node-delete operation (only edges tombstone), so `erasure::erase` overwrote a node's
-//!   metadata with a tombstone-shaped placeholder rather than physically removing it~~ — now
-//!   real: `erase(CryptoShred)` calls the real
+//! - ~~**`CryptoShred`'s wire-indistinguishability guarantee.**~~ `hyperion-knowledge-graph` has
+//!   no node-delete operation (only edges tombstone), so `erasure::erase` overwrote a node's
+//!   metadata with a tombstone-shaped placeholder rather than physically removing it — now real:
+//!   `erase(CryptoShred)` calls the real
 //!   `hyperion_knowledge_graph::KnowledgeGraph::delete_node`, a genuine tombstone no
 //!   `get`/`query`/`traverse`/`dump` call ever surfaces again — not merely an overwritten-but-
 //!   still-readable placeholder. `erase(SoftDelete)` deliberately keeps the placeholder overwrite:
 //!   its own real grace-period `undo` restores through `put_node`, which could never un-tombstone
-//!   a node `delete_node` had genuinely deleted. Still not a byte-level deletion from the WAL's
-//!   history, which no crate in this workspace performs — a real `CryptoShred` would additionally
-//!   destroy the encryption key old versions were sealed under; this crate has no
-//!   encryption-at-rest to shred. Nothing here disguises an erasure's network/timing signature
-//!   either (moot without a real transport anyway).
+//!   a node `delete_node` had genuinely deleted. ~~Still not a byte-level deletion from the WAL's
+//!   history, which no crate in this workspace performs~~ (2026-07-18) — now real too:
+//!   `erase(CryptoShred)` and [`erasure::expire_lapsed_soft_deletes`] both additionally call the
+//!   new `hyperion_knowledge_graph::KnowledgeGraph::purge_node_history`, which really deletes
+//!   every WAL record a shredded node ever had (current head included) via a new
+//!   `hyperion_storage::StorageEngine::purge_object` — not merely invisible through this
+//!   workspace's own read APIs, genuinely gone from the underlying log a direct replay would
+//!   otherwise still recover. A real `CryptoShred` would additionally destroy the encryption key
+//!   old versions were sealed under, for a caller using `hyperion-knowledge-graph::
+//!   KnowledgeGraph::open_encrypted`'s own whole-graph key — this crate's shred deletes the
+//!   ciphertext bytes themselves regardless, but a whole-graph key (rather than a real per-object
+//!   one) means the key itself can't be selectively destroyed without affecting every other
+//!   object; that finer-grained key-wrapping design remains this crate's own separately-named
+//!   "real encryption at rest, key wrapping" deferral below. Nothing here disguises an erasure's
+//!   network/timing signature either (moot without a real transport anyway).
 //! - ~~**Real crash-recovery timers expiring the grace period.**~~ — now real:
 //!   [`erasure::expire_lapsed_soft_deletes`] is the real, caller-driven clock (matching this
 //!   workspace's hosted-simulator convention of a caller-supplied `now` rather than a real

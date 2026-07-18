@@ -133,11 +133,17 @@
 //!   [`graph::KnowledgeGraph::traverse`]/[`graph::KnowledgeGraph::dump`] all now treat a
 //!   tombstoned node as genuinely gone, and a plain [`graph::KnowledgeGraph::put_node`] update
 //!   never silently resurrects one — the same "an insert never revives a deliberate deletion"
-//!   invariant edges already had. This closes only the KG-side primitive itself; neither
-//!   `hyperion-privacy::erasure::erase` nor `hyperion-recovery` calls it yet, so `CryptoShred`
-//!   still overwrites metadata with a tombstone-shaped placeholder rather than using this real
-//!   one, and "un-creating a freshly created object" via undo remains separately unimplemented —
-//!   both are real, separate follow-up wiring this bullet does not itself close.
+//!   invariant edges already had. ~~This closes only the KG-side primitive itself; neither
+//!   `hyperion-privacy::erasure::erase` nor `hyperion-recovery` calls it yet~~ — outdated the same
+//!   day it was written: `hyperion-privacy::erasure::erase`'s own `ErasureMode::CryptoShred` does
+//!   call it. "un-creating a freshly created object" via undo remains separately unimplemented.
+//!   [`graph::KnowledgeGraph::purge_node_history`] (2026-07-18) closes the one real gap that
+//!   claim's own later doc comment (`hyperion-privacy`'s) went on to name precisely: a tombstoned
+//!   node's *past* versions still sat, fully readable, in the underlying WAL — reachable via
+//!   [`graph::KnowledgeGraph::get_at_version`] or a direct replay of the raw log — never actually
+//!   removed. It calls the new `hyperion_storage::StorageEngine::purge_object` to really delete
+//!   every WAL record the node ever had, current head included, and drops it from this graph's
+//!   own in-memory index too.
 //! - **Multi-device CRDT merge.** Edge version tracking here is a single
 //!   monotonic counter per `(subject, predicate, target)` triple, enough to
 //!   prove and test the core invariant docs/09 §5.4 cares about most — "a

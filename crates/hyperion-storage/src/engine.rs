@@ -282,4 +282,93 @@ impl StorageEngine {
 
         Ok(before - inner.version_chain.len())
     }
+
+    /// docs/16-privacy-architecture.md's own named "`CryptoShred`'s wire-indistinguishability
+    /// guarantee... still not a byte-level deletion from the WAL's history" gap, closed for real:
+    /// unlike [`Self::compact`] (a blanket, whole-engine sweep that collapses *every* object's
+    /// history to its current head), this removes *every* WAL record `object_id` ever had --
+    /// including its current head -- while leaving every other object's own full history
+    /// untouched. A real `hyperion-privacy` erasure calls [`Self::put_object`] (via
+    /// `hyperion_knowledge_graph::KnowledgeGraph::delete_node`) to tombstone the current view
+    /// first, then this, to make the object's entire past genuinely unrecoverable from the WAL
+    /// itself -- not merely invisible through this engine's own read APIs, which a direct replay
+    /// of the raw WAL file would still bypass before this method existed.
+    ///
+    /// Rewrites the on-disk WAL via [`Wal::compact`]/[`Wal::compact_encrypted`] exactly like
+    /// [`Self::compact`] does, with the same durability ordering (the WAL rewrite happens before
+    /// the in-memory removal; a failure here leaves in-memory state exactly as it was, still
+    /// consistent with the untouched on-disk WAL). Every surviving record's `actor_origin` is
+    /// re-stamped to the calling token's own boundary, the same simplification [`Self::compact`]
+    /// already makes for the identical reason: a rewrite has no way to recover who *originally*
+    /// wrote each surviving record, only who is performing this compaction now.
+    ///
+    /// `object_id` naming nothing this engine has ever recorded (never written, or already
+    /// purged by an earlier call) is [`StorageError::NotFound`] -- the same "erasing what's
+    /// already gone is an error here, benign one layer up" convention
+    /// `hyperion_knowledge_graph::KnowledgeGraph::delete_node`'s own callers already rely on.
+    /// Returns how many historical versions `object_id` had, so a caller can log or audit exactly
+    /// what a shred destroyed.
+    pub fn purge_object(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        object_id: ObjectId,
+    ) -> Result<usize, StorageError> {
+        monitor
+            .check_rights_ok_result(token, RightsMask::WRITE)
+            .map_err(|_| StorageError::Unauthorized)?;
+
+        let mut inner = self.inner.lock().unwrap();
+
+        if !inner.metadata.contains_key(&object_id)
+            && !inner
+                .version_chain
+                .values()
+                .any(|rec| rec.object_id == object_id)
+        {
+            return Err(StorageError::NotFound);
+        }
+
+        let purged_count = inner
+            .version_chain
+            .values()
+            .filter(|rec| rec.object_id == object_id)
+            .count();
+
+        let mut surviving: Vec<(VersionId, WalRecord)> = inner
+            .version_chain
+            .iter()
+            .filter(|(_, rec)| rec.object_id != object_id)
+            .map(|(&version_id, rec)| {
+                (
+                    version_id,
+                    WalRecord {
+                        object_id: rec.object_id,
+                        prev_version: rec.parent_version,
+                        new_version: version_id,
+                        metadata: rec.metadata.clone(),
+                        actor_origin: token.origin().0,
+                    },
+                )
+            })
+            .collect();
+        // `VersionId` is global and monotonic (see this crate's own doc comment on
+        // `VersionRecord`), so sorting by it exactly reconstructs original commit order --
+        // required for replay to rebuild the same materialized view from the rewritten WAL.
+        surviving.sort_by_key(|(version_id, _)| version_id.0);
+        let new_records: Vec<WalRecord> = surviving.into_iter().map(|(_, record)| record).collect();
+
+        inner.wal = match self.encryption_key {
+            Some(key) => Wal::compact_encrypted(&self.path, &new_records, key)?,
+            None => Wal::compact(&self.path, &new_records)?,
+        };
+
+        inner.metadata.remove(&object_id);
+        inner.version_pointer.remove(&object_id);
+        inner
+            .version_chain
+            .retain(|_, rec| rec.object_id != object_id);
+
+        Ok(purged_count)
+    }
 }

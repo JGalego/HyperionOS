@@ -95,6 +95,7 @@ fn a_soft_delete_past_its_grace_period_is_expired_and_can_never_be_undone_again(
     )
     .unwrap();
     let action_id = receipt.grace_period_action.unwrap();
+    let pre_expiry_version = graph.current_version(node).unwrap();
 
     let now = 1_000 + GRACE_PERIOD_SECS;
     let expired =
@@ -120,6 +121,19 @@ fn a_soft_delete_past_its_grace_period_is_expired_and_can_never_be_undone_again(
         "a lapsed soft-delete must really shred the object, matching CryptoShred's own \
          genuine tombstone, not merely leave an overwritten-but-still-readable placeholder \
          forever; got: {shredded:?}"
+    );
+
+    // This crate's own previously-named "still not a byte-level deletion from the WAL's history"
+    // gap: an expired soft-delete now gets the exact same real irreversibility CryptoShred does
+    // -- its own real history is genuinely gone from the WAL, not just its current view.
+    let historical = graph.get_at_version(&monitor, &root, node, pre_expiry_version);
+    assert!(
+        matches!(
+            historical,
+            Err(hyperion_knowledge_graph::GraphError::NotFound)
+        ),
+        "an expired soft-delete's own real history must be genuinely gone from the WAL, got: \
+         {historical:?}"
     );
 }
 

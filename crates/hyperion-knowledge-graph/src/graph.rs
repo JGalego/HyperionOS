@@ -604,6 +604,49 @@ impl KnowledgeGraph {
         Ok(())
     }
 
+    /// `hyperion-privacy`'s own previously-named "still not a byte-level deletion from the WAL's
+    /// history" gap, closed here: unlike [`Self::delete_node`] (a real tombstone -- gone from
+    /// every `get`/`query`/`traverse`/`dump`, but every past version still sits, fully readable,
+    /// in the underlying WAL, reachable via [`Self::get_at_version`] or a direct replay of the raw
+    /// log), this calls `hyperion_storage::StorageEngine::purge_object` to really remove *every*
+    /// WAL record this node ever had -- including its current, tombstoned head -- and drops the
+    /// node from this graph's own in-memory index too. `hyperion-privacy::erasure::erase`
+    /// (`ErasureMode::CryptoShred`) is the real production caller: it calls [`Self::delete_node`]
+    /// first (so the node is genuinely gone from every read path even if this call somehow never
+    /// ran) then this, for the same real crash-safe "durable append/rewrite is the commit point"
+    /// ordering `purge_object`'s own doc comment describes.
+    ///
+    /// Owner-checked the same way [`Self::delete_node`] is (`GraphError::NotFound` for a node
+    /// this caller doesn't own, never revealing its existence otherwise) -- deliberately *not*
+    /// requiring the node to already be tombstoned, so this stays a general, composable "destroy
+    /// this node's entire storage history" primitive rather than one hardcoded into `delete_node`'s
+    /// own two-step erasure sequence. Edges referencing this node are left exactly as
+    /// [`Self::delete_node`] already leaves them -- neither method cascades to edges.
+    ///
+    /// Returns how many historical versions this node had, so a caller can log or audit exactly
+    /// what a shred destroyed.
+    pub fn purge_node_history(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        node_id: NodeId,
+    ) -> Result<usize, GraphError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+        let caller_boundary = token.origin().0;
+
+        let mut index = self.index.lock().unwrap();
+        index
+            .nodes
+            .get(&node_id)
+            .filter(|n| n.owner == caller_boundary)
+            .ok_or(GraphError::NotFound)?;
+
+        let purged = self.storage.purge_object(monitor, token, node_id)?;
+        index.nodes.remove(&node_id);
+        self.publish_changed(monitor, token, node_id.0, caller_boundary, Vec::new());
+        Ok(purged)
+    }
+
     /// The node's current `VersionId`, if it exists — the handle a caller needs to hold onto now
     /// in order to read this exact state back later via [`Self::get_at_version`], since nothing
     /// else in this crate's public API surfaces one (see [`Self::generation`]'s doc comment on

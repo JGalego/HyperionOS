@@ -38,6 +38,15 @@
 //!   compaction/expiry sweeps already established. The blob-refcount GC, inferred-edge pruning,
 //!   and ANN index rebuild docs/28 also names remain genuinely out of scope — none of those
 //!   subsystems (blob store, Knowledge Graph inferred edges, vector index) exist in this crate.
+//! - ~~**Per-object history purge for real `CryptoShred`.**~~ (2026-07-18) —
+//!   `hyperion-privacy`'s own named "still not a byte-level deletion from the WAL's history" gap,
+//!   closed here: unlike [`engine::StorageEngine::compact`] (a blanket sweep collapsing *every*
+//!   object's history to its own head), [`engine::StorageEngine::purge_object`] removes every WAL
+//!   record one specific object ever had -- including its current head -- while leaving every
+//!   other object's own full history untouched. `hyperion_knowledge_graph::KnowledgeGraph::
+//!   purge_node_history` is the real caller one layer up, and `hyperion-privacy::erasure::erase`
+//!   (`ErasureMode::CryptoShred`)/`expire_lapsed_soft_deletes` are the real production callers of
+//!   that.
 //!
 //! What *is* implemented and tested: the WAL as commit boundary, optimistic
 //! concurrency via compare-and-swap on the version pointer, full

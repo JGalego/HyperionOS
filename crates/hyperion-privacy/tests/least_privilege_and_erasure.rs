@@ -111,6 +111,7 @@ fn crypto_shredding_an_object_really_deletes_it_and_returns_a_receipt() {
         )
         .unwrap();
     let recovery = RecoveryService::new(graph.clone());
+    let pre_erasure_version = graph.current_version(node).unwrap();
 
     let receipt = erase(
         &monitor,
@@ -135,6 +136,19 @@ fn crypto_shredding_an_object_really_deletes_it_and_returns_a_receipt() {
     assert!(
         matches!(result, Err(hyperion_knowledge_graph::GraphError::NotFound)),
         "a crypto-shredded node must be really deleted, not just tagged, got: {result:?}"
+    );
+
+    // This crate's own previously-named "still not a byte-level deletion from the WAL's history"
+    // gap: even the object's own pre-erasure version must no longer be reachable at all, not just
+    // invisible through the current-view read paths.
+    let historical = graph.get_at_version(&monitor, &root, node, pre_erasure_version);
+    assert!(
+        matches!(
+            historical,
+            Err(hyperion_knowledge_graph::GraphError::NotFound)
+        ),
+        "a crypto-shredded node's own real history must be genuinely gone from the WAL, not just \
+         its current view, got: {historical:?}"
     );
 }
 
