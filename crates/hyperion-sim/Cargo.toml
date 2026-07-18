@@ -9,3 +9,4 @@ description = "Hosted Phase 1 integration harness: wires capability security, IP
 hyperion-capability = { workspace = true }
 hyperion-ipc = { workspace = true }
 hyperion-scheduler = { workspace = true }
+serde_json = { workspace = true }

@@ -77,6 +77,14 @@
 //! (e.g. releasing the lease). Ambient anti-entropy (storage convergence) remains deferred, below
 //! — a heartbeat keeps a *lease* alive, not Knowledge Graph state in sync.
 //!
+//! [`SchedulerOffloadBridge`] (2026-07-18) closes `hyperion-scheduler`'s own named "distributed
+//! offload" gap from this side: that crate's `schedule_epoch` had no live trigger ever reaching
+//! its own "offer it for offload" branch, even though [`FederationHub::dispatch_offload`] was
+//! already real. This bridge implements `hyperion_scheduler::OffloadTrigger` over
+//! `dispatch_offload`, so a caller that owns both a real `Scheduler` and a real `FederationHub`
+//! wires it in via `Scheduler::with_offload_trigger`, and a `SchedClass::BatchDistributable` task
+//! that fails local admission genuinely reaches a real peer device instead of only ever aging.
+//!
 //! Deliberately deferred, and why:
 //!
 //! - ~~One workspace-wide, shared Explanation Record store~~ — now real for a caller that wants
@@ -111,10 +119,12 @@
 //!   suite does.
 
 mod hub;
+mod offload_bridge;
 mod transport;
 mod types;
 
 pub use hub::{FederationError, FederationHub, LeaseHeartbeat};
+pub use offload_bridge::SchedulerOffloadBridge;
 pub use transport::{
     publish_ledger_over_socket, serve_ledger_publications, LedgerPublication,
     LedgerPublicationServer,

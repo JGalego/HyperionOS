@@ -737,7 +737,13 @@ impl MemoryEngine {
                         ..Default::default()
                     },
                     cap_token: token.clone(),
+                    // No real Model-Router-registered implementation or federation-reachable
+                    // Capability exists for this pass anywhere in this workspace yet, so naming
+                    // one here would be cosmetic, not functional -- see `hyperion-scheduler`'s own
+                    // crate doc comment on why offload reachability for this exact call site
+                    // remains a real, separate composition decision.
                     capability_ref: None,
+                    args: serde_json::Value::Null,
                 },
             )?;
             scheduler.schedule_epoch();

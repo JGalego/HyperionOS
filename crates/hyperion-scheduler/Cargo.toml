@@ -8,6 +8,9 @@ description = "Hyperion unified multi-resource scheduler: Weighted-EDF + Dominan
 [dependencies]
 hyperion-capability = { workspace = true }
 hyperion-model-router = { workspace = true }
+# Real per-task offload payload/result (see scheduler.rs's OffloadTrigger) -- this crate's own
+# named "distributed offload" gap, made real via dependency injection.
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

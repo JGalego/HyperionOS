@@ -157,6 +157,14 @@ pub struct TaskDescriptor {
     /// original request. `None` (every existing caller's default, unchanged behavior) for a task
     /// with no Model-Router-visible capability of its own, or when no router is wired at all.
     pub capability_ref: Option<String>,
+    /// This crate's own named "distributed offload" gap: the real invocation payload
+    /// `capability_ref` (if set) is called with -- carried alongside it so a
+    /// `SchedClass::BatchDistributable` task that fails both local admission and model-tier
+    /// degradation has something real to ship if a wired
+    /// [`crate::scheduler::OffloadTrigger`] offloads it to a peer device (docs/21-distributed-
+    /// execution.md's own "the minimal Capability input... is shipped to the target").
+    /// `serde_json::Value::Null` for any task with no meaningful payload of its own.
+    pub args: serde_json::Value,
 }
 
 pub(crate) fn owner_of(task: &TaskDescriptor) -> OwnerId {

@@ -40,6 +40,24 @@ struct Allocation {
     vector: ResourceVector,
 }
 
+/// This crate's own named "distributed offload" gap (docs/21-distributed-execution.md), made
+/// real via dependency injection rather than a direct `hyperion-federation` dependency --
+/// `hyperion-federation` already depends on this crate (for `ResourceVector`/`ResourceDimension`),
+/// so this crate can never depend back on it without a hard Cargo cycle. A caller that owns both
+/// a real `Scheduler` and a real `hyperion_federation::FederationHub` implements this trait as a
+/// thin adapter over `FederationHub::dispatch_offload` and wires it in via
+/// [`Scheduler::with_offload_trigger`].
+pub trait OffloadTrigger: Send + Sync {
+    /// Attempts to offload `task` to a real, currently reachable peer device -- only ever called
+    /// for a `SchedClass::BatchDistributable` task that already failed both local admission and
+    /// model-tier degradation this epoch, and only when `task.capability_ref` names something
+    /// real to invoke remotely. Returns the real result on success; `None` on any failure (no
+    /// feasible placement, every candidate's own admission refused it, a real network error) --
+    /// `schedule_epoch` falls back to aging and requeuing exactly as it already does when no
+    /// trigger is wired at all.
+    fn try_offload(&self, task: &TaskDescriptor) -> Option<serde_json::Value>;
+}
+
 /// `explain()`'s result — docs/04 §Interfaces / APIs: "a user or Agent can
 /// always ask 'why is this slow / why did you use the smaller model' and
 /// get the admission-control trace, not silence."
@@ -48,6 +66,13 @@ pub struct SchedulingRationale {
     pub ticket: Ticket,
     pub admitted: bool,
     pub note: String,
+    /// `Some` only when this task completed via a real
+    /// [`OffloadTrigger::try_offload`] dispatch to a peer device -- `None` for every
+    /// locally-admitted, model-tier-degraded, or aged-and-requeued outcome, which have no result
+    /// to report yet (a locally admitted task's actual invocation hasn't happened at this
+    /// simulator's scheduling layer; only real offload dispatches synchronously all the way
+    /// through to a real result before `schedule_epoch` returns).
+    pub offload_result: Option<serde_json::Value>,
 }
 
 /// The unified scheduler core (docs/04-scheduler.md §Architecture):
@@ -69,6 +94,8 @@ pub struct Scheduler {
     rationale: HashMap<TaskId, SchedulingRationale>,
     /// This crate's own named "model-tier degradation" gap — see [`Self::new_with_model_router`].
     model_router: Option<Arc<ModelRouter>>,
+    /// This crate's own named "distributed offload" gap — see [`Self::with_offload_trigger`].
+    offload_trigger: Option<Arc<dyn OffloadTrigger>>,
 }
 
 impl Scheduler {
@@ -88,6 +115,19 @@ impl Scheduler {
             model_router: Some(model_router),
             ..Self::default()
         }
+    }
+
+    /// Opts this scheduler into a real [`OffloadTrigger`] so [`Self::schedule_epoch`]'s non-admit
+    /// branch can offer a `SchedClass::BatchDistributable` task that also failed model-tier
+    /// degradation to a real peer device instead of only ever aging and requeuing it -- this
+    /// crate's own doc comment's "distributed offload" gap, made real. Chainable after
+    /// [`Self::new`]/[`Self::new_with_model_router`], the same builder shape
+    /// `hyperion_netstack::NetstackHub::with_ai_runtime` already established: most existing
+    /// callers (this crate's own tests, `hyperion-memory`'s private scheduler instance) have no
+    /// federation hub to wire and should not be forced to acquire one.
+    pub fn with_offload_trigger(mut self, trigger: Arc<dyn OffloadTrigger>) -> Self {
+        self.offload_trigger = Some(trigger);
+        self
     }
 
     /// `register_resource_provider` — docs/04 §Interfaces / APIs.
@@ -197,11 +237,13 @@ impl Scheduler {
             match try_admit(&task, &self.ledgers, false) {
                 Some(vector) => report.push(self.admit(task, vector, "admitted".to_string())),
                 None => {
-                    // Distributed Execution (21-distributed-execution.md) still doesn't have a
-                    // real trigger reaching this branch — see this crate's own doc comment.
-                    // Model-tier degradation (23-multi-model-orchestration.md) is real now: a
-                    // wired ModelRouter is asked for a cheaper registered implementation of this
-                    // task's own capability before falling back to aging and requeuing.
+                    // Model-tier degradation (23-multi-model-orchestration.md) is real: a wired
+                    // ModelRouter is asked for a cheaper registered implementation of this task's
+                    // own capability first (preferring a cheaper *local* substitute over a
+                    // network round trip, per this workspace's own "Local First" principle).
+                    // Distributed offload (21-distributed-execution.md) is also real now: a wired
+                    // OffloadTrigger is asked to run a BatchDistributable task on a real peer
+                    // device before finally falling back to aging and requeuing.
                     match self.try_degrade(&task) {
                         Some((impl_id, vector)) => {
                             let note = format!(
@@ -211,19 +253,38 @@ impl Scheduler {
                             );
                             report.push(self.admit(task, vector, note));
                         }
-                        None => {
-                            let ticket = task.id;
-                            let mut aged = task;
-                            aged.priority_weight += AGING_STEP;
-                            let rationale = SchedulingRationale {
-                                ticket,
-                                admitted: false,
-                                note: "did not fit this epoch; aged and requeued".to_string(),
-                            };
-                            self.rationale.insert(ticket, rationale.clone());
-                            report.push(rationale);
-                            self.other_ready.push(aged);
-                        }
+                        None => match self.try_offload(&task) {
+                            Some(result) => {
+                                let ticket = task.id;
+                                let rationale = SchedulingRationale {
+                                    ticket,
+                                    admitted: true,
+                                    note: "did not fit locally; completed via real federation \
+                                           offload to a peer device"
+                                        .to_string(),
+                                    offload_result: Some(result),
+                                };
+                                self.rationale.insert(ticket, rationale.clone());
+                                report.push(rationale);
+                                // No local Allocation is created -- the real work already
+                                // completed on the peer device's own resources, never this
+                                // device's ledgers.
+                            }
+                            None => {
+                                let ticket = task.id;
+                                let mut aged = task;
+                                aged.priority_weight += AGING_STEP;
+                                let rationale = SchedulingRationale {
+                                    ticket,
+                                    admitted: false,
+                                    note: "did not fit this epoch; aged and requeued".to_string(),
+                                    offload_result: None,
+                                };
+                                self.rationale.insert(ticket, rationale.clone());
+                                report.push(rationale);
+                                self.other_ready.push(aged);
+                            }
+                        },
                     }
                 }
             }
@@ -253,6 +314,20 @@ impl Scheduler {
             .find(|(_, vector)| fits(vector, &self.ledgers, false))
     }
 
+    /// This crate's own named "distributed offload" gap, made real: only ever attempted for a
+    /// [`SchedClass::BatchDistributable`] task (docs/04's own class distinction -- an
+    /// `InteractiveAgent`/`BackgroundAgent` task is never a candidate) that names a real
+    /// [`TaskDescriptor::capability_ref`] to invoke remotely. `None` if no trigger is wired, the
+    /// task isn't `BatchDistributable`, it names no capability, or the trigger itself couldn't
+    /// place it anywhere.
+    fn try_offload(&self, task: &TaskDescriptor) -> Option<serde_json::Value> {
+        if task.class != SchedClass::BatchDistributable {
+            return None;
+        }
+        task.capability_ref.as_ref()?;
+        self.offload_trigger.as_ref()?.try_offload(task)
+    }
+
     fn admit(
         &mut self,
         task: TaskDescriptor,
@@ -278,6 +353,7 @@ impl Scheduler {
             ticket,
             admitted: true,
             note,
+            offload_result: None,
         };
         self.rationale.insert(ticket, rationale.clone());
         rationale
@@ -288,6 +364,7 @@ impl Scheduler {
             ticket: task.id,
             admitted: false,
             note: "missed real-time deadline: reserved headroom insufficient".to_string(),
+            offload_result: None,
         };
         self.rationale.insert(task.id, rationale.clone());
         rationale

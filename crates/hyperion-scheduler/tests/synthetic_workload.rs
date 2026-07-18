@@ -50,6 +50,7 @@ fn realtime_ui_task(id: u64, cap: CapabilityToken) -> TaskDescriptor {
         },
         cap_token: cap,
         capability_ref: None,
+        args: serde_json::Value::Null,
     }
 }
 
@@ -82,6 +83,7 @@ fn agent_task(
         },
         cap_token: cap,
         capability_ref: None,
+        args: serde_json::Value::Null,
     }
 }
 

@@ -28,6 +28,7 @@ fn task(
         },
         cap_token,
         capability_ref: None,
+        args: serde_json::Value::Null,
     }
 }
 

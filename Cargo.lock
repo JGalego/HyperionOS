@@ -3219,6 +3219,7 @@ dependencies = [
  "hyperion-capability",
  "hyperion-model-router",
  "proptest",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -3292,6 +3293,7 @@ dependencies = [
  "hyperion-capability",
  "hyperion-ipc",
  "hyperion-scheduler",
+ "serde_json",
 ]
 
 [[package]]

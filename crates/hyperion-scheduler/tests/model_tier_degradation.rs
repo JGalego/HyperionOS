@@ -73,6 +73,7 @@ fn task(
         },
         cap_token,
         capability_ref: capability_ref.map(str::to_string),
+        args: serde_json::Value::Null,
     }
 }
 

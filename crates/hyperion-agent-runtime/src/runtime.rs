@@ -664,6 +664,12 @@ impl AgentRuntime {
                     // a cheaper registered implementation instead of only ever aging and requeuing
                     // a request that doesn't fit.
                     capability_ref: Some(capability_ref.to_string()),
+                    // This task is always `SchedClass::InteractiveAgent`, never
+                    // `BatchDistributable` -- never a real offload candidate, so the real
+                    // invocation payload (known only once `invoke()`'s own `args` parameter is
+                    // reached, a separate later phase from this admission check) has no bearing
+                    // here.
+                    args: serde_json::Value::Null,
                 },
             )
             .map_err(|_| AgentError::Unauthorized)?;

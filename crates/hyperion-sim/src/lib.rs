@@ -105,6 +105,7 @@ pub fn run_demo() -> DemoOutcome {
                     },
                     cap_token: server_work_token.clone(),
                     capability_ref: None,
+                    args: serde_json::Value::Null,
                 };
                 let ticket = {
                     let guard = monitor.lock().unwrap();
