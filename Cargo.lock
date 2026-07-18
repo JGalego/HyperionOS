@@ -2025,6 +2025,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
+name = "fuser"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80a5eca878900c2e39e9e52fd797954b7fc39eeefc8558257114bfea6a698fcf"
+dependencies = [
+ "bitflags 2.13.0",
+ "libc",
+ "log",
+ "memchr",
+ "nix 0.30.1",
+ "num_enum",
+ "page_size",
+ "parking_lot",
+ "pkg-config",
+ "ref-cast",
+ "smallvec",
+ "zerocopy",
+]
+
+[[package]]
 name = "futf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3318,12 +3338,14 @@ dependencies = [
 name = "hyperion-semantic-fs"
 version = "0.3.0"
 dependencies = [
+ "fuser",
  "hyperion-capability",
  "hyperion-context",
  "hyperion-events",
  "hyperion-knowledge-graph",
  "hyperion-storage",
  "hyperion-workspace",
+ "libc",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
@@ -4183,6 +4205,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nix"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
+dependencies = [
+ "bitflags 2.13.0",
+ "cfg-if 1.0.4",
+ "cfg_aliases 0.2.1",
+ "libc",
+ "memoffset",
+]
+
+[[package]]
 name = "nohash-hasher"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4661,6 +4696,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
+]
+
+[[package]]
+name = "page_size"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -5331,6 +5376,26 @@ dependencies = [
  "getrandom 0.2.17",
  "libredox",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ref-cast"
+version = "1.0.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f354300ae66f76f1c85c5f84693f0ce81d747e2c3f21a45fef496d89c960bf7d"
+dependencies = [
+ "ref-cast-impl",
+]
+
+[[package]]
+name = "ref-cast-impl"
+version = "1.0.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7186006dcb21920990093f30e3dea63b7d6e977bf1256be20c3563a5db070da"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -8077,7 +8142,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "hex",
- "nix",
+ "nix 0.29.0",
  "ordered-stream",
  "rand 0.8.7",
  "serde",

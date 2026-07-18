@@ -34,10 +34,13 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **Real POSIX/FUSE mount.** `fs.mount_posix` doesn't exist; every call
-//!   here is a direct Rust method, consistent with this workspace's
-//!   hosted-simulator convention. [27 — Compatibility Layer](../27-compatibility-layer.md)
-//!   (Phase 9) would be what actually mounts something.
+//! - ~~**Real POSIX/FUSE mount.**~~ — now real: [`posix::mount_posix`]/[`posix::spawn_mount_posix`]
+//!   mount a real `fuser::Filesystem` adapter (pure-Rust mount path, no system libfuse headers
+//!   needed — see that module's own doc comment) over this same [`SemanticFilesystem`], resolving
+//!   every VFS call through its already-real, capability-gated methods rather than a second data
+//!   model. See [`posix`]'s own doc comment for the real, honestly-named scope this operates
+//!   within (one fixed capability identity per mount; no `unlink`/`rmdir` yet, since this crate
+//!   itself exposes no delete operation to translate to).
 //! - ~~**Live VirtualFolder invalidation via a real Event System**~~ — now real:
 //!   [`SemanticFilesystem::with_events`] wires a real `hyperion-events::EventBus` (subscribing to
 //!   `hyperion_knowledge_graph::KnowledgeGraph::with_events`'s own `ObjectChanged` publications),
@@ -60,6 +63,7 @@
 
 mod engine;
 mod path;
+pub mod posix;
 mod types;
 mod workspace_bridge;
 

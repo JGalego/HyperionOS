@@ -9,7 +9,9 @@ use hyperion_events::{
     BackpressurePolicy, DeliveryClass, EventBus, EventPayload, Subscription, TopicKind,
     TopicPattern,
 };
-use hyperion_knowledge_graph::{EdgeOrigin, GraphError, GraphQuery, KnowledgeGraph, NodeId};
+use hyperion_knowledge_graph::{
+    EdgeOrigin, GraphError, GraphQuery, KnowledgeGraph, NodeId, NodeRecord,
+};
 
 use crate::path::PathMappingCache;
 use crate::types::{DirEntry, QueryCacheKey, QuerySpec, VirtualFolder};
@@ -311,6 +313,40 @@ impl SemanticFilesystem {
         Ok(folder)
     }
 
+    /// The shared half of docs/10 §Algorithms' "Path synthesis," used both by [`Self::materialize`]
+    /// (one `VirtualFolder`'s frozen membership) and [`Self::all_paths`] (the whole visible
+    /// graph, for [`crate::posix`]'s mounted namespace) — same `<object_type>/<title>` shape, same
+    /// collision-resolved, first-assignment-is-permanent [`PathMappingCache`].
+    fn build_dir_entries(&self, nodes: Vec<(NodeId, NodeRecord)>) -> Vec<DirEntry> {
+        let candidates: Vec<(NodeId, String)> = nodes
+            .iter()
+            .map(|(id, node)| {
+                let title = node
+                    .metadata
+                    .get("title")
+                    .or_else(|| node.metadata.get("name"))
+                    .and_then(|v| v.as_str())
+                    .map(sanitize_path_segment)
+                    .unwrap_or_else(|| format!("object-{}", id.0));
+                (*id, format!("{}/{title}", node.object_type))
+            })
+            .collect();
+
+        let paths = self
+            .path_cache
+            .lock()
+            .unwrap()
+            .synthesize_batch(&candidates);
+        candidates
+            .into_iter()
+            .zip(paths)
+            .map(|((id, _), path)| DirEntry {
+                path,
+                object_id: id,
+            })
+            .collect()
+    }
+
     /// docs/10 §Algorithms' "Path synthesis," re-checking each member's
     /// capability grant at materialization time rather than trusting the
     /// frozen membership list — docs/10 §Security Considerations.
@@ -329,36 +365,46 @@ impl SemanticFilesystem {
             .cloned()
             .ok_or(FsError::FolderNotFound)?;
 
-        let mut candidates = Vec::with_capacity(folder.member_object_ids.len());
+        let mut nodes = Vec::with_capacity(folder.member_object_ids.len());
         for &id in &folder.member_object_ids {
-            let node = self.graph.get(monitor, token, id)?;
-            let title = node
-                .metadata
-                .get("title")
-                .or_else(|| node.metadata.get("name"))
-                .and_then(|v| v.as_str())
-                .map(sanitize_path_segment)
-                .unwrap_or_else(|| format!("object-{}", id.0));
-            candidates.push((id, format!("{}/{title}", node.object_type)));
+            nodes.push((id, self.graph.get(monitor, token, id)?));
         }
+        Ok(self.build_dir_entries(nodes))
+    }
 
-        let paths = self
-            .path_cache
-            .lock()
-            .unwrap()
-            .synthesize_batch(&candidates);
-        Ok(candidates
-            .into_iter()
-            .zip(paths)
-            .map(|((id, _), path)| DirEntry {
-                path,
-                object_id: id,
-            })
-            .collect())
+    /// The real backing for [`crate::posix`]'s mounted namespace: every path this caller's own
+    /// token can currently see, synthesized the same way [`Self::materialize`] synthesizes one
+    /// `VirtualFolder`'s membership — applied to the *whole* visible graph via
+    /// `KnowledgeGraph::dump`'s own already-real, unbounded, owner-scoped scan, since a mounted
+    /// POSIX filesystem has no notion of "which query does this path belong to" the way
+    /// `query`/`materialize` do: every already-pinned Collection and every already-written object
+    /// needs to be reachable from one root namespace. Real at this workspace's own declared scale
+    /// (dozens of objects, not thousands) for the identical reason `dump` itself already is.
+    pub fn all_paths(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+    ) -> Result<Vec<DirEntry>, FsError> {
+        self.require(monitor, token, RightsMask::READ)?;
+        let snapshot = self.graph.dump(monitor, token)?;
+        Ok(self.build_dir_entries(snapshot.nodes))
     }
 
     pub fn get_folder(&self, folder_id: u64) -> Option<VirtualFolder> {
         self.folders.lock().unwrap().get(&folder_id).cloned()
+    }
+
+    /// The real per-object record behind one [`DirEntry`] — [`crate::posix`]'s own `getattr`/
+    /// `read` need the actual metadata/timestamps, not just the synthesized path `all_paths`
+    /// returns.
+    pub fn get_object(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        id: NodeId,
+    ) -> Result<NodeRecord, FsError> {
+        self.require(monitor, token, RightsMask::READ)?;
+        Ok(self.graph.get(monitor, token, id)?)
     }
 
     /// docs/10 §Algorithms' "Folder preservation": a real Semantic Object

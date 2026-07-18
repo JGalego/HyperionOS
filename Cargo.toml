@@ -108,3 +108,10 @@ ab_glyph = "0.2"
 # bytes hyperion-init's boot-splash renderer rasterizes with ab_glyph -- zero new external font
 # asset, zero new license to track.
 epaint_default_fonts = "0.29"
+# Real POSIX/FUSE mount for hyperion-semantic-fs. Its `default = []` cargo features mean this
+# sandbox's missing libfuse3 *system* headers (no sudo access to install them) never come into
+# play: on Linux with the `libfuse` feature left off, fuser's own build.rs auto-selects its
+# pure-Rust mount path (`src/mnt/fuse_pure.rs`), which needs no libfuse C library at build time and
+# shells out to the already-present, already-setuid `fusermount` binary at mount time -- confirmed
+# by a real, throwaway probe mount in this exact sandbox before adding this dependency.
+fuser = "0.17"

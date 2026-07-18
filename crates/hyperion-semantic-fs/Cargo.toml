@@ -17,6 +17,10 @@ hyperion-storage = { workspace = true }
 hyperion-workspace = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# The real FUSE adapter (see `posix` module) -- pure-Rust mount path, see the workspace-level
+# dependency comment in the root `Cargo.toml` for why this needs no system libfuse headers here.
+fuser = { workspace = true }
+libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
