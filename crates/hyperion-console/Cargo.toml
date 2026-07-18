@@ -33,6 +33,7 @@ hyperion-netstack = { workspace = true }
 # previously unreachable from any production binary: every real caller in this workspace
 # constructed `AgentRuntime` with `plugins: None`.
 hyperion-plugin-framework = { workspace = true }
+hyperion-turn = { workspace = true }
 hyperion-workspace = { workspace = true }
 # Real mDNS/DNS-SD advertise+discover for `/mcp-server`/`/a2a-server` (docs/998-roadmap.md's
 # Social pillar) -- a pure-Rust mDNS-SD implementation, no C/system daemon dependency. Optional,

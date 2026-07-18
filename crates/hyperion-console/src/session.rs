@@ -17,7 +17,6 @@
 //! (same backlog section, landed the same day) are the analogous real, opt-in pause before intent
 //! decomposition -- see `hyperion_intent::IntentEngine::set_think_mode`'s own doc comment.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -27,11 +26,10 @@ use hyperion_ai_runtime::{
     sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
 };
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
-use hyperion_context::{Budget, ContextBundle, ExpertiseEstimate, ExpertiseLevel, Scope};
 use hyperion_coordination::{CoordinationSession, TaskNode};
 use hyperion_crypto::{Keystore, SecretStore};
 use hyperion_explainability::ExplanationStore;
-use hyperion_intent::{HandleOutcome, IntentEngine};
+use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::{render_capability_result, GraphError, KnowledgeGraph, NodeId};
 use hyperion_memory::{MemoryEngine, MemoryTier};
 use hyperion_plugin_framework::{
@@ -42,10 +40,8 @@ use hyperion_plugin_framework::{
 
 use crate::graph_explorer::{GraphDumpFormat, GraphExplorer};
 use hyperion_netstack::{DomainEgressGrant, NetstackHub};
-use hyperion_workspace::{
-    project, CapabilityUiContract, ComplexityTier, Modality, ModalityInterface, RegionAffinity,
-    WorkspaceCompiler,
-};
+use hyperion_turn::{contract_for, TaskOutcome, TaskProgress, TurnStart};
+use hyperion_workspace::WorkspaceCompiler;
 
 /// A small, real starter dataset shown to a brand-new session -- what Hyperion can do, in its own
 /// words, before anyone has asked it anything yet. Seeded exactly once, via
@@ -75,26 +71,6 @@ fn mask_secret(secret: &str) -> String {
     let prefix: String = chars[..4].iter().collect();
     let suffix: String = chars[chars.len() - 4..].iter().collect();
     format!("{prefix}...{suffix}")
-}
-
-/// One real outcome (an HTN task, or the single undecomposed goal) about to be rendered as one
-/// real Workspace panel.
-struct TaskOutcome {
-    predicate: String,
-    detail: String,
-}
-
-/// One real event [`ConsoleSession::handle_utterance_with_progress`]'s own callback fires while a
-/// decomposed multi-task plan works through a tick -- `main.rs` uses `Starting` to know which
-/// task names to show as in-flight (e.g. a spinner) and `Done` to know when to stop and print the
-/// real result instead.
-pub enum TaskProgress {
-    /// These tasks are about to be dispatched, concurrently, this tick -- named *before* the
-    /// real (potentially slow) capability call blocks this thread, not only after.
-    Starting(Vec<String>),
-    /// One task's own real, final line (e.g. `"  market_research: Done"`), once its tick's
-    /// blocking dispatch has actually returned.
-    Done(String),
 }
 
 pub struct ConsoleSession {
@@ -1529,19 +1505,21 @@ impl ConsoleSession {
         // already returned for those).
         self.last_utterance = Some(utterance.to_string());
 
-        let outcome = match self.intent_engine.handle_utterance(
+        // `hyperion-turn::start_turn` shares the real Intent Engine parse/submit state machine
+        // (see that crate's own doc comment) -- including docs/06's own Adaptive Complexity
+        // `CapabilityTierReach` signal push, now pushed there unconditionally rather than
+        // duplicated in every real caller. Only `PendingThink` needs this console's own real
+        // resumption state (`/think-proceed`), so it stays a distinct match arm here.
+        let (root, ticket) = match hyperion_turn::start_turn(
             &self.monitor,
             &self.token,
+            &self.intent_engine,
+            &self.context,
             utterance,
             &self.session_id,
         ) {
-            Ok(outcome) => outcome,
-            Err(e) => return vec![format!("I couldn't understand that: {e}")],
-        };
-
-        let root = match outcome {
-            HandleOutcome::Submitted(root) => root,
-            HandleOutcome::PendingThink(root) => {
+            TurnStart::Ready { root, ticket } => (root, ticket),
+            TurnStart::PendingThink { root } => {
                 self.pending_think_root = Some(root);
                 return vec![
                     "Pausing before I decide what that means -- take a moment, then say \
@@ -1549,38 +1527,8 @@ impl ConsoleSession {
                         .to_string(),
                 ];
             }
-            HandleOutcome::NeedsClarification {
-                mention,
-                candidates,
-            } => {
-                return vec![format!(
-                    "I'm not sure which \"{mention}\" you mean ({} possibilities) -- could you \
-                     be more specific?",
-                    candidates.len()
-                )];
-            }
+            TurnStart::Reply(narration) => return narration,
         };
-
-        let ticket = match self.intent_engine.submit(&self.monitor, &self.token, root) {
-            Ok(ticket) => ticket,
-            Err(e) => return vec![format!("I understood that, but couldn't act on it: {e}")],
-        };
-
-        // `hyperion-context`'s own previously-named Adaptive Complexity gap: this session already
-        // holds both a real dispatch outcome and this session's own `ContextEngine` handle at
-        // once, so it's the real, non-cyclic side that pushes docs/06's own "Capability tier the
-        // user has been reaching for" signal -- an undecomposed goal reaches directly for one
-        // Capability (docs/06's own "raw API" reach), a decomposed plan is docs/06's own "guided
-        // workflow" reach.
-        let tier_reach = if ticket.ready_leaves.is_empty() {
-            hyperion_context::CapabilityTierReach::RawApi
-        } else {
-            hyperion_context::CapabilityTierReach::GuidedWorkflow
-        };
-        self.context.record_expertise_signal(
-            &self.session_id,
-            hyperion_context::ExpertiseSignal::CapabilityTierReach(tier_reach),
-        );
 
         let (predicate, outcomes) = if ticket.ready_leaves.is_empty() {
             self.run_undecomposed_goal(root, utterance)
@@ -1965,111 +1913,30 @@ impl ConsoleSession {
         )
     }
 
-    /// The real, multi-task path: `hyperion-coordination`'s own dependency-respecting allocator,
-    /// exactly `hyperion-coordination/tests/worked_trace.rs`'s own wiring (this crate's Cargo.toml
-    /// has no `[dev-dependencies]` on that crate; the sequence is reproduced here, not imported,
-    /// since it's the calling *pattern* this crate needs, not a helper function that crate
-    /// exports).
+    /// The real, multi-task path -- `hyperion-turn::drive_decomposed_plan`'s shared
+    /// `hyperion-coordination` tick loop (see that crate's own doc comment), with this console's
+    /// own real `/result`-hinting detail rendering supplied as the `render_task_detail` closure.
     fn run_decomposed_plan(
         &mut self,
         ticket: &hyperion_intent::ExecutionTicket,
         on_progress: &mut dyn FnMut(TaskProgress),
     ) -> (String, Vec<TaskOutcome>) {
-        let session_id = match self.coordination.create_session(
+        let outcome = hyperion_turn::drive_decomposed_plan(
             &self.monitor,
             &self.token,
+            &self.coordination,
             &self.intent_engine,
             ticket,
-        ) {
-            Ok(id) => id,
-            Err(e) => {
-                return (
-                    "plan".to_string(),
-                    vec![TaskOutcome {
-                        predicate: "plan".to_string(),
-                        detail: format!("failed to start coordinating this plan: {e}"),
-                    }],
-                )
-            }
-        };
-
-        self.last_plan_session_id = Some(session_id);
-        self.drive_ticks_to_completion(session_id, on_progress);
-
-        let outcomes = match self
-            .coordination
-            .get_plan(&self.monitor, &self.token, session_id)
-        {
-            Ok(plan) => plan
-                .nodes
-                .iter()
-                .map(|node| TaskOutcome {
-                    predicate: node.description.clone(),
-                    detail: Self::render_task_detail(node),
-                })
-                .collect(),
-            Err(e) => vec![TaskOutcome {
-                predicate: "plan".to_string(),
-                detail: format!("plan completed but couldn't be read back: {e}"),
-            }],
-        };
-
-        ("plan".to_string(), outcomes)
-    }
-
-    /// Drives every dependency wave of `session_id`'s own real plan to completion -- each
-    /// `allocate` call is one real tick (its own ready tasks dispatched concurrently, not one at
-    /// a time -- see `hyperion_coordination::CoordinationSession::allocate`'s own doc comment);
-    /// an empty result means every task is Done, Failed, or Blocked with nothing left ready.
-    /// Shared by [`Self::run_decomposed_plan`] (a plan's first run) and [`Self::redo_task`] (a
-    /// `/redo`'d task's own re-run) -- both need the exact same tick-and-report loop, just
-    /// starting from a different plan state.
-    ///
-    /// `on_progress` fires `Starting` *before* each tick's real (potentially slow, blocking)
-    /// dispatch -- naming every task this tick is about to run concurrently, via the real
-    /// `ready_task_descriptions` peek -- and `Done` once per task after that same blocking call
-    /// returns. A real, previously-shipped UX gap this fixes: this console used to stay
-    /// completely silent (not even "this is running") until the *entire* plan converged -- a
-    /// real user actually hit and reported this.
-    fn drive_ticks_to_completion(
-        &mut self,
-        session_id: u64,
-        on_progress: &mut dyn FnMut(TaskProgress),
-    ) {
-        loop {
-            match self
-                .coordination
-                .ready_task_descriptions(&self.monitor, &self.token, session_id)
-            {
-                Ok(ready) if !ready.is_empty() => on_progress(TaskProgress::Starting(ready)),
-                _ => {}
-            }
-
-            match self
-                .coordination
-                .allocate(&self.monitor, &self.token, session_id)
-            {
-                Ok(records) if records.is_empty() => break,
-                Ok(records) => {
-                    if let Ok(plan) =
-                        self.coordination
-                            .get_plan(&self.monitor, &self.token, session_id)
-                    {
-                        for record in &records {
-                            if let Some(node) =
-                                plan.nodes.iter().find(|n| n.task_id == record.task_id)
-                            {
-                                on_progress(TaskProgress::Done(format!(
-                                    "  {}: {:?}",
-                                    node.description, node.status
-                                )));
-                            }
-                        }
-                    }
-                }
-                Err(_) => break,
-            }
+            on_progress,
+            Self::render_task_detail,
+        );
+        // `/redo <task>` needs the real `hyperion-coordination` session id this call just
+        // created -- `hyperion_turn::DecomposedPlanOutcome::session_id`'s own doc comment names
+        // exactly this as its real reason for existing.
+        if let Some(session_id) = outcome.session_id {
+            self.last_plan_session_id = Some(session_id);
         }
+        (outcome.predicate, outcome.outcomes)
     }
 
     /// The real second half of `/redo <task> <extra instructions>`: resets `task_name` back to
@@ -2120,7 +1987,13 @@ impl ConsoleSession {
             ),
         );
 
-        self.drive_ticks_to_completion(session_id, on_progress);
+        hyperion_turn::drive_ticks_to_completion(
+            &self.monitor,
+            &self.token,
+            &self.coordination,
+            session_id,
+            on_progress,
+        );
 
         let mut lines = match self
             .coordination
@@ -2191,6 +2064,17 @@ impl ConsoleSession {
     /// text a screen reader would announce, which is exactly what "real text output rendered to
     /// the real TTY" means for a text-first console (docs/14 §2 frames a text/voice-first
     /// interface as accessibility's primary case, not a fallback).
+    /// The literal M7 deliverable: "drive `hyperion-workspace`'s compiled UI/accessibility trees
+    /// through a real TTY renderer" -- via `hyperion-turn`'s shared compile/mount/project pipeline
+    /// (see that crate's own doc comment). This console's one, text-only real label formatting
+    /// stays here: a decomposed plan's own real, meaningful task names (e.g. "market_research")
+    /// are genuinely worth prefixing -- with several outcomes rendered together, naming which is
+    /// which is real information. `"generic_goal"` is different: the internal sentinel
+    /// `run_undecomposed_goal`/`run_web_research` use for the one-outcome case, never a real task
+    /// name a user would recognize -- prefixing it added a purely technical label with no content,
+    /// on top of the real (and, unlike this, legitimately accessibility-motivated -- see
+    /// `hyperion_workspace::modality`'s own screen-reader role-then-name convention) "status: "
+    /// announcement already in front of it.
     fn render_workspace(
         &self,
         root: NodeId,
@@ -2198,15 +2082,7 @@ impl ConsoleSession {
         predicate: &str,
         outcomes: &[TaskOutcome],
     ) -> Vec<String> {
-        // A decomposed plan's own real, meaningful task names (e.g. "market_research") are
-        // genuinely worth prefixing -- with several outcomes rendered together, naming which is
-        // which is real information. `"generic_goal"` is different: the internal sentinel
-        // `run_undecomposed_goal`/`run_web_research` use for the one-outcome case, never a real
-        // task name a user would recognize -- prefixing it added a purely technical label with
-        // no content, on top of the real (and, unlike this, legitimately accessibility-motivated
-        // -- see `hyperion_workspace::modality`'s own screen-reader role-then-name convention)
-        // "status: " announcement already in front of it.
-        let contracts: Vec<CapabilityUiContract> = outcomes
+        let contracts: Vec<_> = outcomes
             .iter()
             .map(|o| {
                 let label = if o.predicate == "generic_goal" {
@@ -2218,49 +2094,18 @@ impl ConsoleSession {
             })
             .collect();
 
-        // A real Context Bundle assembly, scoped to this turn's own real Intent (`intent_id`)
-        // but this console's one stable, whole-session `session_id` -- falls back to an empty
-        // bundle (still a real, valid `ContextBundle`, just with nothing to bind panels to yet)
-        // if assembly itself fails, since a missing context signal shouldn't block rendering the
-        // real Agent outcome the user is actually waiting on.
-        let scope = Scope {
-            intent_id: root.0.to_string(),
-            session_id: session_id.to_string(),
-            mentions: Vec::new(),
-            anchors: Vec::new(),
-        };
-        let bundle = self
-            .context
-            .assemble(&self.monitor, &self.token, &scope, Budget::default())
-            .unwrap_or_else(|_| empty_context_bundle(scope));
-
-        let graph = match self.workspace.compile(
+        match hyperion_turn::render_workspace(
             &self.monitor,
             &self.token,
+            &self.context,
+            &self.workspace,
             root,
+            session_id,
             predicate,
             &contracts,
-            &bundle,
-            ComplexityTier::Beginner,
-            1.0,
         ) {
-            Ok(graph) => graph,
-            Err(e) => return vec![format!("(couldn't render a workspace for this: {e})")],
-        };
-        let _ = self
-            .workspace
-            .mount(&self.monitor, &self.token, graph.graph_id);
-
-        let template = self
-            .workspace
-            .get_template(predicate, &contracts, ComplexityTier::Beginner)
-            .expect("the template just compiled above is always cached under this same key");
-
-        match project(&template.accessibility_tree, Modality::ScreenReader) {
-            ModalityInterface::ScreenReader(lines) => lines,
-            other => unreachable!(
-                "project(_, Modality::ScreenReader) always returns ScreenReader, got {other:?}"
-            ),
+            Ok(rendered) => rendered.narration,
+            Err(msg) => vec![msg],
         }
     }
 }
@@ -2276,42 +2121,4 @@ fn extract_url(utterance: &str) -> Option<&str> {
     utterance
         .split_whitespace()
         .find(|word| word.starts_with("http://") || word.starts_with("https://"))
-}
-
-fn contract_for(capability_ref: &str, label: &str) -> CapabilityUiContract {
-    CapabilityUiContract {
-        capability_ref: capability_ref.to_string(),
-        panel_template: format!("{capability_ref}.default"),
-        region_affinity: RegionAffinity::Center,
-        min_size: (200, 200),
-        priority: 0.5,
-        binds_category: None,
-        variants: HashMap::new(),
-        accessible_role: Some("status".to_string()),
-        label_template: Some(label.to_string()),
-        keyboard_operations: vec!["activate".to_string()],
-        alt_text_hook: None,
-        contrast_ratio: 7.0,
-        has_motion: false,
-        reduced_motion_alternative: true,
-        language_tag: "en".to_string(),
-        emits_audio: false,
-        has_visual_alert_equivalent: true,
-    }
-}
-
-fn empty_context_bundle(scope: Scope) -> ContextBundle {
-    ContextBundle {
-        bundle_id: 0,
-        scope,
-        entries: Vec::new(),
-        assembled_at: 0,
-        budget: Budget::default(),
-        expertise_signal: ExpertiseEstimate {
-            domain: "general".to_string(),
-            level: ExpertiseLevel::Novice,
-            evidence: Vec::new(),
-            confidence: 0.0,
-        },
-    }
 }

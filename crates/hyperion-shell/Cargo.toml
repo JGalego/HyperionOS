@@ -19,6 +19,7 @@ hyperion-coordination = { workspace = true }
 hyperion-crypto = { workspace = true }
 hyperion-intent = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
+hyperion-turn = { workspace = true }
 hyperion-workspace = { workspace = true }
 serde_json = { workspace = true }
 # Pure-Rust GUI + windowing; "accesskit" is what turns hyperion-workspace's own

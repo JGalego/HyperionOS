@@ -22,13 +22,12 @@
 //!
 //! Deliberately deferred, and why:
 //!
-//! - **One shared turn-orchestrator crate.** [`EmbeddedSession`] is a deliberately trimmed
-//!   sibling of `hyperion_console::ConsoleSession`'s pipeline, not a shared dependency --
-//!   `hyperion-console` is a binary crate (nothing to depend on) and its own session module is
-//!   under active concurrent development as of this writing. Once that work lands, the real
-//!   utterance -> outcome -> `WorkspaceGraph` turn pipeline both crates need belongs in one
-//!   modality-agnostic crate that each of `hyperion-console`/`hyperion-shell` calls, rather than
-//!   two copies drifting apart. Tracked here, not solved here.
+//! - ~~**One shared turn-orchestrator crate.**~~ (2026-07-18) — now real: `hyperion-turn` is that
+//!   one modality-agnostic crate, and [`EmbeddedSession`] calls it instead of maintaining its own
+//!   copy of `hyperion_console::ConsoleSession`'s pipeline. See that crate's own doc comment for
+//!   exactly what was genuinely, mechanically identical between the two real copies (confirmed by
+//!   diffing them line for line) versus what stayed deliberately separate because the two copies
+//!   did genuinely different things, not just look similar.
 //! - **Cloud/local-engine backend selection, "connect my `<provider>`."** [`EmbeddedSession`]
 //!   always runs `hyperion-ai-runtime`'s deterministic mock backend -- `hyperion-console` already
 //!   solved real backend switching and cloud consent; re-deriving it here isn't this crate's

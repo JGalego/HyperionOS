@@ -38,6 +38,7 @@ members = [
     "crates/hyperion-supervisor",
     "crates/hyperion-threat-model",
     "crates/hyperion-trust-boundary",
+    "crates/hyperion-turn",
     "crates/hyperion-update",
     "crates/hyperion-workspace",
 ]
@@ -83,6 +84,7 @@ hyperion-shell = { path = "crates/hyperion-shell" }
 hyperion-storage = { path = "crates/hyperion-storage" }
 hyperion-supervisor = { path = "crates/hyperion-supervisor" }
 hyperion-trust-boundary = { path = "crates/hyperion-trust-boundary" }
+hyperion-turn = { path = "crates/hyperion-turn" }
 hyperion-update = { path = "crates/hyperion-update" }
 hyperion-workspace = { path = "crates/hyperion-workspace" }
 bitflags = "2"

@@ -36,4 +36,5 @@ pub mod peer_trust;
 pub mod secret_input;
 mod session;
 
-pub use session::{ConsoleSession, TaskProgress};
+pub use hyperion_turn::TaskProgress;
+pub use session::ConsoleSession;
