@@ -19,7 +19,8 @@ use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
 use hyperion_knowledge_graph::{
-    EdgeId, EdgeRecord, ExplainRef, GraphQuery, KnowledgeGraph, NodeId, NodeRecord, ProvenanceChain,
+    render_capability_result, EdgeId, EdgeRecord, ExplainRef, GraphQuery, KnowledgeGraph, NodeId,
+    NodeRecord, ProvenanceChain,
 };
 
 /// The most results a single `/recall`/`/related` list shows -- generous enough to browse, small
@@ -67,7 +68,7 @@ impl GraphExplorer {
             .into_iter()
             .map(|hit| (hit.node_id, hit.node))
             .filter(|(_, node)| {
-                needle.is_empty() || describe(node).to_ascii_lowercase().contains(&needle)
+                needle.is_empty() || node.display_label().to_ascii_lowercase().contains(&needle)
             })
             .collect();
         matches.sort_by_key(|(_, node)| std::cmp::Reverse(node.updated_at));
@@ -312,7 +313,7 @@ impl GraphExplorer {
                 "  [{}] {} -- {} (created {}, updated {})",
                 id.0,
                 node.object_type,
-                describe(node),
+                node.display_label(),
                 node.created_at,
                 node.updated_at
             ));
@@ -357,89 +358,16 @@ impl GraphExplorer {
         items
             .iter()
             .enumerate()
-            .map(|(i, (_, node))| format!("[{}] {}", i + 1, describe(node)))
+            .map(|(i, (_, node))| format!("[{}] {}", i + 1, preview(&node.display_label())))
             .collect()
     }
 }
 
-/// The real utterance text behind a root Intent node, if this is one -- `None` for a decomposed
-/// goal's own child tasks (`hyperion_intent::engine::decompose` leaves their `raw_utterance`
-/// empty, since nobody actually said "market_research") as well as for every non-"intent" object
-/// type. Shared by [`describe`] and [`friendly_type`] so both agree on which nodes were really
-/// said by a person -- a real bug found via a live manual check had them disagree.
-fn utterance_text(node: &NodeRecord) -> Option<&str> {
-    if node.object_type != "intent" {
-        return None;
-    }
-    node.metadata
-        .get("raw_utterance")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-}
-
-/// One human-readable line for a recorded node -- deliberately no "node"/"edge"/"predicate"
-/// jargon, matching CLAUDE.md's "never expose technical errors [or internals] directly."
-/// `"intent"` (every utterance's own record) is rendered specially since its shape is known
-/// exactly ([`hyperion_intent::types::Intent`]'s own JSON, read loosely rather than depending on
-/// that crate's exact struct -- this crate's metadata is JSON by design, see
-/// `hyperion-knowledge-graph`'s own crate doc); a `"task_result"` node (a real capability
-/// dispatch's own real output -- see `hyperion-coordination::CoordinationSession::allocate`) uses
-/// [`render_capability_result`]; everything else falls back to a handful of common human-facing
-/// keys, then a truncated raw value as a last, honest resort.
-fn describe(node: &NodeRecord) -> String {
-    if node.object_type == "task_result" {
-        if let Some(text) = render_capability_result(&node.metadata) {
-            return format!("a result: {}", preview(&text));
-        }
-    }
-
-    if let Some(text) = utterance_text(node) {
-        return match node.metadata.get("confidence").and_then(|v| v.as_f64()) {
-            Some(confidence) => {
-                format!(
-                    "you asked: \"{text}\" ({:.0}% confident)",
-                    confidence * 100.0
-                )
-            }
-            None => format!("you asked: \"{text}\""),
-        };
-    }
-
-    if node.object_type == "intent" {
-        if let Some(predicate) = node
-            .metadata
-            .get("predicate")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-        {
-            return format!("a planned task: {predicate}");
-        }
-    }
-
-    if node.object_type.starts_with("memory_") {
-        if let Some(content) = node.metadata.get("content") {
-            return format!("a memory: {}", summarize_value(content));
-        }
-    }
-
-    for key in ["title", "name", "text", "summary", "label", "path"] {
-        if let Some(s) = node.metadata.get(key).and_then(|v| v.as_str()) {
-            return format!("a {}: {s}", node.object_type);
-        }
-    }
-
-    format!(
-        "a {} ({})",
-        node.object_type,
-        summarize_value(&node.metadata)
-    )
-}
-
 /// A single-line, length-capped teaser of `text` -- the first line, capped at
 /// [`PREVIEW_CHARS`], with a trailing `"..."` whenever anything was actually cut off (either the
-/// first line itself was too long, or there was real content after it). Shared by [`describe`]
-/// (list context) and `hyperion_console::session`'s own task-outcome rendering -- `/why` is where
-/// the same node's full, untruncated text lives instead.
+/// first line itself was too long, or there was real content after it). Shared by
+/// [`NodeRecord::display_label`] callers here (list context) and `hyperion_console::session`'s own
+/// task-outcome rendering -- `/why` is where the same node's full, untruncated text lives instead.
 pub(crate) fn preview(text: &str) -> String {
     let first_line = text.lines().next().unwrap_or(text);
     let truncated: String = first_line.chars().take(PREVIEW_CHARS).collect();
@@ -448,47 +376,6 @@ pub(crate) fn preview(text: &str) -> String {
     } else {
         truncated
     }
-}
-
-fn summarize_value(value: &serde_json::Value) -> String {
-    let text = match value {
-        serde_json::Value::String(s) => s.clone(),
-        other => other.to_string(),
-    };
-    if text.chars().count() > 80 {
-        let truncated: String = text.chars().take(77).collect();
-        format!("{truncated}...")
-    } else {
-        text
-    }
-}
-
-/// Turns a real capability dispatch's own returned JSON into one human sentence --
-/// `document.draft`'s `"draft"`, `web.search`'s `"results"`/honesty-caveat `"note"` (see
-/// `hyperion_agent_runtime::AgentRuntime::dispatch_document_draft`/`dispatch_market_research`).
-/// Shared by [`describe`] (a `"task_result"` node found via `/recall`/`/related`) and
-/// `hyperion_console::session`'s own task-outcome rendering, so a person sees the same real
-/// content the same way in both places -- one source of truth for "how do we turn a capability's
-/// raw JSON into words," not two definitions that could quietly drift apart.
-pub(crate) fn render_capability_result(value: &serde_json::Value) -> Option<String> {
-    if let Some(draft) = value.get("draft").and_then(|v| v.as_str()) {
-        return Some(draft.to_string());
-    }
-    if let Some(results) = value.get("results").and_then(|v| v.as_array()) {
-        let joined = results
-            .iter()
-            .filter_map(|v| v.as_str())
-            .collect::<Vec<_>>()
-            .join(" ");
-        return Some(match value.get("note").and_then(|v| v.as_str()) {
-            Some(note) => format!("{joined} ({note})"),
-            None => joined,
-        });
-    }
-    value
-        .get("text")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
 }
 
 /// `/graph dot`'s real output: valid Graphviz DOT (`digraph { ... }`), so it can actually be
@@ -503,7 +390,7 @@ fn render_dot(nodes: &[(NodeId, NodeRecord)], edges: &[(EdgeId, EdgeRecord)]) ->
             "[{}] {}: {}",
             id.0,
             node.object_type,
-            preview(&describe(node))
+            preview(&node.display_label())
         );
         lines.push(format!(
             "  \"{}\" [label=\"{}\"];",
@@ -532,7 +419,7 @@ fn dot_escape(text: &str) -> String {
 }
 
 fn friendly_type(node: &NodeRecord) -> String {
-    if utterance_text(node).is_some() {
+    if node.utterance_text().is_some() {
         return "something you asked".to_string();
     }
     match node.object_type.as_str() {

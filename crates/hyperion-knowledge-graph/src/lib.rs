@@ -37,6 +37,15 @@
 //! Trust-Boundary owner once wired — `hyperion-semantic-fs`'s live `VirtualFolder` invalidation
 //! is the first real consumer.
 //!
+//! [`NodeRecord::display_label`] (2026-07-18) closes this crate's own previously-unnamed gap: the
+//! real "how do you describe this node to a person" heuristic used to live only as a private
+//! `describe` helper inside `hyperion-console::graph_explorer`, so nothing else in this workspace
+//! (a future export tool, `hyperion-shell`'s own rendering) could reuse it without either
+//! reinventing it or taking a backwards dependency on a leaf UI crate. It's promoted here as a
+//! method directly on [`types::NodeRecord`] instead, alongside the shared
+//! [`display::render_capability_result`] a real capability dispatch's own JSON output is rendered
+//! through — one definition, not two that could quietly drift apart.
+//!
 //! Explicitly deferred, and why, matching the scoping this workspace already
 //! uses (see `hyperion-storage`'s crate doc for the same pattern):
 //!
@@ -121,12 +130,14 @@
 //!   shard.
 
 mod decay;
+mod display;
 mod graph;
 mod index;
 mod providers;
 mod types;
 
 pub use decay::{effective_edge_weight, DEFAULT_INFERRED_EDGE_TAU_SECS};
+pub use display::render_capability_result;
 pub use graph::KnowledgeGraph;
 pub use providers::{capabilities_for_topic, capability_for_topic};
 // Re-exported the same way `NodeId`/`EdgeId` already alias `hyperion_storage::ObjectId` in

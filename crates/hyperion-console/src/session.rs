@@ -32,7 +32,7 @@ use hyperion_coordination::{CoordinationSession, TaskNode};
 use hyperion_crypto::{Keystore, SecretStore};
 use hyperion_explainability::ExplanationStore;
 use hyperion_intent::{HandleOutcome, IntentEngine};
-use hyperion_knowledge_graph::{GraphError, KnowledgeGraph, NodeId};
+use hyperion_knowledge_graph::{render_capability_result, GraphError, KnowledgeGraph, NodeId};
 use hyperion_memory::{MemoryEngine, MemoryTier};
 use hyperion_plugin_framework::{
     CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind,
@@ -1942,11 +1942,7 @@ impl ConsoleSession {
     /// the very result a user is looking for -- `/result` finds it via the real graph edge
     /// instead.
     fn render_task_detail(node: &TaskNode) -> String {
-        match node
-            .result
-            .as_ref()
-            .and_then(crate::graph_explorer::render_capability_result)
-        {
+        match node.result.as_ref().and_then(render_capability_result) {
             Some(text) => format!(
                 "{:?} -- {} (see \"/result {}\" for the full text)",
                 node.status,
