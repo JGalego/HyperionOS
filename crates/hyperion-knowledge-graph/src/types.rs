@@ -128,6 +128,16 @@ pub struct QueryHit {
     pub score: f32,
 }
 
+/// The real result of [`crate::import::import_json`] -- how many nodes/edges a real import
+/// actually created, and how many edges couldn't be (an edge whose `subject`/`target` didn't
+/// match any node id the same import just created — malformed input, not a crash).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ImportReport {
+    pub nodes_created: usize,
+    pub edges_created: usize,
+    pub edges_skipped_unresolved: usize,
+}
+
 /// docs/09 §7's own "for each returned object, `graph.explain` can show the cosine similarity...
 /// and why it fell inside the fuzzy six-month window" — the same real per-candidate scoring
 /// [`crate::graph::KnowledgeGraph::query`] already computes internally to rank and filter
@@ -234,4 +244,9 @@ pub enum GraphError {
     NotFound,
     #[error("storage error: {0}")]
     Storage(#[from] hyperion_storage::StorageError),
+    /// [`crate::import::import_json`]'s own honest failure mode: the input wasn't real,
+    /// well-formed graph-export JSON (see `crate::export::to_json`'s own output shape) — never
+    /// silently imports a partial graph from malformed input.
+    #[error("malformed import data: {0}")]
+    Malformed(String),
 }

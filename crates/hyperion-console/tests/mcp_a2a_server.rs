@@ -137,7 +137,12 @@ fn mcp_server_serves_real_tools_over_a_real_http_connection() {
         "/",
         r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"hyperion.graph","arguments":{}}}"#,
     );
-    assert!(graph.contains("2 nodes"), "got: {graph:?}");
+    // Not an exact node count: `ConsoleSession::open`'s own real first-run seed (see
+    // `SEED_DATASET_JSON`) adds real starter content alongside this scenario's own two real
+    // utterances, so the real proof here is that both the seeded content and this session's own
+    // real, live-recorded utterance are present -- not a brittle total.
+    assert!(graph.contains("Welcome to Hyperion"), "got: {graph:?}");
+    assert!(graph.contains("my name is Alex"), "got: {graph:?}");
 
     let transcript = resume_and_wait(child);
     assert!(

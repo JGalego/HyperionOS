@@ -47,6 +47,12 @@ use hyperion_workspace::{
     WorkspaceCompiler,
 };
 
+/// A small, real starter dataset shown to a brand-new session -- what Hyperion can do, in its own
+/// words, before anyone has asked it anything yet. Seeded exactly once, via
+/// `hyperion_knowledge_graph::KnowledgeGraph::seed_if_empty`'s own "never re-seeds an
+/// already-populated graph" contract -- a returning user's own real history is never touched.
+const SEED_DATASET_JSON: &str = include_str!("../assets/seed_dataset.json");
+
 /// `pub(crate)` so [`crate::graph_explorer`]'s own relative-time rendering shares one clock
 /// reading with the rest of this crate rather than duplicating this exact function.
 pub(crate) fn now() -> u64 {
@@ -366,6 +372,15 @@ impl ConsoleSession {
         // `Keystore::derive_key`, so a Knowledge Graph left on a real, unmounted disk is never
         // plaintext -- no new passphrase or key-management UX for the person using this console.
         let graph = Arc::new(KnowledgeGraph::open_encrypted(&kg_path, &keystore)?);
+        // This crate's own previously-unnamed "first run is a completely blank graph" gap:
+        // seeded once, real content, before any other session state is built -- see
+        // `SEED_DATASET_JSON`'s own doc comment. `expect` rather than a silent skip: this is a
+        // compile-time-bundled asset under this workspace's own control, so malformed JSON here
+        // is a real build bug, not a runtime condition a person using this console could ever
+        // cause.
+        graph
+            .seed_if_empty(&monitor, &token, SEED_DATASET_JSON)
+            .expect("the bundled seed dataset is real, well-formed graph-export JSON");
 
         let (runtime, current_backend) = Self::build_ai_runtime(&keystore);
         let ai_runtime = Arc::new(runtime);

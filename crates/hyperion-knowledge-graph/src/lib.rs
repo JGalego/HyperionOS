@@ -56,6 +56,15 @@
 //! fact — answering both "why did this rank where it did" for a hit that came back, and "why
 //! didn't this show up" for a candidate that didn't.
 //!
+//! [`KnowledgeGraph::import_json`]/[`KnowledgeGraph::seed_if_empty`] (2026-07-18) close this
+//! crate's own previously-unnamed "no pre-population/seed API" gap: [`import`] is the real
+//! counterpart to [`export`]'s own JSON shape, translating a foreign export's own node ids into
+//! this graph's real ones (the same id-translation problem `hyperion_federation::kg_sync` already
+//! solved, solved the identical way here since two independent graphs mint ids from independent
+//! counters); `seed_if_empty` is the real "first run" half — seeds a starter dataset (e.g.
+//! `hyperion-console`'s own bundled sample) only when this caller's own Trust Boundary has
+//! recorded nothing yet, never re-seeding or duplicating an already-populated graph.
+//!
 //! Explicitly deferred, and why, matching the scoping this workspace already
 //! uses (see `hyperion-storage`'s crate doc for the same pattern):
 //!
@@ -143,6 +152,7 @@ mod decay;
 mod display;
 mod export;
 mod graph;
+mod import;
 mod index;
 mod providers;
 mod types;
@@ -157,6 +167,6 @@ pub use providers::{capabilities_for_topic, capability_for_topic};
 pub use hyperion_storage::VersionId;
 pub use types::{
     EdgeConstraint, EdgeId, EdgeOrigin, EdgeRecord, ExplainRef, GraphError, GraphQuery,
-    GraphSnapshot, LinkOutcome, NodeId, NodeRecord, ProvenanceChain, QueryHit, RankingRationale,
-    Subgraph,
+    GraphSnapshot, ImportReport, LinkOutcome, NodeId, NodeRecord, ProvenanceChain, QueryHit,
+    RankingRationale, Subgraph,
 };

@@ -10,8 +10,8 @@ use hyperion_storage::{StorageEngine, VersionId};
 use crate::index::GraphIndex;
 use crate::types::{
     EdgeConstraint, EdgeId, EdgeOrigin, EdgeRecord, ExplainRef, GraphError, GraphQuery,
-    GraphSnapshot, LinkOutcome, NodeId, NodeRecord, ObjectType, ProvenanceChain, QueryHit,
-    RankingRationale, Record, Subgraph,
+    GraphSnapshot, ImportReport, LinkOutcome, NodeId, NodeRecord, ObjectType, ProvenanceChain,
+    QueryHit, RankingRationale, Record, Subgraph,
 };
 
 fn now() -> u64 {
@@ -703,6 +703,38 @@ impl KnowledgeGraph {
     ) -> Result<String, GraphError> {
         let snapshot = self.dump(monitor, token)?;
         Ok(crate::export::to_json(&snapshot))
+    }
+
+    /// This crate's own previously-unnamed "no pre-population/seed API" gap: real, capability-
+    /// gated JSON import (of [`Self::export_json`]'s own output shape, or a hand-authored sample
+    /// dataset in the same shape) against this already-open graph. See [`crate::import`]'s own
+    /// doc comment for the ownership/id-translation rules a real import follows.
+    pub fn import_json(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        json: &str,
+    ) -> Result<ImportReport, GraphError> {
+        crate::import::import_json(self, monitor, token, json)
+    }
+
+    /// The real "first-run" half of this crate's own previously-unnamed "no pre-population/seed
+    /// API" gap: [`Self::import_json`], but only when this caller's own Trust Boundary has
+    /// recorded nothing yet -- never re-seeds (or duplicates) an already-populated graph, and
+    /// never seeds on behalf of a boundary this token doesn't belong to. `Ok(None)` when the
+    /// graph already has content (a real no-op, not an error); `Ok(Some(report))` only on a
+    /// genuine first seed.
+    pub fn seed_if_empty(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        json: &str,
+    ) -> Result<Option<ImportReport>, GraphError> {
+        let existing = self.query(monitor, token, &GraphQuery::default())?;
+        if !existing.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(self.import_json(monitor, token, json)?))
     }
 
     fn satisfies_edge_constraint(

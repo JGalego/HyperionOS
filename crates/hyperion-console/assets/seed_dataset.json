@@ -1,0 +1,86 @@
+{
+  "nodes": [
+    {
+      "id": 1,
+      "object_type": "capability_doc",
+      "metadata": {
+        "title": "Draft a document",
+        "summary": "Ask Hyperion to draft a document, plan, or report -- for example: \"draft a business plan for a coffee shop\"."
+      },
+      "owner": 0,
+      "created_at": 0,
+      "updated_at": 0
+    },
+    {
+      "id": 2,
+      "object_type": "capability_doc",
+      "metadata": {
+        "title": "Research a topic",
+        "summary": "Ask Hyperion to research something -- for example: \"what's the market for electric bikes in Europe?\"."
+      },
+      "owner": 0,
+      "created_at": 0,
+      "updated_at": 0
+    },
+    {
+      "id": 3,
+      "object_type": "capability_doc",
+      "metadata": {
+        "title": "Launch a multi-step goal",
+        "summary": "Describe a bigger goal and Hyperion plans and coordinates the steps -- for example: \"I need to launch my startup\"."
+      },
+      "owner": 0,
+      "created_at": 0,
+      "updated_at": 0
+    },
+    {
+      "id": 4,
+      "object_type": "welcome",
+      "metadata": {
+        "title": "Welcome to Hyperion",
+        "summary": "Say what you want in plain language -- Hyperion figures out how. Try \"/recall\" any time to see what's been recorded, or \"/help\" for every command."
+      },
+      "owner": 0,
+      "created_at": 0,
+      "updated_at": 0
+    }
+  ],
+  "edges": [
+    {
+      "id": 1,
+      "subject": 4,
+      "predicate": "demonstrates",
+      "target": 1,
+      "weight": 1.0,
+      "provenance": "seed_dataset",
+      "origin": "Explicit",
+      "confidence": null,
+      "owner": 0,
+      "created_at": 0
+    },
+    {
+      "id": 2,
+      "subject": 4,
+      "predicate": "demonstrates",
+      "target": 2,
+      "weight": 1.0,
+      "provenance": "seed_dataset",
+      "origin": "Explicit",
+      "confidence": null,
+      "owner": 0,
+      "created_at": 0
+    },
+    {
+      "id": 3,
+      "subject": 4,
+      "predicate": "demonstrates",
+      "target": 3,
+      "weight": 1.0,
+      "provenance": "seed_dataset",
+      "origin": "Explicit",
+      "confidence": null,
+      "owner": 0,
+      "created_at": 0
+    }
+  ]
+}

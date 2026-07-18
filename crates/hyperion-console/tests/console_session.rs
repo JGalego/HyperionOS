@@ -782,14 +782,18 @@ fn connect_strips_stray_control_characters_and_shows_a_masked_preview_not_the_re
 mod graph_exploration {
     use super::open_session;
 
+    /// A brand-new session's graph is never truly empty anymore -- `ConsoleSession::open`'s own
+    /// real first-run seed (see `SEED_DATASET_JSON`) means a bare `/recall`, before anyone has
+    /// said anything, surfaces Hyperion's own real starter content instead of "nothing recorded."
     #[test]
-    fn recall_with_nothing_recorded_yet_says_so() {
+    fn recall_before_saying_anything_shows_the_real_seeded_starter_content() {
         let (_dir, mut session) = open_session();
 
         let lines = session.handle_utterance("/recall").join("\n");
         assert!(
-            lines.contains("anything recorded yet"),
-            "a brand-new session's graph really is empty, got: {lines:?}"
+            lines.contains("Welcome to Hyperion"),
+            "a brand-new session's own real seed dataset should already be recorded, got: \
+             {lines:?}"
         );
     }
 
@@ -1017,14 +1021,19 @@ mod graph_exploration {
 mod graph_dump {
     use super::open_session;
 
+    /// A brand-new session's graph is never truly empty anymore -- `ConsoleSession::open`'s own
+    /// real first-run seed (see `SEED_DATASET_JSON`) means `/graph` already shows real recorded
+    /// nodes and edges before anyone has said anything.
     #[test]
-    fn graph_of_a_fresh_session_says_its_empty() {
+    fn graph_of_a_fresh_session_shows_the_real_seeded_starter_content() {
         let (_dir, mut session) = open_session();
 
         let lines = session.handle_utterance("/graph").join("\n");
+        assert!(lines.contains("nodes:"), "got: {lines:?}");
         assert!(
-            lines.contains("empty"),
-            "a brand-new session's graph really is empty, got: {lines:?}"
+            lines.contains("Welcome to Hyperion"),
+            "a brand-new session's own real seed dataset should already be recorded, got: \
+             {lines:?}"
         );
     }
 
