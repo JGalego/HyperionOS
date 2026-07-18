@@ -48,20 +48,22 @@
 //!   a deliberate choice not to force parity with dimensions docs/37's tier discussion never
 //!   touches, and `compute_tops` specifically has no scheduler dimension that means the same
 //!   thing (see [`fit`]'s doc comment).
-//! - **`capability_registry.install(plan.capability)`.** [`explain::apply_and_explain`]
-//!   still doesn't install a substituted implementation — a full
-//!   `CapabilityManifest` is genuinely more than a bare
-//!   [`types::Substitution`] carries, and installation is
-//!   `hyperion-plugin-framework`'s own capability-gated, signature-
-//!   verified operation, not something to route around. What's real now:
-//!   an `AlternateImplementation` substitution's target is confirmed
-//!   against a caller-supplied real `PluginRegistry` (`registry.query(...)`
-//!   already does exact-id lookup; a valid target must already be a
-//!   registered, non-quarantined capability, nothing needed constructing)
-//!   before the audit notice is written, refusing to claim a fallback
-//!   happened against a capability that was never actually installed.
-//!   `CheaperLocalTier`/`ConsentedCloudUpgrade` aren't pre-registered
-//!   capabilities the same way, so this check doesn't cover them.
+//! - ~~**`capability_registry.install(plan.capability)`.**~~ (2026-07-18) — [`explain::apply_and_explain`]
+//!   still never calls `hyperion-plugin-framework::PluginRegistry::install` itself: a full,
+//!   signed `PluginManifest` is genuinely more than a bare [`types::Substitution`] carries, and
+//!   fabricating one to route around that crate's own capability-gated, signature-verified
+//!   install path would be exactly the kind of placeholder this workspace's own standards forbid.
+//!   What's real now: an `AlternateImplementation` substitution's target is confirmed against a
+//!   caller-supplied real `PluginRegistry` (`registry.query(...)` already does exact-id lookup; a
+//!   valid target must already be a registered, non-quarantined capability, nothing needed
+//!   constructing) before the audit notice is written, refusing to claim a fallback happened
+//!   against a capability that was never actually installed -- and, closing the return-value half
+//!   of docs/37 §3's own pseudocode (`installed = capability_registry.install(...); return
+//!   installed`), [`explain::apply_and_explain`] now genuinely returns that confirmed, live
+//!   `hyperion_plugin_framework::RegistryEntry` instead of discarding it after using it only to
+//!   validate. `CheaperLocalTier`/`ConsentedCloudUpgrade` aren't pre-registered capabilities the
+//!   same way, so both the check and the returned value are `None` for those, same as
+//!   `registry: None`.
 //! - **KG partitioning / `TenantPartition` / cross-tenant edges.**
 //!   [`types::TenancyMode::MultiTenantOrg`] is declared as a hardware-
 //!   tier-unlocked mode; no partitioning logic exists here — `hyperion-

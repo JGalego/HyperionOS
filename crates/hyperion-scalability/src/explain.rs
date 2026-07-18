@@ -1,6 +1,6 @@
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_observability::{AuditAction, AuditLedger, AuditPayload, PrincipalRef};
-use hyperion_plugin_framework::PluginRegistry;
+use hyperion_plugin_framework::{PluginRegistry, RegistryEntry};
 
 use crate::types::{DegradationOutcome, DegradationPlan, ScalabilityError, Substitution};
 
@@ -18,18 +18,23 @@ fn require(
 /// with installing the substitution" — closing the doc's own named
 /// "explanation lag" failure mode, where a degraded Capability runs
 /// silently before its notice catches up. This crate does not itself
-/// install a substituted implementation through
-/// `hyperion-plugin-framework` (a full `CapabilityManifest` isn't
-/// something a bare [`Substitution`] carries enough information to
-/// construct — see this crate's own doc comment); when `registry` is
-/// supplied, though, an `AlternateImplementation` substitution is
-/// confirmed against it — a valid target must already be a real,
-/// registered, non-quarantined capability, since nothing else could have
-/// produced a real fallback — before the audit notice is written, so this
-/// never claims a substitution happened against a capability that isn't
-/// actually there to run. `registry: None` (no real registry to check
-/// against) skips this check entirely, matching every other caller-
-/// optional integration in this workspace.
+/// call `hyperion-plugin-framework`'s own `PluginRegistry::install` (a
+/// full, signed `PluginManifest` is genuinely more than a bare
+/// [`Substitution`] carries enough information to construct, and
+/// installation is that crate's own capability-gated, signature-verified
+/// operation — not something to fabricate a manifest to route around);
+/// when `registry` is supplied, an `AlternateImplementation` substitution
+/// is instead confirmed against it, and the real, live
+/// [`RegistryEntry`] that confirmation reads is now genuinely returned —
+/// docs/37's own pseudocode names this `installed` and hands it back to
+/// the caller, and previously this function discarded exactly that value
+/// after using it only to validate. `Ok(None)` covers every case with no
+/// real `PluginRegistry` concept to return: `registry: None` (no real
+/// registry to check against, matching every other caller-optional
+/// integration in this workspace), and every non-`AlternateImplementation`
+/// outcome (`CheaperLocalTier`/`ConsentedCloudUpgrade` aren't
+/// pre-registered capabilities the same way — see this crate's own doc
+/// comment).
 pub fn apply_and_explain(
     monitor: &CapabilityMonitor,
     token: &CapabilityToken,
@@ -38,19 +43,19 @@ pub fn apply_and_explain(
     plan: &DegradationPlan,
     registry: Option<&PluginRegistry>,
     now: u64,
-) -> Result<(), ScalabilityError> {
+) -> Result<Option<RegistryEntry>, ScalabilityError> {
     require(monitor, token, RightsMask::WRITE)?;
 
+    let mut installed = None;
     if let Some(registry) = registry {
         if let DegradationOutcome::Substituted {
             substitution: Substitution::AlternateImplementation(capability_ref, _),
         } = &plan.outcome
         {
-            if registry.query(capability_ref).is_none() {
-                return Err(ScalabilityError::AlternateImplementationNotRegistered(
-                    capability_ref.clone(),
-                ));
-            }
+            let entry = registry.query(capability_ref).ok_or_else(|| {
+                ScalabilityError::AlternateImplementationNotRegistered(capability_ref.clone())
+            })?;
+            installed = Some(entry);
         }
     }
 
@@ -63,5 +68,5 @@ pub fn apply_and_explain(
         AuditPayload::Note(plan.notice.clone()),
         now,
     )?;
-    Ok(())
+    Ok(installed)
 }

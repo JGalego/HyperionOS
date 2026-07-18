@@ -73,7 +73,7 @@ fn a_degradation_plan_is_recorded_verbatim_in_the_audit_ledger() {
         notice: "vision.generate disabled on this device".to_string(),
     };
 
-    apply_and_explain(
+    let installed = apply_and_explain(
         &monitor,
         &root,
         &audit,
@@ -83,6 +83,7 @@ fn a_degradation_plan_is_recorded_verbatim_in_the_audit_ledger() {
         1_000,
     )
     .unwrap();
+    assert!(installed.is_none());
 
     let entries = audit
         .query(&monitor, &root, |e| e.action == AuditAction::AdminOverride)
@@ -151,7 +152,7 @@ fn an_alternate_implementation_substitution_naming_a_real_registered_capability_
         notice: "vision.generate substituted with a smaller local model".to_string(),
     };
 
-    apply_and_explain(
+    let installed = apply_and_explain(
         &monitor,
         &root,
         &audit,
@@ -161,6 +162,11 @@ fn an_alternate_implementation_substitution_naming_a_real_registered_capability_
         1_000,
     )
     .unwrap();
+
+    let entry = installed.expect("an AlternateImplementation substitution must return the real, confirmed RegistryEntry it was checked against");
+    assert_eq!(entry.capability_id, "vision.generate.small");
+    assert_eq!(entry.implementations.len(), 1);
+    assert_eq!(entry.implementations[0].quality_score, 0.5);
 
     let entries = audit
         .query(&monitor, &root, |e| e.action == AuditAction::AdminOverride)
