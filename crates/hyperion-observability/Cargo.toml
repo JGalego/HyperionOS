@@ -10,6 +10,8 @@ hyperion-capability = { workspace = true }
 hyperion-crypto = { workspace = true }
 hyperion-explainability = { workspace = true }
 hyperion-model-router = { workspace = true }
+hyperion-scheduler = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 

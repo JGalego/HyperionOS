@@ -3140,6 +3140,8 @@ dependencies = [
  "hyperion-crypto",
  "hyperion-explainability",
  "hyperion-model-router",
+ "hyperion-scheduler",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",

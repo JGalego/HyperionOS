@@ -39,6 +39,20 @@
 //!   (`AgentRuntime::new_with_netstack_and_plugins_and_memory_and_model_router`) and names the
 //!   invoked capability on every submitted task.
 //!
+//! - ~~**`Scheduler.subscribeLoadSignal` wiring.**~~ (2026-07-18) — now real:
+//!   [`Scheduler::update_load_signal`] is the direct-push counterpart docs/34-observability-
+//!   telemetry.md §3 names, and [`Scheduler::current_load_signal`] reads the most recent one
+//!   back. `hyperion_observability::scheduler_feedback::publish_load_signal` is the real
+//!   production caller — it computes a real [`types::LoadSignal`] (a real EWMA over recorded
+//!   CPU-utilization samples, a real derivative over recorded battery-level samples, and the
+//!   most recent real thermal-headroom reading) from a real `TelemetryCollector`'s own recorded
+//!   `MetricSample`s and pushes it in. No Cargo cycle here (unlike distributed offload above):
+//!   `hyperion-observability` doesn't depend on this crate today, and this crate's own full
+//!   transitive dependency closure never reaches back to `hyperion-observability`, so a plain,
+//!   direct dependency (no trait-object indirection) is enough. Acting on the signal (adaptive
+//!   placement/quota decisions) remains a separate, already-named, hardware-blocked deferral —
+//!   see [`ledger::ResourceLedger`]'s own doc comment on the thermal/battery feedback governor.
+//!
 //! Everything else — admission, the ledger, and DRF/EDF dispatch — is exactly what
 //! docs/41-implementation-phases.md's Phase 1 exit criteria require.
 
@@ -51,6 +65,6 @@ pub use ledger::ResourceLedger;
 pub use owner::OwnerAccount;
 pub use scheduler::{OffloadTrigger, SchedError, Scheduler, SchedulingRationale};
 pub use types::{
-    AgentId, IntentId, OwnerId, ResourceDimension, ResourceVector, SchedClass, TaskDescriptor,
-    TaskId, Ticket,
+    AgentId, IntentId, LoadSignal, OwnerId, ResourceDimension, ResourceVector, SchedClass,
+    TaskDescriptor, TaskId, Ticket,
 };

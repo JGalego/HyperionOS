@@ -8,8 +8,8 @@ use hyperion_model_router::{ImplId, ModelRouter, ResourceCost};
 use crate::ledger::ResourceLedger;
 use crate::owner::OwnerAccount;
 use crate::types::{
-    owner_of, OwnerId, ResourceDimension, ResourceVector, SchedClass, TaskDescriptor, TaskId,
-    Ticket,
+    owner_of, LoadSignal, OwnerId, ResourceDimension, ResourceVector, SchedClass, TaskDescriptor,
+    TaskId, Ticket,
 };
 
 /// Aging increment applied to a requeued task's `priority_weight` each
@@ -96,6 +96,9 @@ pub struct Scheduler {
     model_router: Option<Arc<ModelRouter>>,
     /// This crate's own named "distributed offload" gap — see [`Self::with_offload_trigger`].
     offload_trigger: Option<Arc<dyn OffloadTrigger>>,
+    /// This crate's own named "`Scheduler.subscribeLoadSignal` wiring" gap — see
+    /// [`Self::update_load_signal`]/[`Self::current_load_signal`].
+    load_signal: Option<LoadSignal>,
 }
 
 impl Scheduler {
@@ -176,6 +179,31 @@ impl Scheduler {
     /// `query_ledger` — docs/04 §Interfaces / APIs.
     pub fn query_ledger(&self, dim: ResourceDimension) -> Option<ResourceLedger> {
         self.ledgers.get(&dim).copied()
+    }
+
+    /// docs/34-observability-telemetry.md §3's own `Scheduler.subscribeLoadSignal` -- this
+    /// crate's own previously-named "no subscription API to receive one" gap, closed as a plain,
+    /// direct push rather than an invented callback/subscriber-list mechanism: this crate has no
+    /// event loop of its own to invoke callbacks from (every method here runs synchronously,
+    /// called by whichever caller owns this `Scheduler`), and exactly one real publisher exists
+    /// in this workspace (`hyperion_observability::scheduler_feedback`) -- a subscriber registry
+    /// built for a second publisher that doesn't exist yet would be exactly the "looks real,
+    /// never actually exercised" surface this workspace's own testing discipline rules out. A
+    /// caller that owns both a real `Scheduler` and a real `hyperion_observability::
+    /// TelemetryCollector` calls this each time a new signal is computed, the same "callers signal
+    /// explicitly, this simulator has no execution to observe automatically" shape
+    /// [`Self::complete`] already established.
+    pub fn update_load_signal(&mut self, signal: LoadSignal) {
+        self.load_signal = Some(signal);
+    }
+
+    /// The most recent [`LoadSignal`] pushed via [`Self::update_load_signal`], if any -- `None`
+    /// before any real caller has ever pushed one. Acting on it (adaptive placement/quota
+    /// decisions) is a separate, already-named, hardware-blocked deferral (see
+    /// [`crate::ledger::ResourceLedger`]'s own doc comment on the thermal/battery feedback
+    /// governor) this method does not itself attempt.
+    pub fn current_load_signal(&self) -> Option<LoadSignal> {
+        self.load_signal
     }
 
     /// `explain` — docs/04 §Interfaces / APIs.

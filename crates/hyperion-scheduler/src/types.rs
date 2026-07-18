@@ -172,3 +172,18 @@ pub(crate) fn owner_of(task: &TaskDescriptor) -> OwnerId {
         .map(OwnerId::Agent)
         .unwrap_or(OwnerId::Intent(task.owner_intent))
 }
+
+/// docs/34-observability-telemetry.md §3's own real feedback signal
+/// (`Scheduler.subscribeLoadSignal`, this crate's own previously-named "no subscription API to
+/// receive one" gap): CPU/GPU/NPU utilization (an EWMA over recent samples, real but "deliberately
+/// cheap and lossy"), battery drain rate (a real derivative over recent battery-level samples),
+/// and remaining thermal headroom (a real, most-recent instantaneous reading) — the three real
+/// inputs docs/34 §3 names, computed by `hyperion-observability::scheduler_feedback` (the crate
+/// that actually has real `MetricSample` history to compute them from) and pushed in via
+/// [`crate::Scheduler::update_load_signal`].
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LoadSignal {
+    pub utilization_ewma: f64,
+    pub battery_drain_rate: f64,
+    pub thermal_headroom: f64,
+}

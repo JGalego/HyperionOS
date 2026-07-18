@@ -70,11 +70,19 @@
 //!   (`Fleet.submitAggregate`). [`aggregate::build_aggregate`] produces
 //!   the gated report; nothing here sends it anywhere — no real network
 //!   transport exists in this hosted simulator.
-//! - **`Scheduler.subscribeLoadSignal` wiring.** [`telemetry::ewma`]/
-//!   [`telemetry::derivative`] are the real estimators docs/34 §2
-//!   describes feeding a `LoadSignal`; this crate does not itself
-//!   publish to `hyperion-scheduler`, which has no subscription API to
-//!   receive one.
+//! - ~~**`Scheduler.subscribeLoadSignal` wiring.**~~ (2026-07-18) — now real:
+//!   [`scheduler_feedback::publish_load_signal`] computes a real
+//!   `hyperion_scheduler::LoadSignal` from a real [`telemetry::TelemetryCollector`]'s own
+//!   recorded [`types::MetricSample`]s ([`telemetry::ewma`] over recent CPU-utilization samples,
+//!   [`telemetry::derivative`] over the two most recent battery-level samples, and the single
+//!   most recent thermal-headroom reading) and pushes it in via
+//!   `hyperion_scheduler::Scheduler::update_load_signal` — that crate's own previously-named "no
+//!   subscription API to receive one" gap, closed from that side as a plain, direct push rather
+//!   than an invented callback/subscriber-list mechanism (see that crate's own doc comment for
+//!   why). No Cargo cycle: `hyperion-scheduler` doesn't depend back on this crate, so this is a
+//!   plain, direct new dependency, unlike that crate's own cycle-blocked `OffloadTrigger` case.
+//!   Acting on the delivered signal (adaptive placement/quota decisions) remains a separate,
+//!   already-named, hardware-blocked deferral in `hyperion-scheduler` itself.
 //! - ~~Retention/rollup compaction of metrics and logs~~ — now real, see this crate's own "Real:"
 //!   section above (`hyperion-recovery`'s own equivalent retention deferral remains separately
 //!   named in that crate's own doc comment — this closes only this crate's copy of the gap).
@@ -101,11 +109,15 @@
 
 mod aggregate;
 mod ledger;
+mod scheduler_feedback;
 mod telemetry;
 mod types;
 
 pub use aggregate::build_aggregate;
 pub use ledger::{Anchor, AuditLedger, VerificationSchedule};
+pub use scheduler_feedback::{
+    publish_load_signal, BATTERY_LEVEL_METRIC, CPU_UTILIZATION_METRIC, THERMAL_HEADROOM_METRIC,
+};
 pub use telemetry::{derivative, ewma, TelemetryCollector};
 pub use types::{
     AggregateReport, AuditAction, AuditLogEntry, AuditPayload, ConsentCategory, ConsentScope,
