@@ -48,9 +48,15 @@
 //!   simulator; `hyperion-federation`'s lease split-brain tie-break
 //!   already covers the device-identity-conflict shape T7 cares about at
 //!   the level this workspace can test it.
-//! - **Real Noise-protocol IPC handshakes / channel binding.** Stubbed
-//!   entirely; this workspace's IPC (`hyperion-ipc`) has no session-key
-//!   concept to bind against yet.
+//! - ~~**Real Noise-protocol IPC handshakes / channel binding.**~~ (2026-07-18) — now real, in
+//!   `hyperion-ipc` (the crate that actually owns the transport this needs): its
+//!   `noise_session` module runs a genuine `Noise_NN` handshake (the real `snow` crate) between
+//!   two `Endpoint`s, and `Endpoint::ipc_call_with_claim_secure`/`reply_secure`/
+//!   `authenticate_secure` carry every existing capability `WireToken` claim sealed inside the
+//!   resulting live session rather than as plaintext JSON. Identity/authorization remains this
+//!   crate's own capability-token layer, deliberately not duplicated as a second Noise-static-key
+//!   system — see `hyperion_ipc::noise_session`'s own doc comment for the full reasoning and its
+//!   real "session-key binding" (the handshake's own transcript hash).
 //! - **`ProvenanceRecord`/trust-scoring for Knowledge Graph poisoning
 //!   (T4).** `hyperion-knowledge-graph` already records `owner`/
 //!   `device_origin` per node (its own crate doc's "Per-object ACL

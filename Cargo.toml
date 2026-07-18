@@ -92,6 +92,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 libc = "0.2"
+# Real Noise Protocol Framework handshakes for hyperion-ipc's session-key binding -- the actual
+# canonical implementation docs/15's own "Noise-protocol IPC handshakes" names, not a bespoke
+# reimplementation of a named, specified protocol.
+snow = "0.10"
 drm = "0.15"
 # Real, pure-Rust glyph rasterization for hyperion-init's DRM/KMS boot-splash renderer -- already
 # present in this workspace's own dependency tree (a transitive dependency of hyperion-shell's

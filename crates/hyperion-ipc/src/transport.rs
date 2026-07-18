@@ -29,6 +29,7 @@ use hyperion_capability::{CapabilityMonitor, Fault, RightsMask, WireToken};
 use crate::bus::{AuthenticatedCall, Notification, Request, Response};
 use crate::channel::Channel;
 use crate::frame::{Frame, FrameBody, HYIP_MAGIC, WIRE_VERSION};
+use crate::noise_session::{self, NoiseSession};
 use crate::types::{FrameFlags, IpcFault};
 
 /// Generous enough for this milestone's control-plane-sized frames; bulk transfer is the
@@ -187,6 +188,55 @@ impl Endpoint {
         }
     }
 
+    /// As [`Self::ipc_call_with_claim`], but every frame -- both directions -- travels sealed
+    /// under a live [`NoiseSession`] (from [`Self::noise_handshake_as_initiator`]) instead of as
+    /// plaintext JSON. `hyperion-security`'s own previously-named "Real Noise-protocol IPC
+    /// handshakes / channel binding" gap, closed: a capability claim now travels *inside* a real,
+    /// authenticated-encrypted channel bound to one specific negotiated session, not merely
+    /// alongside a bare socket send.
+    pub fn ipc_call_with_claim_secure(
+        &self,
+        peer_path: impl AsRef<Path>,
+        claim: &WireToken,
+        schema_id: crate::types::SchemaId,
+        req: Request,
+        session: &mut NoiseSession,
+        timeout: Duration,
+    ) -> Result<Response, IpcFault> {
+        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let frame = Frame {
+            magic: HYIP_MAGIC,
+            version: WIRE_VERSION,
+            schema_id,
+            flags: FrameFlags::CALL,
+            request_id,
+            cap_token: None,
+            op: req.op,
+            body: FrameBody::Payload(req.payload),
+        };
+        self.send_claim_frame_secure(peer_path, &frame, Some(claim.clone()), session)?;
+
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(IpcFault::Timeout);
+            }
+            let wire = match self.recv_wire_frame_secure(session, remaining) {
+                Ok((wire, _from)) => wire,
+                Err(IpcFault::Timeout) => return Err(IpcFault::Timeout),
+                Err(e) => return Err(e),
+            };
+
+            if wire.flags.contains(FrameFlags::REPLY) && wire.request_id == request_id {
+                return match wire.body {
+                    WireFrameBody::Payload(payload) => Ok(Response { payload }),
+                    WireFrameBody::Fault(fault) => Err(IpcFault::Kernel(fault)),
+                };
+            }
+        }
+    }
+
     /// `ipc_notify` over a real socket — asynchronous one-way send, no reply wait, exactly like
     /// [`crate::bus::IpcBus::ipc_notify`]. See [`Self::ipc_call`]'s docs for why this takes a
     /// [`Channel`] and [`Self::ipc_notify_with_claim`] exists alongside it.
@@ -230,19 +280,38 @@ impl Endpoint {
     /// sites ([`Self::ipc_call_with_claim`], [`Self::ipc_notify_with_claim`]) already leave it
     /// as a placeholder and pass the real claim separately, so there is exactly one place that
     /// decides what claim goes on the wire.
+    fn wire_frame_bytes(frame: &Frame, claim: Option<WireToken>) -> Result<Vec<u8>, IpcFault> {
+        let mut wire = WireFrame::from_frame(frame)?;
+        wire.cap_token = claim;
+        serde_json::to_vec(&wire).map_err(|_| IpcFault::SchemaMismatch)
+    }
+
     fn send_claim_frame(
         &self,
         peer_path: impl AsRef<Path>,
         frame: &Frame,
         claim: Option<WireToken>,
     ) -> Result<(), IpcFault> {
-        let mut wire = WireFrame::from_frame(frame)?;
-        wire.cap_token = claim;
-        let bytes = serde_json::to_vec(&wire).map_err(|_| IpcFault::SchemaMismatch)?;
+        let bytes = Self::wire_frame_bytes(frame, claim)?;
         self.socket
             .send_to(&bytes, peer_path.as_ref())
             .map_err(|_| IpcFault::PeerUnreachable)?;
         Ok(())
+    }
+
+    /// As [`Self::send_claim_frame`], but sealed under a live [`NoiseSession`] instead of sent as
+    /// plaintext JSON -- see [`crate::noise_session`]'s own doc comment for the real "channel
+    /// binding" this closes: `hyperion-security`'s own previously-named "Real Noise-protocol IPC
+    /// handshakes / channel binding" gap.
+    fn send_claim_frame_secure(
+        &self,
+        peer_path: impl AsRef<Path>,
+        frame: &Frame,
+        claim: Option<WireToken>,
+        session: &mut NoiseSession,
+    ) -> Result<(), IpcFault> {
+        let bytes = Self::wire_frame_bytes(frame, claim)?;
+        noise_session::send_secure(&self.socket, peer_path, session, &bytes)
     }
 
     fn recv_wire_frame(&self) -> Result<(WireFrame, SocketAddr), IpcFault> {
@@ -259,6 +328,40 @@ impl Endpoint {
         })?;
         let wire = serde_json::from_slice(&buf[..n]).map_err(|_| IpcFault::SchemaMismatch)?;
         Ok((wire, from))
+    }
+
+    /// As [`Self::recv_wire_frame`], but opening a real Noise-sealed datagram under `session`
+    /// first -- the real receive half of [`Self::send_claim_frame_secure`].
+    fn recv_wire_frame_secure(
+        &self,
+        session: &mut NoiseSession,
+        timeout: Duration,
+    ) -> Result<(WireFrame, SocketAddr), IpcFault> {
+        let (plaintext, from) = noise_session::recv_secure(&self.socket, session, timeout)?;
+        let wire = serde_json::from_slice(&plaintext).map_err(|_| IpcFault::SchemaMismatch)?;
+        Ok((wire, from))
+    }
+
+    /// Performs a real, live `Noise_NN` handshake with the peer bound at `peer_path`, over this
+    /// same endpoint's own socket -- no second socket or listener needed. See
+    /// [`crate::noise_session::handshake_as_initiator`]'s own doc comment for the real handshake
+    /// this runs.
+    pub fn noise_handshake_as_initiator(
+        &self,
+        peer_path: impl AsRef<Path>,
+        timeout: Duration,
+    ) -> Result<NoiseSession, IpcFault> {
+        noise_session::handshake_as_initiator(&self.socket, peer_path, timeout)
+    }
+
+    /// The real responder half of [`Self::noise_handshake_as_initiator`]: blocks for the next
+    /// peer's first handshake message on this endpoint's own socket. See
+    /// [`crate::noise_session::handshake_as_responder`]'s own doc comment.
+    pub fn noise_handshake_as_responder(
+        &self,
+        timeout: Duration,
+    ) -> Result<(NoiseSession, SocketAddr), IpcFault> {
+        noise_session::handshake_as_responder(&self.socket, timeout)
     }
 
     /// Blocks for the next raw frame — like [`crate::bus::IpcBus::recv_raw`], but reading real
@@ -291,33 +394,67 @@ impl Endpoint {
         monitor: &CapabilityMonitor,
         required: RightsMask,
     ) -> Result<AuthenticatedCall, IpcFault> {
+        match Self::validate(incoming, monitor, required) {
+            Ok(call) => Ok(call),
+            Err((is_call, fault)) => {
+                if is_call {
+                    let _ = self.reply_fault(&incoming.from, incoming.wire.request_id, fault);
+                }
+                Err(IpcFault::Kernel(fault))
+            }
+        }
+    }
+
+    /// As [`Self::authenticate`], but a failed check's automatic fault reply is sealed under
+    /// `session` too (via [`Self::reply_fault_to_secure`]) instead of sent as plaintext — a call
+    /// that arrived over a real, live secure session must never have even its *rejection*
+    /// leak onto the wire in the clear.
+    pub fn authenticate_secure(
+        &self,
+        incoming: &IncomingFrame,
+        monitor: &CapabilityMonitor,
+        required: RightsMask,
+        session: &mut NoiseSession,
+    ) -> Result<AuthenticatedCall, IpcFault> {
+        match Self::validate(incoming, monitor, required) {
+            Ok(call) => Ok(call),
+            Err((is_call, fault)) => {
+                if is_call {
+                    let _ = self.reply_fault_to_secure(
+                        &incoming.from,
+                        incoming.wire.request_id,
+                        fault,
+                        session,
+                    );
+                }
+                Err(IpcFault::Kernel(fault))
+            }
+        }
+    }
+
+    /// The real, transport-agnostic validation core [`Self::authenticate`]/[`Self::
+    /// authenticate_secure`] share -- differs only in *how* a failure's automatic fault reply is
+    /// sent, never in what counts as valid. `Err((is_call, fault))` carries everything either
+    /// caller needs to send that reply itself.
+    fn validate(
+        incoming: &IncomingFrame,
+        monitor: &CapabilityMonitor,
+        required: RightsMask,
+    ) -> Result<AuthenticatedCall, (bool, Fault)> {
         let wire = &incoming.wire;
         let is_call = wire.flags.contains(FrameFlags::CALL);
 
         let Some(wire_token) = wire.cap_token.as_ref() else {
-            let fault = Fault::InsufficientRights;
-            if is_call {
-                let _ = self.reply_fault(&incoming.from, wire.request_id, fault);
-            }
-            return Err(IpcFault::Kernel(fault));
+            return Err((is_call, Fault::InsufficientRights));
         };
 
-        let cap_token = match monitor.authenticate_wire_token(wire_token) {
-            Ok(token) => token,
-            Err(fault) => {
-                if is_call {
-                    let _ = self.reply_fault(&incoming.from, wire.request_id, fault);
-                }
-                return Err(IpcFault::Kernel(fault));
-            }
-        };
+        let cap_token = monitor
+            .authenticate_wire_token(wire_token)
+            .map_err(|fault| (is_call, fault))?;
 
-        if let Err(fault) = monitor.check_rights_ok_result(&cap_token, required) {
-            if is_call {
-                let _ = self.reply_fault(&incoming.from, wire.request_id, fault);
-            }
-            return Err(IpcFault::Kernel(fault));
-        }
+        monitor
+            .check_rights_ok_result(&cap_token, required)
+            .map_err(|fault| (is_call, fault))?;
 
         let body = match &wire.body {
             WireFrameBody::Payload(payload) => FrameBody::Payload(payload.clone()),
@@ -346,13 +483,38 @@ impl Endpoint {
         Ok((call, incoming))
     }
 
-    fn reply_to(
+    /// As [`Self::recv_raw`], but opening a real Noise-sealed datagram under `session` first —
+    /// the receive half of [`Self::ipc_call_with_claim_secure`]'s own server side. [`Self::
+    /// authenticate`] works unchanged on the result: capability authentication is a property of
+    /// the *decrypted* wire frame, independent of which transport delivered it.
+    pub fn recv_raw_secure(
         &self,
-        to: &SocketAddr,
+        session: &mut NoiseSession,
+        timeout: Duration,
+    ) -> Result<IncomingFrame, IpcFault> {
+        let (wire, from) = self.recv_wire_frame_secure(session, timeout)?;
+        Ok(IncomingFrame { from, wire })
+    }
+
+    /// As [`Self::recv_authenticated`], but over a real, live [`NoiseSession`] — see
+    /// [`Self::recv_raw_secure`].
+    pub fn recv_authenticated_secure(
+        &self,
+        session: &mut NoiseSession,
+        monitor: &CapabilityMonitor,
+        required: RightsMask,
+        timeout: Duration,
+    ) -> Result<(AuthenticatedCall, IncomingFrame), IpcFault> {
+        let incoming = self.recv_raw_secure(session, timeout)?;
+        let call = self.authenticate_secure(&incoming, monitor, required, session)?;
+        Ok((call, incoming))
+    }
+
+    fn reply_bytes(
         request_id: u64,
         body: WireFrameBody,
         extra_flags: FrameFlags,
-    ) -> Result<(), IpcFault> {
+    ) -> Result<Vec<u8>, IpcFault> {
         let wire = WireFrame {
             magic: HYIP_MAGIC,
             version: WIRE_VERSION,
@@ -363,11 +525,35 @@ impl Endpoint {
             op: hyperion_capability::Operation(0),
             body,
         };
-        let bytes = serde_json::to_vec(&wire).map_err(|_| IpcFault::SchemaMismatch)?;
+        serde_json::to_vec(&wire).map_err(|_| IpcFault::SchemaMismatch)
+    }
+
+    fn reply_to(
+        &self,
+        to: &SocketAddr,
+        request_id: u64,
+        body: WireFrameBody,
+        extra_flags: FrameFlags,
+    ) -> Result<(), IpcFault> {
+        let bytes = Self::reply_bytes(request_id, body, extra_flags)?;
         self.socket
             .send_to_addr(&bytes, to)
             .map_err(|_| IpcFault::PeerUnreachable)?;
         Ok(())
+    }
+
+    /// As [`Self::reply_to`], but sealed under `session` -- the secure reply half
+    /// [`Self::authenticate_secure`]/[`Self::reply_secure`]/[`Self::reply_fault_to_secure`] use.
+    fn reply_to_secure(
+        &self,
+        to: &SocketAddr,
+        request_id: u64,
+        body: WireFrameBody,
+        extra_flags: FrameFlags,
+        session: &mut NoiseSession,
+    ) -> Result<(), IpcFault> {
+        let bytes = Self::reply_bytes(request_id, body, extra_flags)?;
+        noise_session::send_secure_to_addr(&self.socket, to, session, &bytes)
     }
 
     /// Fulfils a pending real `ipc_call` with a successful reply, sent directly back to
@@ -379,6 +565,23 @@ impl Endpoint {
             incoming_from.wire.request_id,
             WireFrameBody::Payload(payload),
             FrameFlags::empty(),
+        )
+    }
+
+    /// As [`Self::reply`], but sealed under a real, live [`NoiseSession`] -- the secure reply
+    /// half of [`Self::ipc_call_with_claim_secure`]'s own server side.
+    pub fn reply_secure(
+        &self,
+        incoming_from: &IncomingFrame,
+        payload: Vec<u8>,
+        session: &mut NoiseSession,
+    ) -> Result<(), IpcFault> {
+        self.reply_to_secure(
+            &incoming_from.from,
+            incoming_from.wire.request_id,
+            WireFrameBody::Payload(payload),
+            FrameFlags::empty(),
+            session,
         )
     }
 
@@ -402,6 +605,22 @@ impl Endpoint {
             request_id,
             WireFrameBody::Fault(fault),
             FrameFlags::ERROR,
+        )
+    }
+
+    fn reply_fault_to_secure(
+        &self,
+        to: &SocketAddr,
+        request_id: u64,
+        fault: Fault,
+        session: &mut NoiseSession,
+    ) -> Result<(), IpcFault> {
+        self.reply_to_secure(
+            to,
+            request_id,
+            WireFrameBody::Fault(fault),
+            FrameFlags::ERROR,
+            session,
         )
     }
 }

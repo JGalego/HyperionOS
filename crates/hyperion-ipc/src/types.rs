@@ -65,4 +65,12 @@ pub enum IpcFault {
     /// revocation graph generation on every invocation, not a cached copy").
     #[error("capability check failed: {0}")]
     Kernel(#[from] hyperion_capability::Fault),
+    /// A real Noise Protocol Framework handshake or transport-message seal/open failed --
+    /// see [`crate::noise_session`]'s own doc comment. Covers a malformed handshake message, a
+    /// tampered/replayed/wrongly-keyed sealed message, and any other `snow` crate error; never
+    /// distinguished further, the same "don't leak *why* a cryptographic check failed" discipline
+    /// this workspace's other real crypto call sites (`hyperion_crypto::SyncEnvelopeError`)
+    /// already follow.
+    #[error("secure channel handshake or seal/open failed")]
+    HandshakeFailed,
 }
