@@ -20,10 +20,13 @@
 //! - **Graph index and vector index** — [09 — Knowledge
 //!   Graph](../09-knowledge-graph.md)'s concern, meant to be layered on top
 //!   of this engine's WAL, not duplicated inside it.
-//! - **Sync/replication** (Merkle-diff, CRDT merge across devices) — this
-//!   is single-device only; multi-device sync is
-//!   [21 — Distributed Execution](../21-distributed-execution.md)'s
-//!   concern (Phase 7).
+//! - ~~**Sync/replication**~~ (2026-07-18) — this engine itself remains single-device only (no
+//!   Merkle-diff/CRDT merge lives here), but multi-device sync at the layer above it is real now:
+//!   `hyperion_federation::kg_sync` replicates a `hyperion-knowledge-graph::KnowledgeGraph` (this
+//!   engine's own real consumer) across devices via a real, bounded whole-snapshot mechanism,
+//!   deliberately scoped down from this bullet's own full Merkle-diff/CRDT design — see that
+//!   module's own doc comment for the honestly-named boundary (last-applied-wins, not true CRDT
+//!   conflict merge; no incremental Merkle-tree diff, a full snapshot on each real interval).
 //! - ~~**Garbage collection / compaction**~~ (2026-07-16) — the version-retention slice is now
 //!   real: [`engine::StorageEngine::compact`] collapses every object's version chain
 //!   unconditionally to its current head (a real, WAL-rewriting sweep, not just an in-memory

@@ -2140,10 +2140,32 @@ mean here):
   signing identity is silently dropped, never applied). The receiver stamps `published_at` with
   its own real wall clock, never a value the remote sender could lie about. Proven end to end: a
   ledger published on one hub really arrives on a genuinely separate hub over a real socket; a
-  publication signed by the wrong identity is never applied. **Ambient anti-entropy remains
-  deferred** — it needs a real multi-device Knowledge Graph replica model
-  ([28 — Storage Engine](../28-storage-engine.md)) to converge, which doesn't exist yet; this
-  closes only the transport, not continuous background re-publication.
+  publication signed by the wrong identity is never applied. Ambient anti-entropy itself is closed
+  below (2026-07-18).
+- **Real ambient/continuous Knowledge Graph replication across devices, landed (2026-07-18).**
+  `hyperion-federation`'s own crate doc and `hyperion-storage`'s own crate doc each deferred this
+  to the other ("storage convergence is 28's job, not wired in here" vs. "multi-device sync is
+  21's concern") — neither crate actually owned it. New `hyperion_federation::kg_sync` closes it,
+  deliberately scoped down from docs/28's own full Merkle-diff/CRDT design to a real, bounded,
+  whole-snapshot replication: `merge_snapshot` is the real "apply a remote node/edge into my own
+  local graph" primitive this workspace had nowhere (translating remote `NodeId`s to local ones
+  via `KgTranslation`, since two independently-created graphs mint ids from independent counters
+  and would otherwise collide); `serve_kg_snapshots`/`publish_snapshot_over_socket` really move a
+  `hyperion_knowledge_graph::GraphSnapshot` between two devices over the same real
+  `seal_for_peer`/`open_from_peer`-encrypted `TcpStream` pattern the ledger transport above
+  already established; `KgAntiEntropyHeartbeat` is the real ambient half — a background thread
+  that keeps re-publishing on a fixed real interval with no caller ever triggering a sync by hand,
+  the same real-thread-with-join-on-drop shape `LeaseHeartbeat` already established. Proven end to
+  end: a node created on one device's graph really arrives, translated, on a genuinely separate
+  device's graph over a real socket; resyncing the same source updates the same translated local
+  copy rather than duplicating it; an edge naming a node the receiver has never translated is
+  skipped, not guessed at; the ambient heartbeat carries a node added *after* it started, with no
+  manual sync call anywhere in that test. Honestly-named boundary, not silently glossed over: the
+  translation table is in-memory only (a fresh process re-adds every remote node as new after a
+  restart rather than recognizing previously-merged ones), and conflicting concurrent edits to the
+  same translated object are last-applied-wins, not true CRDT conflict merge — docs/28's own
+  fuller Merkle-diff design remains real, separate, future work should either ever matter at a
+  scale beyond this workspace's real current one.
 - **Many-instance mesh delegation + live dashboard, landed (2026-07-16).** Past scenario 12's
   two hardcoded-host/port processes: any number of `hyperion-console` instances now each advertise
   a real, configurable `HYPERION_CONSOLE_CAPABILITIES` (`agent_card`'s `skills` array is built from

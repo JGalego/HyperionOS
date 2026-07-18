@@ -11,8 +11,16 @@ hyperion-ai-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
 hyperion-crypto = { workspace = true }
 hyperion-explainability = { workspace = true }
+# Real ambient/continuous Knowledge Graph replication across devices -- see src/kg_sync.rs's own
+# doc comment.
+hyperion-knowledge-graph = { workspace = true }
 hyperion-observability = { workspace = true }
 hyperion-scheduler = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# For tests/kg_sync.rs's own synthetic GraphSnapshot construction (a real EdgeRecord's subject/
+# target are hyperion_storage::ObjectId).
+hyperion-storage = { workspace = true }

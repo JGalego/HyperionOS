@@ -167,7 +167,7 @@ pub enum LinkOutcome {
 /// query`]/[`crate::graph::KnowledgeGraph::traverse`]'s own "active edges only" view -- a caller
 /// comparing two dumps sees a deleted edge disappear, exactly as intended, without this crate
 /// needing to represent deletion explicitly.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GraphSnapshot {
     pub nodes: Vec<(NodeId, NodeRecord)>,
     pub edges: Vec<(EdgeId, EdgeRecord)>,

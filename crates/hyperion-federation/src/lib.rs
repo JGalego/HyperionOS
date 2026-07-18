@@ -74,8 +74,9 @@
 //! caller-supplied logical `now`) — ambient, automatic upkeep instead of a caller explicitly
 //! calling `renew_lease` itself. The returned `LeaseHeartbeat` handle joins the real thread on
 //! drop/`stop()`, so a caller can be sure renewal has genuinely halted before acting on that
-//! (e.g. releasing the lease). Ambient anti-entropy (storage convergence) remains deferred, below
-//! — a heartbeat keeps a *lease* alive, not Knowledge Graph state in sync.
+//! (e.g. releasing the lease). Ambient anti-entropy (storage convergence) is closed below, by
+//! [`kg_sync`] — a heartbeat keeps a *lease* alive; [`KgAntiEntropyHeartbeat`] keeps Knowledge
+//! Graph state in sync.
 //!
 //! [`SchedulerOffloadBridge`] (2026-07-18) closes `hyperion-scheduler`'s own named "distributed
 //! offload" gap from this side: that crate's `schedule_epoch` had no live trigger ever reaching
@@ -104,10 +105,24 @@
 //!   [`transport::LedgerPublication`] genuinely travels, `seal_for_peer`-encrypted and signed,
 //!   over a real `TcpStream` between two independent [`FederationHub`] instances, and is only
 //!   applied via the receiving hub's own already-real [`FederationHub::publish_ledger`] once
-//!   authentication and decryption both genuinely succeed. **Ambient anti-entropy remains
-//!   deferred**: storage convergence is [28 — Storage Engine](../28-storage-engine.md)'s job and
-//!   isn't wired in here (no multi-device KG replica exists yet to converge) — this closes only
-//!   the transport, not continuous background re-publication.
+//!   authentication and decryption both genuinely succeed.
+//! - ~~**Ambient anti-entropy (Knowledge Graph replication across devices).**~~ (2026-07-18) —
+//!   this bullet used to say "storage convergence is [28 — Storage Engine](../28-storage-engine.md)'s
+//!   job and isn't wired in here"; `hyperion-storage`'s own crate doc said the reverse ("multi-device
+//!   sync is [21 — Distributed Execution](21-distributed-execution.md)'s concern") — neither crate
+//!   actually owned it. [`kg_sync`] closes it here, deliberately scoped down from docs/28's own
+//!   full Merkle-diff/CRDT design to a real, bounded, whole-snapshot replication: [`merge_snapshot`]
+//!   is the real "apply a remote node/edge into my own local graph" primitive this workspace had
+//!   nowhere (translating remote `NodeId`s to local ones via [`KgTranslation`], since two
+//!   independent graphs mint ids from independent counters); [`serve_kg_snapshots`]/
+//!   [`publish_snapshot_over_socket`] really move a `hyperion_knowledge_graph::GraphSnapshot`
+//!   between two devices over the same real `seal_for_peer`/`open_from_peer`-encrypted `TcpStream`
+//!   pattern `transport` already established; and [`KgAntiEntropyHeartbeat`] is the real ambient
+//!   half — a background thread that keeps re-publishing on a fixed real interval with no caller
+//!   ever triggering a sync by hand, the same real-thread-with-join-on-drop shape
+//!   [`LeaseHeartbeat`] already established. See [`kg_sync`]'s own doc comment for the real,
+//!   honestly-named boundaries this doesn't yet cross (translation table not persisted across a
+//!   restart; last-applied-wins, not true CRDT conflict merge).
 //! - **Cold-cache pre-staging** (docs/21 §Recovery's priority-sync batch
 //!   for a migration target with no local replica) — there is no Context
 //!   Bundle replica model across devices yet.
@@ -119,11 +134,16 @@
 //!   suite does.
 
 mod hub;
+mod kg_sync;
 mod offload_bridge;
 mod transport;
 mod types;
 
 pub use hub::{FederationError, FederationHub, LeaseHeartbeat};
+pub use kg_sync::{
+    merge_snapshot, publish_snapshot_over_socket, serve_kg_snapshots, KgAntiEntropyHeartbeat,
+    KgMergeReport, KgSnapshotServer, KgTranslation,
+};
 pub use offload_bridge::SchedulerOffloadBridge;
 pub use transport::{
     publish_ledger_over_socket, serve_ledger_publications, LedgerPublication,

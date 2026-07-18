@@ -53,11 +53,12 @@
 //!   this crate's own doc previously said didn't exist yet: [`consent::ConsentLedger::import`]
 //!   verifies that signature against a caller-supplied `VerifyingKey` before ever trusting a
 //!   grant this ledger didn't itself mint — the shape a grant relayed from another device over
-//!   `hyperion-federation`'s own real, already-signed `SyncEnvelope` transport needs. This crate
-//!   still has no *automatic* transport wiring into `hyperion-federation` itself (that's a
-//!   separate, larger "real ambient Knowledge Graph replication across devices" feature, not a
-//!   consent-ledger concern) — `import` is the real, callable, independently-tested building
-//!   block that work would use, not the transport-level automation itself.
+//!   `hyperion-federation`'s own real, already-signed `SyncEnvelope` transport needs. Real ambient
+//!   Knowledge Graph replication across devices now exists (`hyperion_federation::kg_sync`,
+//!   2026-07-18), but this crate still has no *automatic* transport wiring into it (a
+//!   `ConsentGrant` isn't a Knowledge Graph node/edge `kg_sync` replicates) — `import` is the
+//!   real, callable, independently-tested building block a future consent-specific transport
+//!   would use, not the transport-level automation itself.
 //! - **Real encryption at rest, key wrapping, and Shamir secret-sharing
 //!   recovery.** [`types::ResidencyTag`]'s `encryption_key_ref` remains a
 //!   gap: real encryption of arbitrary Knowledge Graph node metadata
@@ -69,11 +70,12 @@
 //!   scoped them: docs/28's fuller DEK/KEK/master-key hierarchy, deferred
 //!   there as "a real, separate, larger feature," not required by any
 //!   milestone's own exit criteria.
-//! - **`SyncEnvelope`/multi-device CRDT gossip and erasure propagation
-//!   across devices.** `ErasureReceipt` here has no
-//!   `propagated_to_devices` field — this crate has no multi-device sync
-//!   model to propagate across; `hyperion-federation` is where multiple
-//!   devices exist in this workspace, and it isn't wired to this crate.
+//! - **Erasure propagation across devices.** `ErasureReceipt` here has no
+//!   `propagated_to_devices` field — a real ambient Knowledge Graph replication mechanism now
+//!   exists (`hyperion_federation::kg_sync`, 2026-07-18), but this crate doesn't depend on
+//!   `hyperion-federation` and an erasure (a tombstone/physical-delete) is a different operation
+//!   from `kg_sync`'s own real merge (`put_node`/`link` upserts) — propagating a *deletion* across
+//!   devices through that same mechanism remains a real, separate gap this crate doesn't close.
 //! - **`CryptoShred`'s wire-indistinguishability guarantee.** ~~`hyperion-knowledge-graph` has no
 //!   node-delete operation (only edges tombstone), so `erasure::erase` overwrote a node's
 //!   metadata with a tombstone-shaped placeholder rather than physically removing it~~ — now
