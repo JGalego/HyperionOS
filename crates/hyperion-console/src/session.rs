@@ -185,6 +185,11 @@ pub struct ConsoleSession {
     /// caller constructed `AgentRuntime` with `plugins: None` -- is actually reachable from this
     /// session. See the `/install-binary` meta-command.
     plugins: Arc<PluginRegistry>,
+    /// This session's own real, persistent data directory -- retained past construction only so
+    /// [`Self::switch_backend`] can persist the user's real choice to `model_selection.json`
+    /// (see [`Self::save_model_selection`]) each time it changes, without threading the path
+    /// through separately.
+    data_dir: PathBuf,
 }
 
 /// The real prompt and capability this session is waiting to re-invoke once a live
@@ -256,6 +261,70 @@ impl BackendKind {
         match self {
             BackendKind::Cloud { provider, .. } => provider.capability_ref(),
             _ => "assistant.respond",
+        }
+    }
+
+    /// This session's own real, persisted `model_selection.json` shape -- see
+    /// [`ConsoleSession::save_model_selection`]/[`ConsoleSession::load_model_selection`]. Never
+    /// carries a real secret (a `Cloud` variant only ever names the provider/model, never an API
+    /// key -- those stay encrypted-at-rest in [`ConsoleSession::secret_store`], untouched by this
+    /// file), so this JSON is always safe to read in plain text.
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            BackendKind::Candle => serde_json::json!({"kind": "candle"}),
+            BackendKind::Mock => serde_json::json!({"kind": "mock"}),
+            BackendKind::Engine {
+                engine,
+                base_url,
+                model,
+            } => serde_json::json!({
+                "kind": "engine",
+                "engine": engine.label(),
+                "base_url": base_url,
+                "model": model,
+            }),
+            BackendKind::Cloud { provider, model } => serde_json::json!({
+                "kind": "cloud",
+                "provider": provider.label(),
+                "model": model,
+            }),
+        }
+    }
+
+    /// The inverse of [`Self::to_json`] -- `None` for anything malformed or unrecognized (a
+    /// hand-edited or stale `model_selection.json`), never a panic; [`ConsoleSession::open`]
+    /// treats that the same as no persisted selection at all.
+    fn from_json(value: &serde_json::Value) -> Option<Self> {
+        match value.get("kind")?.as_str()? {
+            "candle" => Some(BackendKind::Candle),
+            "mock" => Some(BackendKind::Mock),
+            "engine" => {
+                let engine = match value.get("engine")?.as_str()? {
+                    "ollama" => EngineKind::Ollama,
+                    "vllm" => EngineKind::VLlm,
+                    "litellm" => EngineKind::LiteLlm,
+                    _ => EngineKind::Custom,
+                };
+                Some(BackendKind::Engine {
+                    engine,
+                    base_url: value.get("base_url")?.as_str()?.to_string(),
+                    model: value.get("model")?.as_str()?.to_string(),
+                })
+            }
+            "cloud" => {
+                let provider = match value.get("provider")?.as_str()? {
+                    "openai" => CloudProvider::OpenAi,
+                    "anthropic" => CloudProvider::Anthropic,
+                    "gemini" => CloudProvider::Gemini,
+                    "groq" => CloudProvider::Groq,
+                    _ => return None,
+                };
+                Some(BackendKind::Cloud {
+                    provider,
+                    model: value.get("model")?.as_str()?.to_string(),
+                })
+            }
+            _ => None,
         }
     }
 }
@@ -457,7 +526,7 @@ impl ConsoleSession {
             now(),
         );
 
-        Ok(ConsoleSession {
+        let mut session = ConsoleSession {
             monitor,
             token,
             context,
@@ -479,7 +548,31 @@ impl ConsoleSession {
             memory,
             last_utterance: None,
             plugins,
-        })
+            data_dir: data_dir.to_path_buf(),
+        };
+
+        // This crate's own previously-unnamed "no model selection persistence" gap: a real,
+        // previously-persisted `/backend` choice (see `Self::save_model_selection`) takes over
+        // from `Self::build_ai_runtime`'s own candle-or-mock default via the exact same
+        // `switch_backend` machinery `/backend` itself uses -- including its own graceful
+        // fallback if the persisted backend can't actually be reconnected right now (a local
+        // engine no longer running, a `candle` build that no longer has network access to a
+        // not-yet-cached model). A no-op when the persisted choice already matches what just
+        // booted, or when there is no persisted file yet (a fresh install).
+        if let Some(persisted) = Self::load_model_selection(&session.data_dir) {
+            if persisted != session.current_backend {
+                let message = session.switch_backend(persisted);
+                if message.starts_with("I couldn't switch") {
+                    eprintln!(
+                        "warning: couldn't restore the persisted model selection ({message}); \
+                         staying on the {} backend for this session",
+                        session.current_backend.label()
+                    );
+                }
+            }
+        }
+
+        Ok(session)
     }
 
     /// This session's own real, public Ed25519 verifying key -- what a peer's real A2A/MCP
@@ -793,7 +886,40 @@ impl ConsoleSession {
         self.ai_runtime.set_backend(backend);
         let label = kind.label();
         self.current_backend = kind;
+        self.save_model_selection();
         format!("Switched to the {label} backend.")
+    }
+
+    /// The real file [`Self::switch_backend`]/[`Self::load_model_selection`] read and write --
+    /// this crate's own previously-unnamed "no model selection persistence" gap: an explicit
+    /// `/backend`/`use backend` switch used to only ever last for the current process's own
+    /// lifetime, silently reverting to [`Self::build_ai_runtime`]'s own candle-or-mock default on
+    /// every restart, with no way for a person's real, deliberate choice to survive a reboot.
+    fn model_selection_path(data_dir: &Path) -> PathBuf {
+        data_dir.join("model_selection.json")
+    }
+
+    /// Persists [`Self::current_backend`] to [`Self::model_selection_path`] -- best-effort (a
+    /// real disk-full/permissions failure here shouldn't fail the switch that already succeeded
+    /// in memory), matching this crate's own established "ignore a non-critical persistence
+    /// failure rather than crash a live session over it" convention (see [`Self::open`]'s own
+    /// `create_dir_all` call for the same shape).
+    fn save_model_selection(&self) {
+        let json = self.current_backend.to_json();
+        if let Ok(text) = serde_json::to_string_pretty(&json) {
+            let _ = std::fs::write(Self::model_selection_path(&self.data_dir), text);
+        }
+    }
+
+    /// Reads back a real, previously-persisted selection, if [`Self::model_selection_path`]
+    /// exists and is well-formed -- `None` for a fresh install (no file yet), a hand-edited or
+    /// stale file [`BackendKind::from_json`] doesn't recognize, or any I/O error, all treated
+    /// identically: [`Self::open`] just keeps whatever [`Self::build_ai_runtime`]'s own default
+    /// already established, exactly as if this feature didn't exist.
+    fn load_model_selection(data_dir: &Path) -> Option<BackendKind> {
+        let text = std::fs::read_to_string(Self::model_selection_path(data_dir)).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+        BackendKind::from_json(&value)
     }
 
     /// Recognizes the console's small set of meta-commands -- session/runtime controls, not
