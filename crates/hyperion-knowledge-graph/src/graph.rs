@@ -10,8 +10,8 @@ use hyperion_storage::{StorageEngine, VersionId};
 use crate::index::GraphIndex;
 use crate::types::{
     EdgeConstraint, EdgeId, EdgeOrigin, EdgeRecord, ExplainRef, GraphError, GraphQuery,
-    GraphSnapshot, LinkOutcome, NodeId, NodeRecord, ObjectType, ProvenanceChain, QueryHit, Record,
-    Subgraph,
+    GraphSnapshot, LinkOutcome, NodeId, NodeRecord, ObjectType, ProvenanceChain, QueryHit,
+    RankingRationale, Record, Subgraph,
 };
 
 fn now() -> u64 {
@@ -571,34 +571,13 @@ impl KnowledgeGraph {
             .nodes
             .iter()
             .filter(|(_, n)| !n.tombstone && n.owner == caller_boundary)
-            .filter(|(_, n)| {
-                query
-                    .type_filter
-                    .as_ref()
-                    .is_none_or(|types| types.contains(&n.object_type))
-            })
-            .filter(|(_, n)| {
-                query
-                    .time_range
-                    .is_none_or(|(lo, hi)| n.created_at >= lo && n.created_at <= hi)
-            })
-            .filter(|(id, _)| {
-                query
-                    .edge_constraint
-                    .as_ref()
-                    .is_none_or(|c| Self::satisfies_edge_constraint(&index, **id, c))
-            })
-            .map(|(id, n)| {
-                let score = match (&query.embedding_query, &n.embedding) {
-                    (Some(q), Some(e)) => cosine_similarity(q, e),
-                    (Some(_), None) => 0.0,
-                    (None, _) => 1.0,
-                };
-                QueryHit {
+            .filter_map(|(id, n)| {
+                let rationale = Self::rank_against(&index, *id, n, query);
+                rationale.would_be_included.then(|| QueryHit {
                     node_id: *id,
                     node: n.clone(),
-                    score,
-                }
+                    score: rationale.similarity,
+                })
             })
             .collect();
 
@@ -611,6 +590,67 @@ impl KnowledgeGraph {
             hits.truncate(query.limit);
         }
         Ok(hits)
+    }
+
+    /// docs/09 §7's own "graph.explain can show the cosine similarity... and why it fell inside
+    /// the fuzzy six-month window" — this crate's own previously-unnamed "no way to explain a
+    /// ranking after the fact" gap, closed by reusing [`Self::rank_against`] (the exact same
+    /// scoring [`Self::query`] itself runs per candidate, then discards once its top-`limit`
+    /// slice is returned) for one node against one query, standalone. Unlike `query`, this never
+    /// filters or truncates: a caller asking specifically about one node gets the real answer
+    /// either way — "why did this rank where it did" for a hit that came back, or "why didn't
+    /// this show up in my results" for a candidate that didn't, rather than `query`'s own silence
+    /// about anything it excluded.
+    pub fn explain_ranking(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        node_id: NodeId,
+        query: &GraphQuery,
+    ) -> Result<RankingRationale, GraphError> {
+        self.require(monitor, token, RightsMask::READ)?;
+        let caller_boundary = token.origin().0;
+        let index = self.index.lock().unwrap();
+        let node = index
+            .nodes
+            .get(&node_id)
+            .filter(|n| !n.tombstone && n.owner == caller_boundary)
+            .ok_or(GraphError::NotFound)?;
+        Ok(Self::rank_against(&index, node_id, node, query))
+    }
+
+    fn rank_against(
+        index: &GraphIndex,
+        node_id: NodeId,
+        node: &NodeRecord,
+        query: &GraphQuery,
+    ) -> RankingRationale {
+        let type_filter_matched = query
+            .type_filter
+            .as_ref()
+            .map(|types| types.contains(&node.object_type));
+        let within_time_range = query
+            .time_range
+            .map(|(lo, hi)| node.created_at >= lo && node.created_at <= hi);
+        let edge_constraint_satisfied = query
+            .edge_constraint
+            .as_ref()
+            .map(|c| Self::satisfies_edge_constraint(index, node_id, c));
+        let similarity = match (&query.embedding_query, &node.embedding) {
+            (Some(q), Some(e)) => cosine_similarity(q, e),
+            (Some(_), None) => 0.0,
+            (None, _) => 1.0,
+        };
+        let would_be_included = type_filter_matched.unwrap_or(true)
+            && within_time_range.unwrap_or(true)
+            && edge_constraint_satisfied.unwrap_or(true);
+        RankingRationale {
+            similarity,
+            type_filter_matched,
+            within_time_range,
+            edge_constraint_satisfied,
+            would_be_included,
+        }
     }
 
     /// `graph.dump` -- every live node and edge the caller's own Trust Boundary can see, as one

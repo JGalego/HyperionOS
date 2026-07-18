@@ -46,6 +46,16 @@
 //! [`display::render_capability_result`] a real capability dispatch's own JSON output is rendered
 //! through — one definition, not two that could quietly drift apart.
 //!
+//! [`KnowledgeGraph::explain_ranking`] (2026-07-18) closes docs/09 §7's own worked example — "for
+//! each returned object, `graph.explain` can show the cosine similarity... and why it fell inside
+//! the fuzzy six-month window" — which [`KnowledgeGraph::explain`] itself has no query context to
+//! answer (it takes a bare [`types::ExplainRef`], not a [`types::GraphQuery`]). [`KnowledgeGraph::
+//! query`]'s own per-candidate scoring (previously computed once, then discarded once its
+//! top-`limit` slice was returned) is now shared, real logic
+//! ([`types::RankingRationale`]) callable standalone for one node against one query, after the
+//! fact — answering both "why did this rank where it did" for a hit that came back, and "why
+//! didn't this show up" for a candidate that didn't.
+//!
 //! Explicitly deferred, and why, matching the scoping this workspace already
 //! uses (see `hyperion-storage`'s crate doc for the same pattern):
 //!
@@ -146,5 +156,6 @@ pub use providers::{capabilities_for_topic, capability_for_topic};
 pub use hyperion_storage::VersionId;
 pub use types::{
     EdgeConstraint, EdgeId, EdgeOrigin, EdgeRecord, ExplainRef, GraphError, GraphQuery,
-    GraphSnapshot, LinkOutcome, NodeId, NodeRecord, ProvenanceChain, QueryHit, Subgraph,
+    GraphSnapshot, LinkOutcome, NodeId, NodeRecord, ProvenanceChain, QueryHit, RankingRationale,
+    Subgraph,
 };

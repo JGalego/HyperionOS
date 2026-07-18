@@ -128,6 +128,28 @@ pub struct QueryHit {
     pub score: f32,
 }
 
+/// docs/09 §7's own "for each returned object, `graph.explain` can show the cosine similarity...
+/// and why it fell inside the fuzzy six-month window" — the same real per-candidate scoring
+/// [`crate::graph::KnowledgeGraph::query`] already computes internally to rank and filter
+/// candidates, now explainable standalone for one node against one query rather than discarded
+/// once `query`'s own top-`limit` slice is returned. Every `Option<bool>` mirrors one of
+/// [`GraphQuery`]'s own optional filters: `None` means that filter was absent from the query (so
+/// it never excluded anything), `Some(matched)` means it was present and this is genuinely
+/// whether this node satisfied it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RankingRationale {
+    /// Cosine similarity to the query's own embedding — the same `1.0`-when-absent convention
+    /// [`QueryHit::score`] already uses.
+    pub similarity: f32,
+    pub type_filter_matched: Option<bool>,
+    pub within_time_range: Option<bool>,
+    pub edge_constraint_satisfied: Option<bool>,
+    /// `true` only when every filter the query actually carried was satisfied — exactly
+    /// [`crate::graph::KnowledgeGraph::query`]'s own inclusion test, so a caller can answer "why
+    /// didn't this show up in my results" as well as "why did this one rank where it did."
+    pub would_be_included: bool,
+}
+
 /// The result of [`crate::graph::KnowledgeGraph::traverse`] — docs/09 §6's
 /// `Subgraph`. Each node carries its hop distance from the traversal's
 /// start node (`0` for the start itself) — [06 — Context
