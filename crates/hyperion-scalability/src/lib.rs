@@ -64,10 +64,22 @@
 //!   validate. `CheaperLocalTier`/`ConsentedCloudUpgrade` aren't pre-registered capabilities the
 //!   same way, so both the check and the returned value are `None` for those, same as
 //!   `registry: None`.
-//! - **KG partitioning / `TenantPartition` / cross-tenant edges.**
-//!   [`types::TenancyMode::MultiTenantOrg`] is declared as a hardware-
-//!   tier-unlocked mode; no partitioning logic exists here — `hyperion-
-//!   knowledge-graph` has no shard concept to partition.
+//! - ~~**KG partitioning / `TenantPartition` / cross-tenant edges.**~~ (2026-07-18) — now real:
+//!   `hyperion_knowledge_graph::TenantId`/`NodeRecord::tenant_id` are docs/37 §Data Structures'
+//!   `TenantPartition.tenant_id` (see that crate's own doc comment for the full node-schema
+//!   closure), and that crate's own `KnowledgeGraph::link` refuses to create or update an edge
+//!   between two different tenants' nodes without the caller's token also carrying
+//!   `RightsMask::GRANT` — docs/37 §Algorithms 3's "no default-open cross-partition read," a
+//!   single extra comparison added to an existing check, never a second security model.
+//!   [`partitioning::kg_partition_resolve`]/[`partitioning::tenant_grant_cross_partition`] are
+//!   this crate's own real docs/37 §Interfaces functions: a real, deterministic shard-key
+//!   resolver (honest about this hosted simulator's one real physical shard — see that module's
+//!   own doc comment), and the real capability grant a caller mints to cross a partition boundary
+//!   on purpose, via the same attenuation-only `cap_derive` every other grant in this workspace
+//!   already uses. [`types::TenancyMode::MultiTenantOrg`]'s own separate "raises the minimum
+//!   Trust Boundary depth for Agents" consequence (docs/37 §3) is not this bullet's scope — it's
+//!   `hyperion-plugin-framework::PluginRegistry::install`'s own `available_depth` parameter a
+//!   caller already supplies, not a KG-partitioning concern.
 //! - **`FederationMembership`/`federation_join`/`federation_revoke`.**
 //!   `hyperion-federation` already owns real Trust-Boundary-per-device
 //!   membership; this crate does not duplicate it.
@@ -79,11 +91,13 @@
 mod degrade;
 mod explain;
 mod fit;
+mod partitioning;
 mod types;
 
 pub use degrade::degrade_capability;
 pub use explain::apply_and_explain;
 pub use fit::{scheduler_backed_resolver, scheduler_has_headroom_for};
+pub use partitioning::{kg_partition_resolve, tenant_grant_cross_partition, ShardId};
 pub use types::{
     CapabilityRef, CapacityDescriptor, DegradationOutcome, DegradationPlan, DegradationPolicy,
     HardwareProfile, HardwareTier, ModelTier, ResourceConstraint, ScalabilityError, Substitution,

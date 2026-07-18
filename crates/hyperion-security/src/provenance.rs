@@ -100,6 +100,7 @@ mod tests {
             device_origin: 0,
             origin,
             corroboration_count,
+            tenant_id: Default::default(),
             created_at,
             updated_at: created_at,
             tombstone: false,

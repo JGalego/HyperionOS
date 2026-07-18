@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 hyperion-capability = { workspace = true }
+hyperion-knowledge-graph = { workspace = true }
 hyperion-observability = { workspace = true }
 hyperion-plugin-framework = { workspace = true }
 hyperion-privacy = { workspace = true }
@@ -15,4 +16,5 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 hyperion-crypto = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }

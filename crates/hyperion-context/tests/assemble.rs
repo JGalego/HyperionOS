@@ -274,6 +274,7 @@ fn small_high_relevance_entries_are_included_full_not_referenced() {
             json!({"title": "small ticket"}),
             0,
             NodeOrigin::UserAuthored,
+            hyperion_knowledge_graph::TenantId::default(),
         )
         .unwrap();
 
@@ -309,6 +310,7 @@ fn an_untrusted_origin_object_ranks_below_an_otherwise_equal_user_authored_one()
             json!({"title": "trusted"}),
             0,
             NodeOrigin::UserAuthored,
+            hyperion_knowledge_graph::TenantId::default(),
         )
         .unwrap();
     let untrusted = graph
@@ -321,6 +323,7 @@ fn an_untrusted_origin_object_ranks_below_an_otherwise_equal_user_authored_one()
             json!({"title": "untrusted"}),
             0,
             NodeOrigin::IngestedExternal,
+            hyperion_knowledge_graph::TenantId::default(),
         )
         .unwrap();
 
@@ -384,6 +387,7 @@ fn corroborating_an_ingested_object_raises_its_real_rank() {
             json!({"title": "uncorroborated"}),
             0,
             NodeOrigin::IngestedExternal,
+            hyperion_knowledge_graph::TenantId::default(),
         )
         .unwrap();
     let corroborated = graph
@@ -396,6 +400,7 @@ fn corroborating_an_ingested_object_raises_its_real_rank() {
             json!({"title": "corroborated"}),
             0,
             NodeOrigin::IngestedExternal,
+            hyperion_knowledge_graph::TenantId::default(),
         )
         .unwrap();
     for _ in 0..5 {

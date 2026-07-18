@@ -51,6 +51,7 @@ fn put_node_with_provenance_records_a_real_origin() {
             json!({}),
             0,
             NodeOrigin::UserAuthored,
+            hyperion_knowledge_graph::TenantId::default(),
         )
         .unwrap();
     let node = graph.get(&monitor, &token, id).unwrap();
@@ -72,6 +73,7 @@ fn updating_a_node_overwrites_origin_to_reflect_the_current_version() {
             json!({"v": 1}),
             0,
             NodeOrigin::IngestedExternal,
+            hyperion_knowledge_graph::TenantId::default(),
         )
         .unwrap();
     graph
@@ -84,6 +86,7 @@ fn updating_a_node_overwrites_origin_to_reflect_the_current_version() {
             json!({"v": 2}),
             0,
             NodeOrigin::UserAuthored,
+            hyperion_knowledge_graph::TenantId::default(),
         )
         .unwrap();
 

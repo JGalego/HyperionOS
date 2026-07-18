@@ -152,9 +152,17 @@
 //!   `version_vector` map, which only matters once more than one device
 //!   exists ([21 — Distributed Execution](../21-distributed-execution.md),
 //!   Phase 7).
-//! - **Sharding/partitioning** (docs/29 §Sharding and Partitioning) is a
-//!   multi-device/multi-tenant concern; a hosted simulator has exactly one
-//!   shard.
+//! - ~~**Sharding/partitioning**~~ (docs/29 §Sharding and Partitioning) — `hyperion-scalability`'s
+//!   own previously-named "KG partitioning / `TenantPartition` / cross-tenant edges... no
+//!   partitioning logic exists here" gap, closed for the real logical-partitioning half
+//!   (2026-07-18): [`types::TenantId`] is docs/37's own `TenantPartition.tenant_id`, and
+//!   [`graph::KnowledgeGraph::link`]'s own real cross-tenant gate is docs/37 §Algorithms 3's "no
+//!   default-open cross-partition read" — linking two nodes recorded under different tenants
+//!   requires the caller's token to also carry `RightsMask::GRANT`. This remains a hosted
+//!   simulator with exactly one *physical* shard/WAL — the real, new thing is the *logical*
+//!   partition key and its real cross-tenant enforcement, not physical multi-shard routing,
+//!   which `hyperion-scalability::kg_partition_resolve` computes a real, deterministic
+//!   `ShardId` for without there being more than one real store to route to yet.
 
 mod decay;
 mod display;
@@ -176,5 +184,5 @@ pub use hyperion_storage::VersionId;
 pub use types::{
     EdgeConstraint, EdgeId, EdgeOrigin, EdgeRecord, ExplainRef, GraphError, GraphQuery,
     GraphSnapshot, ImportReport, LinkOutcome, NodeId, NodeOrigin, NodeRecord, ProvenanceChain,
-    QueryHit, RankingRationale, Subgraph,
+    QueryHit, RankingRationale, Subgraph, TenantId,
 };

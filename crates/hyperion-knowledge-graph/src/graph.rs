@@ -11,7 +11,7 @@ use crate::index::GraphIndex;
 use crate::types::{
     EdgeConstraint, EdgeId, EdgeOrigin, EdgeRecord, ExplainRef, GraphError, GraphQuery,
     GraphSnapshot, ImportReport, LinkOutcome, NodeId, NodeOrigin, NodeRecord, ObjectType,
-    ProvenanceChain, QueryHit, RankingRationale, Record, Subgraph,
+    ProvenanceChain, QueryHit, RankingRationale, Record, Subgraph, TenantId,
 };
 
 fn now() -> u64 {
@@ -162,6 +162,17 @@ impl KnowledgeGraph {
     /// names: an existing edge can only ever be updated, or a tombstoned one resurrected, by the
     /// same Trust Boundary that owns it — `GraphError::NotFound` otherwise, never revealing the
     /// edge's existence to a foreign caller.
+    ///
+    /// Real cross-tenant gate (docs/37 §Algorithms 3, this crate's own previously-named "KG
+    /// partitioning / `TenantPartition` / cross-tenant edges" gap): when `subject`/`target` are
+    /// recorded under different [`TenantId`]s, creating or updating this edge additionally
+    /// requires the caller's token to carry `RightsMask::GRANT` -- "no default-open
+    /// cross-partition read." A node this crate can't currently resolve (a dangling reference,
+    /// unrelated to this check) is treated as [`TenantId::default`], so this never blocks a link
+    /// for reasons outside its own real scope. Every existing caller (a single-tenant deployment,
+    /// where both sides are always `TenantId(0)`) is unaffected -- the gate only ever trips once
+    /// a caller has actually opted into recording distinct, real `tenant_id`s via
+    /// [`Self::put_node_with_tenant`]/[`Self::put_node_with_provenance`].
     #[allow(clippy::too_many_arguments)]
     pub fn link(
         &self,
@@ -179,6 +190,28 @@ impl KnowledgeGraph {
         self.require(monitor, token, RightsMask::WRITE)?;
 
         let mut index = self.index.lock().unwrap();
+
+        let subject_tenant = index
+            .nodes
+            .get(&subject)
+            .map(|n| n.tenant_id)
+            .unwrap_or_default();
+        let target_tenant = index
+            .nodes
+            .get(&target)
+            .map(|n| n.tenant_id)
+            .unwrap_or_default();
+        if subject_tenant != target_tenant
+            && monitor
+                .check_rights_ok_result(token, RightsMask::GRANT)
+                .is_err()
+        {
+            return Err(GraphError::CrossTenantGrantRequired(
+                subject_tenant,
+                target_tenant,
+            ));
+        }
+
         let key = (subject, predicate.to_string(), target);
         let existing = index
             .edge_identity
@@ -423,6 +456,35 @@ impl KnowledgeGraph {
             metadata,
             device_origin,
             NodeOrigin::default(),
+            TenantId::default(),
+        )
+    }
+
+    /// As [`Self::put_node`], but recording a real [`TenantId`] -- see that type's own doc
+    /// comment for the full real "KG partitioning" closure. A caller that only needs tenant
+    /// tagging (not `device_origin`/[`NodeOrigin`] too) uses this rather than
+    /// [`Self::put_node_with_provenance`]'s fuller parameter list.
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_node_with_tenant(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        node_id: Option<NodeId>,
+        object_type: impl Into<ObjectType>,
+        embedding: Option<Vec<f32>>,
+        metadata: serde_json::Value,
+        tenant_id: TenantId,
+    ) -> Result<NodeId, GraphError> {
+        self.put_node_with_provenance(
+            monitor,
+            token,
+            node_id,
+            object_type,
+            embedding,
+            metadata,
+            0,
+            NodeOrigin::default(),
+            tenant_id,
         )
     }
 
@@ -430,12 +492,12 @@ impl KnowledgeGraph {
     /// [`NodeOrigin`] — docs/17 §6's `ProvenanceRecord.origin_type`, this crate's own
     /// previously-named "`ProvenanceRecord`/trust-scoring for Knowledge Graph poisoning (T4)"
     /// gap, closed for the node-schema half (`hyperion-security`'s own `kg_trust_score` is the
-    /// real consumer). Like `device_origin`, `origin` always overwrites to reflect *this* write —
-    /// a node's most recently written version is what a trust score should describe, not a fixed
-    /// value frozen at first creation. `corroboration_count` is the one field here that is *not*
-    /// reset by a plain content update: it only ever changes via [`Self::corroborate_node`],
-    /// exactly the "independently reconfirmed" event docs/17 §6 names -- overwriting a node's own
-    /// metadata is not, by itself, a re-confirmation of it by anyone else.
+    /// real consumer) -- and a real [`TenantId`] (docs/37's own "KG partitioning" gap, see that
+    /// type's own doc comment). Like `device_origin`/`origin`, `tenant_id` always overwrites to
+    /// reflect *this* write. `corroboration_count` is the one field here that is *not* reset by
+    /// a plain content update: it only ever changes via [`Self::corroborate_node`], exactly the
+    /// "independently reconfirmed" event docs/17 §6 names -- overwriting a node's own metadata is
+    /// not, by itself, a re-confirmation of it by anyone else.
     #[allow(clippy::too_many_arguments)]
     pub fn put_node_with_provenance(
         &self,
@@ -447,6 +509,7 @@ impl KnowledgeGraph {
         metadata: serde_json::Value,
         device_origin: u64,
         origin: NodeOrigin,
+        tenant_id: TenantId,
     ) -> Result<NodeId, GraphError> {
         self.require(monitor, token, RightsMask::WRITE)?;
         let caller_boundary = token.origin().0;
@@ -482,6 +545,7 @@ impl KnowledgeGraph {
             device_origin,
             origin,
             corroboration_count,
+            tenant_id,
             created_at,
             updated_at: now(),
             tombstone,

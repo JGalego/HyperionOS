@@ -33,6 +33,21 @@ pub enum NodeOrigin {
     SyncedRemote,
 }
 
+/// docs/37 §Data Structures' `TenantPartition.tenant_id` -- this crate's own previously-named "KG
+/// partitioning / `TenantPartition` / cross-tenant edges... no partitioning logic exists here"
+/// gap, closed for the node-schema half. docs/29 §Sharding's own "partition the Knowledge Graph
+/// first by `tenant_id` (an organization or household), then by user/workspace inside that
+/// tenant": a real, coarser axis than [`NodeRecord::owner`] (one user/device's own Trust
+/// Boundary *within* a tenant), grouping several owners under one organization -- the reverse
+/// direction from [`NodeRecord::device_origin`] (a finer axis *below* owner). `TenantId(0)` is
+/// this crate's own honest "no tenant recorded / single-tenant deployment" default, the same
+/// `0`-means-unset convention `device_origin` already established -- every existing caller (a
+/// single-tenant deployment, which is every caller in this workspace today) keeps working
+/// unchanged, since `0 == 0` never trips [`crate::graph::KnowledgeGraph::link`]'s new
+/// cross-tenant gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TenantId(pub u64);
+
 /// docs/09 §4's `Node`, narrowed per this crate's top-level deferred-scope
 /// list (no `content_ref`/blob, no `reasoning_provenance` chain yet — an
 /// edge's own `provenance` field plus `owner`/`device_origin` cover this
@@ -77,6 +92,10 @@ pub struct NodeRecord {
     /// closed from the consuming side.
     #[serde(default)]
     pub corroboration_count: u32,
+    /// docs/37 §Data Structures' `TenantPartition.tenant_id` -- see [`TenantId`]'s own doc
+    /// comment for the full real closure and why `0` is an honest, backward-compatible default.
+    #[serde(default)]
+    pub tenant_id: TenantId,
     pub created_at: u64,
     pub updated_at: u64,
     /// This crate's own previously-named "no node-delete operation (only edges tombstone)" gap,
@@ -303,4 +322,13 @@ pub enum GraphError {
     /// silently imports a partial graph from malformed input.
     #[error("malformed import data: {0}")]
     Malformed(String),
+    /// docs/37 §Algorithms 3's "no default-open cross-partition read": [`crate::graph::
+    /// KnowledgeGraph::link`] refuses to create or update an edge between two nodes recorded
+    /// under different [`TenantId`]s unless the caller's token also carries
+    /// `hyperion_capability::RightsMask::GRANT` -- `hyperion_scalability::
+    /// tenant_grant_cross_partition` is the real, production way to mint one.
+    #[error(
+        "linking across tenant partitions {0:?} <-> {1:?} requires an explicit cross-tenant grant"
+    )]
+    CrossTenantGrantRequired(TenantId, TenantId),
 }

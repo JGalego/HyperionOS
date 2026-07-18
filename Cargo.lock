@@ -3263,10 +3263,12 @@ version = "0.3.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
+ "hyperion-knowledge-graph",
  "hyperion-observability",
  "hyperion-plugin-framework",
  "hyperion-privacy",
  "hyperion-scheduler",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
 ]

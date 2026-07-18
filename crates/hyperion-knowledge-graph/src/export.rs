@@ -113,6 +113,7 @@ mod tests {
             device_origin: 42,
             origin: crate::types::NodeOrigin::default(),
             corroboration_count: 0,
+            tenant_id: crate::types::TenantId::default(),
             created_at: 100,
             updated_at: 100,
             tombstone: false,
