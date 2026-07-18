@@ -39,6 +39,13 @@
 //! [`crate::model_catalog::ModelCatalog::built_in`] before ever loading a downloaded file's real
 //! bytes -- this module's own previously-unnamed "no real integrity check on a downloaded model"
 //! gap. See [`verify_known_download`].
+//!
+//! [`CandleBackend::load_selection`] (2026-07-18) closes `hyperion-console`'s own previously-
+//! named "no way to pick a model via `/backend candle <model>`" gap: one real entry point
+//! dispatching a caller-typed string to either a real catalog entry
+//! ([`CandleBackend::load_from_catalog`]) or a real, arbitrary Hugging Face Hub `owner/name/filename`
+//! triple ([`CandleBackend::load_from_hf_pair`]), by real, unambiguous shape (fewer than two `/`s
+//! vs. at least two) -- never a silent guess when the shape doesn't disambiguate cleanly.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -390,6 +397,80 @@ impl CandleBackend {
             "model.safetensors",
             Config::tiny_15m(),
         )
+    }
+
+    /// Loads the real, named [`crate::model_catalog::ModelCatalog::built_in`] entry `name` --
+    /// dispatching to whichever of [`Self::load_from_model_id`]/[`Self::load_gguf`]/
+    /// [`Self::load_safetensors`] matches that entry's own real [`crate::model_catalog::ModelFormat`],
+    /// so a caller (e.g. `hyperion-console`'s own `/backend candle <model>`) never needs to know
+    /// which loader a given catalog name requires. The one real safetensors entry this catalog
+    /// currently ships (`"stories15m-safetensors"`) is always the same real TinyStories/llama2.c
+    /// architecture ([`Config::tiny_15m`]) -- this is *not* a general "guess any safetensors
+    /// architecture" mechanism, see [`Self::load_from_hf_pair`]'s own doc comment for why that
+    /// gap is named rather than silently guessed at for an arbitrary, non-catalog repo.
+    pub fn load_from_catalog(name: &str) -> Result<Self, CandleBackendError> {
+        let catalog = crate::model_catalog::ModelCatalog::built_in();
+        let entry = catalog.find(name).ok_or_else(|| {
+            CandleBackendError::Load(anyhow::anyhow!(
+                "no known catalog entry named {name:?} -- try one of: {}",
+                catalog
+                    .entries
+                    .iter()
+                    .map(|e| e.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })?;
+        match entry.format {
+            crate::model_catalog::ModelFormat::Llama2CBinary => {
+                Self::load_from_model_id(&entry.repo, &entry.filename)
+            }
+            crate::model_catalog::ModelFormat::Gguf => {
+                Self::load_gguf(&entry.repo, &entry.filename)
+            }
+            crate::model_catalog::ModelFormat::Safetensors => {
+                Self::load_safetensors(&entry.repo, &entry.filename, Config::tiny_15m())
+            }
+        }
+    }
+
+    /// Loads a real, arbitrary `repo`/`filename` pair from the Hugging Face Hub that isn't
+    /// necessarily one of [`crate::model_catalog::ModelCatalog::built_in`]'s own known entries --
+    /// the real format dispatched by `filename`'s own extension (`.gguf` -> [`Self::load_gguf`],
+    /// anything else -> [`Self::load_from_model_id`]'s bespoke binary layout, which reads its own
+    /// real architecture header directly from the file). A bare `.safetensors` file outside the
+    /// known catalog is a real, honest `Err` rather than a silent guess: unlike a GGUF file or
+    /// `stories15M.bin`'s own bespoke header, a safetensors file carries no architecture metadata
+    /// of its own, and this function has no `config.json` (or any other real signal) to derive
+    /// one from for a repo it doesn't already know.
+    pub fn load_from_hf_pair(repo: &str, filename: &str) -> Result<Self, CandleBackendError> {
+        if filename.ends_with(".gguf") {
+            Self::load_gguf(repo, filename)
+        } else if filename.ends_with(".safetensors") {
+            Err(CandleBackendError::Load(anyhow::anyhow!(
+                "a safetensors checkpoint outside this build's own known catalog has no real \
+                 architecture metadata of its own to load it with -- try a catalog entry \
+                 instead (e.g. \"stories15m-safetensors\"), or a real .gguf/.bin checkpoint, \
+                 both of which carry their own real architecture metadata"
+            )))
+        } else {
+            Self::load_from_model_id(repo, filename)
+        }
+    }
+
+    /// The one real entry point `hyperion_console`'s own `/backend candle <model>` meta-command
+    /// uses: `selection` is either a real [`crate::model_catalog::ModelCatalog::built_in`] entry
+    /// name (no `/`, or fewer than two -- see [`Self::load_from_catalog`]), or a real
+    /// `"owner/name/filename"` Hugging Face Hub triple (at least two `/`s -- see
+    /// [`Self::load_from_hf_pair`]), disambiguated the same way a real Hub URL path segment count
+    /// already would be.
+    pub fn load_selection(selection: &str) -> Result<Self, CandleBackendError> {
+        if let Some((repo, filename)) = selection.rsplit_once('/') {
+            if repo.contains('/') {
+                return Self::load_from_hf_pair(repo, filename);
+            }
+        }
+        Self::load_from_catalog(selection)
     }
 }
 

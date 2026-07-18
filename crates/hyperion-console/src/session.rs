@@ -208,7 +208,11 @@ struct PendingCloudConsent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BackendKind {
     /// A real, small, CPU-only Candle model -- see [`hyperion_ai_runtime::CandleBackend`].
-    Candle,
+    /// `selection` is `None` for the built-in default ([`hyperion_ai_runtime::CandleBackend::load`]),
+    /// or `Some` for a real, caller-chosen model via `/backend candle <model>` -- either a
+    /// [`hyperion_ai_runtime::ModelCatalog`] entry name or a real `owner/name/filename` Hugging
+    /// Face Hub triple, both dispatched through [`hyperion_ai_runtime::CandleBackend::load_selection`].
+    Candle { selection: Option<String> },
     /// The deterministic echo stub -- see [`MockBackend`]. Never a real answer, only ever a
     /// dev/test fallback or explicit choice.
     Mock,
@@ -237,7 +241,10 @@ enum BackendKind {
 impl BackendKind {
     fn label(&self) -> String {
         match self {
-            BackendKind::Candle => "candle".to_string(),
+            BackendKind::Candle { selection: None } => "candle".to_string(),
+            BackendKind::Candle {
+                selection: Some(model),
+            } => format!("candle (model {model:?})"),
             BackendKind::Mock => "mock".to_string(),
             BackendKind::Engine {
                 engine,
@@ -271,7 +278,10 @@ impl BackendKind {
     /// file), so this JSON is always safe to read in plain text.
     fn to_json(&self) -> serde_json::Value {
         match self {
-            BackendKind::Candle => serde_json::json!({"kind": "candle"}),
+            BackendKind::Candle { selection } => serde_json::json!({
+                "kind": "candle",
+                "selection": selection,
+            }),
             BackendKind::Mock => serde_json::json!({"kind": "mock"}),
             BackendKind::Engine {
                 engine,
@@ -296,7 +306,12 @@ impl BackendKind {
     /// treats that the same as no persisted selection at all.
     fn from_json(value: &serde_json::Value) -> Option<Self> {
         match value.get("kind")?.as_str()? {
-            "candle" => Some(BackendKind::Candle),
+            "candle" => Some(BackendKind::Candle {
+                selection: value
+                    .get("selection")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+            }),
             "mock" => Some(BackendKind::Mock),
             "engine" => {
                 let engine = match value.get("engine")?.as_str()? {
@@ -623,8 +638,8 @@ impl ConsoleSession {
     /// so it's stable across reboots rather than a fresh, unverifiable identity every restart.
     fn build_ai_runtime(keystore: &Keystore) -> (LocalAiRuntime, BackendKind) {
         let (backend, current_backend) = if cfg!(feature = "candle") {
-            match Self::try_load_candle() {
-                Ok(backend) => (backend, BackendKind::Candle),
+            match Self::try_load_candle(None) {
+                Ok(backend) => (backend, BackendKind::Candle { selection: None }),
                 Err(e) => {
                     eprintln!(
                         "warning: {e}; falling back to the mock inference backend for this \
@@ -669,15 +684,26 @@ impl ConsoleSession {
     /// [`Self::build_ai_runtime`] (startup) and [`Self::switch_backend`] (the `/backend`/
     /// `use backend` meta-command), so both paths give the exact same message for the exact same
     /// failure.
+    /// `selection` is `None` for [`hyperion_ai_runtime::CandleBackend::load`]'s own built-in
+    /// default, or `Some` for a real, caller-chosen model via
+    /// [`hyperion_ai_runtime::CandleBackend::load_selection`] -- see the `/backend candle <model>`
+    /// arm of [`Self::handle_meta_command`].
     #[cfg(feature = "candle")]
-    fn try_load_candle() -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
-        hyperion_ai_runtime::CandleBackend::load()
-            .map(|backend| Box::new(backend) as Box<dyn hyperion_ai_runtime::InferenceBackend>)
-            .map_err(|e| format!("real Candle model load failed ({e})"))
+    fn try_load_candle(
+        selection: Option<&str>,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+        match selection {
+            None => hyperion_ai_runtime::CandleBackend::load(),
+            Some(selection) => hyperion_ai_runtime::CandleBackend::load_selection(selection),
+        }
+        .map(|backend| Box::new(backend) as Box<dyn hyperion_ai_runtime::InferenceBackend>)
+        .map_err(|e| format!("real Candle model load failed ({e})"))
     }
 
     #[cfg(not(feature = "candle"))]
-    fn try_load_candle() -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
+    fn try_load_candle(
+        _selection: Option<&str>,
+    ) -> Result<Box<dyn hyperion_ai_runtime::InferenceBackend>, String> {
         Err(
             "this build wasn't compiled with real inference support (--features candle)"
                 .to_string(),
@@ -864,10 +890,12 @@ impl ConsoleSession {
             BackendKind::Mock => {
                 Box::new(MockBackend) as Box<dyn hyperion_ai_runtime::InferenceBackend>
             }
-            BackendKind::Candle => match Self::try_load_candle() {
-                Ok(backend) => backend,
-                Err(e) => return format!("I couldn't switch: {e}."),
-            },
+            BackendKind::Candle { selection } => {
+                match Self::try_load_candle(selection.as_deref()) {
+                    Ok(backend) => backend,
+                    Err(e) => return format!("I couldn't switch: {e}."),
+                }
+            }
             BackendKind::Engine {
                 engine,
                 base_url,
@@ -1188,7 +1216,14 @@ impl ConsoleSession {
         let rest: Vec<&str> = tokens.collect();
 
         let kind = match kind_name.as_str() {
-            "candle" | "real" | "llama" => BackendKind::Candle,
+            "candle" | "real" | "llama" => BackendKind::Candle {
+                // `/backend candle` alone keeps the built-in default; `/backend candle <model>`
+                // selects a real hyperion_ai_runtime::ModelCatalog entry name or a real
+                // "owner/name/filename" Hugging Face Hub triple -- see
+                // `hyperion_ai_runtime::CandleBackend::load_selection`'s own doc comment for
+                // exactly how that one argument is disambiguated.
+                selection: rest.first().map(|s| s.to_string()),
+            },
             "mock" | "echo" => BackendKind::Mock,
             "ollama" | "vllm" | "litellm" | "custom" => {
                 let engine = match kind_name.as_str() {
@@ -1283,6 +1318,10 @@ impl ConsoleSession {
             "A couple of things you can also ask directly:".to_string(),
             "  /backend <candle|mock>                     switch to a built-in backend (also: \
              \"use backend <name>\")"
+                .to_string(),
+            "  /backend candle <model>                     switch to a specific real local \
+             model -- a catalog name (e.g. \"stories15m-gguf\") or a real \
+             \"owner/name/filename\" Hugging Face Hub triple"
                 .to_string(),
             "  /backend <ollama|vllm|litellm> <model> [base_url]".to_string(),
             "                                              switch to a real local engine or proxy"
