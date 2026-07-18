@@ -12,6 +12,7 @@
 //! background reaper for exactly those; `hyperion_supervisor::Supervisor` only reaps its own).
 
 mod display_probe;
+mod first_boot;
 mod hardware_fit;
 mod network_probe;
 mod storage_probe;
@@ -258,6 +259,13 @@ fn run_supervision_tree() -> ! {
     // real console keeps its own Knowledge Graph.
     let data_partition = storage_probe::mount_data_partition();
     if let Some(data_dir) = &data_partition {
+        // This crate's own previously-unnamed "no first-boot installer hook" gap: a real,
+        // marker-gated, one-time welcome banner -- only ever against the real, persistent M6
+        // partition (never the ephemeral tmpfs fallback `console_data_dir` falls back to, which
+        // would make every boot look like a fresh install). Runs before the two probes below so
+        // a genuinely fresh machine sees "welcome" before any diagnostic output.
+        first_boot::run_first_boot_hook(data_dir);
+
         // M13's probe runs first: it's opt-in and self-contained within one boot (see its own
         // doc comment), while M6's crash-consistency probe's own write loop is deliberately slow
         // (200k iterations, meant to still be mid-flight whenever storage-crash-test.sh's hard
