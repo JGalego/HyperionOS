@@ -150,6 +150,7 @@ mod tests {
             embedding: None,
             metadata,
             owner: 1,
+            device_origin: 0,
             created_at: 0,
             updated_at: 0,
             tombstone: false,

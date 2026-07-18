@@ -29,10 +29,25 @@ pub struct NodeRecord {
     /// with no semantic content."
     pub embedding: Option<Vec<f32>>,
     pub metadata: serde_json::Value,
-    /// `TrustBoundaryId.0` of the Trust Boundary that authored the current
-    /// version — docs/29 `device_origin`/`owner_id`, collapsed to one field
-    /// since this simulator has no separate device/owner distinction yet.
+    /// `TrustBoundaryId.0` of the Trust Boundary that owns this node — docs/29's `owner_id`
+    /// (shard key). Access control (see [`crate::graph::KnowledgeGraph::query`]/
+    /// [`crate::graph::KnowledgeGraph::traverse`]) is always checked against this field, never
+    /// [`Self::device_origin`] — two devices under the same owner see each other's nodes by
+    /// default, exactly matching docs/29's own worked example (a photo's `owner_id` is
+    /// `joao-owner-uuid` whether it was authored from `joao-phone-uuid` or `joao-laptop-uuid`).
     pub owner: u64,
+    /// docs/29's own `device_origin` — the device that authored the *current* version, a real,
+    /// finer axis than [`Self::owner`]: this crate's own previously-named "device_origin-based
+    /// filtering... remains unimplemented" gap. `0` means "not recorded" (every node written
+    /// before this field existed, via [`crate::graph::KnowledgeGraph::put_node`], or by a caller
+    /// with no real device identity of its own to supply) — never confused with a real device id,
+    /// since this workspace's own device ids (`hyperion_federation`'s `join_device`/
+    /// `sender_device_id`, `hyperion_observability`'s `TelemetryCollector::new_with_device_id`)
+    /// are all caller-minted and start from `1`, not `0`. `#[serde(default)]` so a WAL record
+    /// written before this field existed still replays as "not recorded" — the same convention
+    /// [`Self::tombstone`] already established for its own later addition.
+    #[serde(default)]
+    pub device_origin: u64,
     pub created_at: u64,
     pub updated_at: u64,
     /// This crate's own previously-named "no node-delete operation (only edges tombstone)" gap,
@@ -102,6 +117,13 @@ pub struct GraphQuery {
     /// before calling here.
     pub time_range: Option<(u64, u64)>,
     pub edge_constraint: Option<EdgeConstraint>,
+    /// This crate's own previously-named "device_origin-based filtering (a finer axis than plain
+    /// owner)" gap, closed for real: `Some(device_id)` narrows results to nodes whose
+    /// [`NodeRecord::device_origin`] matches exactly, applied *in addition to* (never instead of)
+    /// the owner-boundary check every read path already enforces — e.g. "show me only what my
+    /// phone recorded" among the objects I already own, not a way to see a different owner's data.
+    /// `None` (the default) applies no such narrowing, matching every other optional filter here.
+    pub device_origin_filter: Option<u64>,
     /// `0` means unbounded.
     pub limit: usize,
 }
@@ -154,6 +176,9 @@ pub struct RankingRationale {
     pub type_filter_matched: Option<bool>,
     pub within_time_range: Option<bool>,
     pub edge_constraint_satisfied: Option<bool>,
+    /// Mirrors [`GraphQuery::device_origin_filter`]: `None` when the query carried no such filter,
+    /// `Some(matched)` when it did.
+    pub device_origin_matched: Option<bool>,
     /// `true` only when every filter the query actually carried was satisfied — exactly
     /// [`crate::graph::KnowledgeGraph::query`]'s own inclusion test, so a caller can answer "why
     /// didn't this show up in my results" as well as "why did this one rank where it did."

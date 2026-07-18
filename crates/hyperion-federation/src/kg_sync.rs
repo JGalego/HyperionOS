@@ -88,12 +88,21 @@ pub struct KgMergeReport {
 /// Nodes are applied before edges (an edge naming a node this exact snapshot also introduces must
 /// resolve); an edge whose subject or target has never been translated -- by this call or an
 /// earlier one -- is skipped rather than guessed at, and counted in the returned report.
+///
+/// `sender_device_id` is recorded on every merged node as `hyperion_knowledge_graph::NodeRecord::
+/// device_origin` -- distinct from this merge's own local `owner` (the receiving device's own
+/// Trust Boundary, unchanged by *which* peer a sync happened to arrive from): this crate's own
+/// previously-named "device_origin-based filtering" gap, closed here for the one real production
+/// path with a genuine, distinct device identity to record. [`serve_kg_snapshots`] is the real
+/// caller, threading through the authenticated `SyncEnvelope::sender_id` the transport itself
+/// already verifies.
 pub fn merge_snapshot(
     graph: &KnowledgeGraph,
     monitor: &CapabilityMonitor,
     token: &CapabilityToken,
     translation: &KgTranslation,
     snapshot: &GraphSnapshot,
+    sender_device_id: u64,
 ) -> KgMergeReport {
     let mut report = KgMergeReport::default();
     let mut map = translation.remote_to_local.lock().unwrap();
@@ -102,13 +111,14 @@ pub fn merge_snapshot(
         match map.get(&remote_id.0).copied() {
             Some(local_id) => {
                 if graph
-                    .put_node(
+                    .put_node_with_device_origin(
                         monitor,
                         token,
                         Some(local_id),
                         record.object_type.clone(),
                         record.embedding.clone(),
                         record.metadata.clone(),
+                        sender_device_id,
                     )
                     .is_ok()
                 {
@@ -116,13 +126,14 @@ pub fn merge_snapshot(
                 }
             }
             None => {
-                if let Ok(local_id) = graph.put_node(
+                if let Ok(local_id) = graph.put_node_with_device_origin(
                     monitor,
                     token,
                     None,
                     record.object_type.clone(),
                     record.embedding.clone(),
                     record.metadata.clone(),
+                    sender_device_id,
                 ) {
                     map.insert(remote_id.0, local_id);
                     report.nodes_created += 1;
@@ -282,13 +293,21 @@ fn handle_connection(
     let Some(envelope) = SyncEnvelope::from_wire_bytes(&body) else {
         return Ok(());
     };
+    let sender_device_id = envelope.sender_id;
     let Ok(plaintext) = hub.open_from_peer(sender_verifying_key, shared_secret, &envelope) else {
         return Ok(());
     };
     let Some(snapshot) = snapshot_from_wire(&plaintext) else {
         return Ok(());
     };
-    merge_snapshot(graph, monitor, token, translation, &snapshot);
+    merge_snapshot(
+        graph,
+        monitor,
+        token,
+        translation,
+        &snapshot,
+        sender_device_id,
+    );
     Ok(())
 }
 

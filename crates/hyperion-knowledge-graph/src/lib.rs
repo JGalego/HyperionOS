@@ -109,9 +109,11 @@
 //!   Boundary is excluded entirely, never included and merely down-ranked, mirroring
 //!   `hyperion-context::engine`'s own downstream filter of the same shape (confirmed safe to add
 //!   here too: every real caller across the workspace already operates strictly within its own
-//!   token's boundary). `device_origin`-based filtering (a finer axis than plain `owner`) remains
-//!   unimplemented, as does docs/29's richer per-row `acl` JSONB — this closes the coarser,
-//!   `owner`-only half of the gap this bullet named. ~~This crate's own `traverse` doc comment
+//!   token's boundary). ~~`device_origin`-based filtering (a finer axis than plain `owner`)
+//!   remains unimplemented~~ (2026-07-18) — now real, see [`types::NodeRecord::device_origin`]'s
+//!   own doc comment for the full closure; docs/29's richer per-row `acl` JSONB remains a
+//!   separate, still-unimplemented gap this bullet never claimed to close. ~~This crate's own
+//!   `traverse` doc comment
 //!   claimed [`graph::KnowledgeGraph::get`] already gave the same owner-checked shape it does —
 //!   it didn't~~ (2026-07-16): [`graph::KnowledgeGraph::get`]/[`graph::KnowledgeGraph::get_at_version`]/
 //!   [`graph::KnowledgeGraph::delete_node`]/[`graph::KnowledgeGraph::unlink`]/

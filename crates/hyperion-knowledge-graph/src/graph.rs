@@ -372,7 +372,8 @@ impl KnowledgeGraph {
     /// `graph.link` for a fresh node — docs/09 §6 has no separate "create
     /// node" verb (nodes are implicitly created by writing a Semantic
     /// Object elsewhere in the system); this crate exposes it explicitly
-    /// since it owns the node table.
+    /// since it owns the node table. `device_origin: 0` ("not recorded") — see
+    /// [`Self::put_node_with_device_origin`] for a caller with a real device identity to record.
     pub fn put_node(
         &self,
         monitor: &CapabilityMonitor,
@@ -381,6 +382,37 @@ impl KnowledgeGraph {
         object_type: impl Into<ObjectType>,
         embedding: Option<Vec<f32>>,
         metadata: serde_json::Value,
+    ) -> Result<NodeId, GraphError> {
+        self.put_node_with_device_origin(
+            monitor,
+            token,
+            node_id,
+            object_type,
+            embedding,
+            metadata,
+            0,
+        )
+    }
+
+    /// As [`Self::put_node`], but recording a real `device_origin` — docs/29's own "device that
+    /// authored the current version," distinct from [`NodeRecord::owner`] (see that field's own
+    /// doc comment). Unlike `owner` (preserved verbatim from an existing node across an update —
+    /// ownership never silently changes hands), `device_origin` always overwrites to whichever
+    /// device is doing *this* write, matching docs/29's own "current version" framing: the field
+    /// names who authored the version that exists right now, not a fixed, original provenance.
+    /// `hyperion_federation::kg_sync::merge_snapshot` is the real production caller: a remote
+    /// peer's own device id (from the `SyncEnvelope` that carried the snapshot) is recorded here,
+    /// distinct from the merging call's own local translation boundary/owner.
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_node_with_device_origin(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        node_id: Option<NodeId>,
+        object_type: impl Into<ObjectType>,
+        embedding: Option<Vec<f32>>,
+        metadata: serde_json::Value,
+        device_origin: u64,
     ) -> Result<NodeId, GraphError> {
         self.require(monitor, token, RightsMask::WRITE)?;
         let caller_boundary = token.origin().0;
@@ -412,6 +444,7 @@ impl KnowledgeGraph {
             embedding,
             metadata,
             owner: existing.map_or(caller_boundary, |n| n.owner),
+            device_origin,
             created_at,
             updated_at: now(),
             tombstone,
@@ -636,6 +669,9 @@ impl KnowledgeGraph {
             .edge_constraint
             .as_ref()
             .map(|c| Self::satisfies_edge_constraint(index, node_id, c));
+        let device_origin_matched = query
+            .device_origin_filter
+            .map(|wanted| node.device_origin == wanted);
         let similarity = match (&query.embedding_query, &node.embedding) {
             (Some(q), Some(e)) => cosine_similarity(q, e),
             (Some(_), None) => 0.0,
@@ -643,12 +679,14 @@ impl KnowledgeGraph {
         };
         let would_be_included = type_filter_matched.unwrap_or(true)
             && within_time_range.unwrap_or(true)
-            && edge_constraint_satisfied.unwrap_or(true);
+            && edge_constraint_satisfied.unwrap_or(true)
+            && device_origin_matched.unwrap_or(true);
         RankingRationale {
             similarity,
             type_filter_matched,
             within_time_range,
             edge_constraint_satisfied,
+            device_origin_matched,
             would_be_included,
         }
     }
@@ -779,14 +817,35 @@ impl KnowledgeGraph {
         edge_types: Option<&[String]>,
         max_hops: usize,
     ) -> Result<Subgraph, GraphError> {
+        self.traverse_with_device_origin_filter(monitor, token, start, edge_types, max_hops, None)
+    }
+
+    /// As [`Self::traverse`], but with [`crate::types::GraphQuery::device_origin_filter`]'s own
+    /// real narrowing applied at every hop too -- this crate's own previously-named
+    /// "device_origin-based filtering... remains unimplemented" gap, closed for the traversal read
+    /// path the same way [`Self::query`] already closes it for ranked search: a node whose
+    /// [`NodeRecord::device_origin`] doesn't match `device_origin_filter` is excluded from
+    /// expansion entirely (never merely omitted from the final result after being walked into),
+    /// mirroring this method's own existing owner-boundary exclusion.
+    #[allow(clippy::too_many_arguments)]
+    pub fn traverse_with_device_origin_filter(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        start: NodeId,
+        edge_types: Option<&[String]>,
+        max_hops: usize,
+        device_origin_filter: Option<u64>,
+    ) -> Result<Subgraph, GraphError> {
         self.require(monitor, token, RightsMask::READ)?;
         let index = self.index.lock().unwrap();
         let caller_boundary = token.origin().0;
         let visible = |id: &NodeId| {
-            index
-                .nodes
-                .get(id)
-                .is_some_and(|n| !n.tombstone && n.owner == caller_boundary)
+            index.nodes.get(id).is_some_and(|n| {
+                !n.tombstone
+                    && n.owner == caller_boundary
+                    && device_origin_filter.is_none_or(|wanted| n.device_origin == wanted)
+            })
         };
         if !visible(&start) {
             return Err(GraphError::NotFound);

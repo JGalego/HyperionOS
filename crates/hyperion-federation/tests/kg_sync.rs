@@ -54,7 +54,7 @@ fn merge_snapshot_creates_real_local_nodes_under_translated_ids() {
     let snapshot = source.dump(&monitor, &token).unwrap();
     assert_eq!(snapshot.nodes.len(), 1);
 
-    let report = merge_snapshot(&dest, &monitor, &token, &translation, &snapshot);
+    let report = merge_snapshot(&dest, &monitor, &token, &translation, &snapshot, 42);
     assert_eq!(report.nodes_created, 1);
     assert_eq!(report.nodes_updated, 0);
 
@@ -79,6 +79,11 @@ fn merge_snapshot_creates_real_local_nodes_under_translated_ids() {
         local_id, &remote_id,
         "merging must mint a fresh local id, never reuse the remote's own raw id"
     );
+    assert_eq!(
+        record.device_origin, 42,
+        "the merged node must record which real remote device it came from, distinct from its \
+         local owner"
+    );
 }
 
 #[test]
@@ -99,7 +104,7 @@ fn resyncing_the_same_source_updates_the_translated_copy_not_a_duplicate() {
         )
         .unwrap();
     let first_snapshot = source.dump(&monitor, &token).unwrap();
-    merge_snapshot(&dest, &monitor, &token, &translation, &first_snapshot);
+    merge_snapshot(&dest, &monitor, &token, &translation, &first_snapshot, 1);
 
     // The same remote node changes; a second sync must update the same translated local copy.
     source
@@ -113,7 +118,7 @@ fn resyncing_the_same_source_updates_the_translated_copy_not_a_duplicate() {
         )
         .unwrap();
     let second_snapshot = source.dump(&monitor, &token).unwrap();
-    let report = merge_snapshot(&dest, &monitor, &token, &translation, &second_snapshot);
+    let report = merge_snapshot(&dest, &monitor, &token, &translation, &second_snapshot, 2);
     assert_eq!(report.nodes_created, 0);
     assert_eq!(report.nodes_updated, 1);
 
@@ -126,6 +131,11 @@ fn resyncing_the_same_source_updates_the_translated_copy_not_a_duplicate() {
     assert_eq!(
         dest_snapshot.nodes[0].1.metadata,
         serde_json::json!({"version": 2})
+    );
+    assert_eq!(
+        dest_snapshot.nodes[0].1.device_origin, 2,
+        "device_origin names whichever device authored the CURRENT version, so a resync from a \
+         different sender must overwrite it, not preserve the first sync's value"
     );
 }
 
@@ -158,7 +168,7 @@ fn edges_are_translated_to_local_ids_not_left_pointing_at_remote_ones() {
         .unwrap();
 
     let snapshot = source.dump(&monitor, &token).unwrap();
-    let report = merge_snapshot(&dest, &monitor, &token, &translation, &snapshot);
+    let report = merge_snapshot(&dest, &monitor, &token, &translation, &snapshot, 9);
     assert_eq!(report.edges_applied, 1);
     assert_eq!(report.edges_skipped_unresolved, 0);
 
@@ -202,7 +212,7 @@ fn an_edge_referencing_a_never_translated_node_is_skipped_not_guessed_at() {
         )],
     };
 
-    let report = merge_snapshot(&dest, &monitor, &token, &translation, &snapshot);
+    let report = merge_snapshot(&dest, &monitor, &token, &translation, &snapshot, 9);
     assert_eq!(report.edges_applied, 0);
     assert_eq!(report.edges_skipped_unresolved, 1);
     assert!(dest.dump(&monitor, &token).unwrap().edges.is_empty());
@@ -271,6 +281,12 @@ fn a_graph_snapshot_really_travels_over_a_real_socket_and_merges_on_arrival() {
     assert_eq!(
         merged[0].1.metadata,
         serde_json::json!({"text": "shipped over the real wire"})
+    );
+    assert_eq!(
+        merged[0].1.device_origin, 1,
+        "the real, authenticated SyncEnvelope::sender_id publish_snapshot_over_socket signed \
+         must flow all the way through to the merged node's own device_origin, not just a \
+         direct in-process merge_snapshot call"
     );
 
     server.stop();

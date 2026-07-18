@@ -18,6 +18,7 @@ struct ExportedNode {
     object_type: String,
     metadata: Value,
     owner: u64,
+    device_origin: u64,
     created_at: u64,
     updated_at: u64,
 }
@@ -59,6 +60,7 @@ pub fn to_json(snapshot: &GraphSnapshot) -> String {
                 object_type: node.object_type.clone(),
                 metadata: node.metadata.clone(),
                 owner: node.owner,
+                device_origin: node.device_origin,
                 created_at: node.created_at,
                 updated_at: node.updated_at,
             })
@@ -108,6 +110,7 @@ mod tests {
             embedding: None,
             metadata: serde_json::json!({"title": "a real doc"}),
             owner: 1,
+            device_origin: 42,
             created_at: 100,
             updated_at: 100,
             tombstone: false,
@@ -137,6 +140,7 @@ mod tests {
         assert_eq!(parsed["nodes"][0]["id"], 5);
         assert_eq!(parsed["nodes"][0]["object_type"], "document");
         assert_eq!(parsed["nodes"][0]["metadata"]["title"], "a real doc");
+        assert_eq!(parsed["nodes"][0]["device_origin"], 42);
 
         assert_eq!(parsed["edges"][0]["id"], 7);
         assert_eq!(parsed["edges"][0]["subject"], 5);
