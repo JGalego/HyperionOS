@@ -142,6 +142,32 @@ pub enum Depth {
     Full,
 }
 
+/// A [`ReasoningStep`] with its `inputs_ref`/`output_ref` resolved into human-readable text via
+/// `hyperion_knowledge_graph::NodeRecord::display_label` — [`crate::render::resolve_why_with_graph`]'s
+/// own real answer to this crate's previously-named "NodeIds never resolved via the KG" gap:
+/// [`ReasoningStep`] itself keeps storing bare `NodeId`s (the record is still the durable, replayable
+/// source of truth), but a renderer building this view for a person gets real descriptions instead.
+#[derive(Debug, Clone)]
+pub struct ResolvedReasoningStep {
+    pub step_index: u32,
+    pub description: String,
+    /// One resolved description per `ReasoningStep::inputs_ref` entry, same order. A reference
+    /// that's no longer visible to the caller (tombstoned, or genuinely gone) resolves to an
+    /// honest placeholder rather than an error — a stale historical reference is expected drift,
+    /// not a bug worth failing the whole explanation over.
+    pub inputs: Vec<String>,
+    pub output: Option<String>,
+}
+
+/// An [`EvidenceRef`] with its `object_id` resolved the same way [`ResolvedReasoningStep`]
+/// resolves a step's own references.
+#[derive(Debug, Clone)]
+pub struct ResolvedEvidence {
+    pub label: String,
+    pub excerpt_or_summary: String,
+    pub weight: f32,
+}
+
 /// docs/18 §5's `render_at_complexity_level` result, narrowed to a
 /// deterministic template-rendered headline (see this crate's doc
 /// comment on deferred real NLG) plus an optional full record and its
@@ -156,6 +182,12 @@ pub struct ExplanationView {
     /// [31 — Event System](../31-event-system.md) logs rather than the real, causally-recorded
     /// store — a renderer must surface this, not silently drop it.
     pub reconstructed: bool,
+    /// Populated only by [`crate::render::resolve_why_with_graph`] (empty from plain
+    /// [`crate::render::resolve_why`], which has no `KnowledgeGraph` handle to resolve against) —
+    /// see [`ResolvedReasoningStep`].
+    pub resolved_reasoning_chain: Vec<ResolvedReasoningStep>,
+    /// Populated only by [`crate::render::resolve_why_with_graph`] — see [`ResolvedEvidence`].
+    pub resolved_evidence: Vec<ResolvedEvidence>,
 }
 
 /// docs/18 §10/§13's "rolling Brier score per Agent/Capability... feeding an alert if an Agent's

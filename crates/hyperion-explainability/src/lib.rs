@@ -116,6 +116,21 @@
 //! never granted access to" is enforced for real. Every read requires `RightsMask::READ` and
 //! filters by [`types::ExplanationRecord::trust_boundary_span`] — a record outside the
 //! caller's own Trust Boundary is omitted/`None`, never an error that would reveal it exists.
+//! [`render::resolve_why_with_graph`] (2026-07-18) closes this crate's own previously-unnamed
+//! gap: [`types::ReasoningStep::inputs_ref`]/`output_ref` and [`types::EvidenceRef::object_id`]
+//! are real `hyperion_knowledge_graph::NodeId`s (this crate already depends on
+//! `hyperion-knowledge-graph` — no cycle, unlike the `hyperion-recovery`/`hyperion-privacy` case
+//! above, since that crate has no dependency back on this one), but nothing anywhere in this
+//! crate ever resolved one into anything a person could read — [`render::resolve_why`]'s own
+//! `headline_for` never touched them, and [`types::ExplanationView::full`] surfaced them as bare
+//! integers. `resolve_why_with_graph` takes the same arguments as `resolve_why` plus a real
+//! `&KnowledgeGraph`, and walks every reference — at every depth of a `Depth::Full` parent chain,
+//! not only the root — through `hyperion_knowledge_graph::NodeRecord::display_label`, populating
+//! [`types::ExplanationView::resolved_reasoning_chain`]/`resolved_evidence`. A reference to a
+//! node the caller's own token can no longer see (tombstoned, or from a different Trust Boundary)
+//! resolves to an honest placeholder, never an error — the same "stale reference is expected
+//! drift" convention `resolve_why` itself already uses for a missing parent record.
+//!
 //! [`store::ExplanationStore::begin`] now always seeds `trust_boundary_span` with the real,
 //! live `token.origin()` (previously every real caller passed a dead, hardcoded `vec![]`, so
 //! the field existed but nothing ever populated or read it back) — a caller's own explicit
@@ -137,10 +152,11 @@ mod store;
 mod types;
 
 pub use confidence::self_consistency_confidence;
-pub use render::resolve_why;
+pub use render::{resolve_why, resolve_why_with_graph};
 pub use store::ExplanationStore;
 pub use types::{
     ActionId, Alternative, CalibrationScore, ConfidenceMethod, ConfidenceScore, ControlState,
     Depth, EvidenceRef, ExplainabilityError, ExplanationId, ExplanationLookup, ExplanationRecord,
-    ExplanationView, ReasoningStep, RecoveryPointId, SensitivityClass,
+    ExplanationView, ReasoningStep, RecoveryPointId, ResolvedEvidence, ResolvedReasoningStep,
+    SensitivityClass,
 };

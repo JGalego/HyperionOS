@@ -108,5 +108,8 @@ fn an_unrecognized_real_node_never_panics_and_names_its_own_type_honestly() {
         .unwrap();
 
     let node = graph.get(&monitor, &token, id).unwrap();
-    assert_eq!(node.display_label(), "a sensor_reading ({\"celsius\":21.5})");
+    assert_eq!(
+        node.display_label(),
+        "a sensor_reading ({\"celsius\":21.5})"
+    );
 }
