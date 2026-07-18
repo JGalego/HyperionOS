@@ -3509,3 +3509,22 @@ next step on any of these is a design pass, not code.
   multi-agent structure `link_parent` still allows creating — the read-time filter is what
   correctly limits what any one caller can actually walk/see, not the link itself). All
   pre-existing tests across all five touched crates pass unchanged.
+
+**M8 follow-up (2026-07-18): real GGUF/safetensors model loading.** `CandleBackend::load`'s
+`stories15M.bin` is Karpathy's own bespoke `llama2.c` binary layout — neither of the two real
+interchange formats Hugging Face Hub actually ships checkpoints in. `CandleBackend::load_gguf`
+loads a real quantized GGUF file in llama.cpp's own standard, self-describing format
+(`candle_transformers::models::quantized_llama` over `candle_core::quantized::gguf_file` —
+every architecture hyperparameter comes from the file's own metadata, not a caller-supplied
+config); `CandleBackend::load_safetensors` loads a real Hugging Face `transformers`-format
+safetensors export of the same TinyStories/llama2.c family, handling the common
+`tie_word_embeddings: true` case where a real HF export shares `lm_head`'s own matrix rather than
+storing a separate `embed_tokens` tensor. Since `quantized_llama::ModelWeights` keeps its own
+per-layer KV-cache state internally (mutated in place, unlike `llama2_c::Llama`'s external
+`Cache`), `CandleBackend`'s internal model representation gained a `Mutex`-guarded variant for
+`generate()`'s `&self` signature to get exclusive access per request, clearing the KV cache
+before each fresh generation. Both proven end to end against real, verified Hugging Face repos
+(`klosax/tinyllamas-stories-gguf`'s real ~98 MB quantized GGUF file,
+`Xenova/llama2.c-stories15M`'s real ~60 MB safetensors export) in a new network-gated
+`tests/candle_gguf_safetensors.rs`, matching `candle_inference.rs`'s own convention of not
+running as part of the default workspace gate.
