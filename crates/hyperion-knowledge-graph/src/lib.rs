@@ -169,6 +169,6 @@ pub use providers::{capabilities_for_topic, capability_for_topic};
 pub use hyperion_storage::VersionId;
 pub use types::{
     EdgeConstraint, EdgeId, EdgeOrigin, EdgeRecord, ExplainRef, GraphError, GraphQuery,
-    GraphSnapshot, ImportReport, LinkOutcome, NodeId, NodeRecord, ProvenanceChain, QueryHit,
-    RankingRationale, Subgraph,
+    GraphSnapshot, ImportReport, LinkOutcome, NodeId, NodeOrigin, NodeRecord, ProvenanceChain,
+    QueryHit, RankingRationale, Subgraph,
 };

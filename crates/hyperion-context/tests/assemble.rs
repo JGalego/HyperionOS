@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use hyperion_capability::{CapabilityMonitor, RightsMask, TrustBoundaryId};
 use hyperion_context::{Budget, ContextEngine, InclusionMode, Scope};
-use hyperion_knowledge_graph::KnowledgeGraph;
+use hyperion_knowledge_graph::{KnowledgeGraph, NodeOrigin};
 use serde_json::json;
 
 fn setup() -> (
@@ -260,14 +260,20 @@ fn small_high_relevance_entries_are_included_full_not_referenced() {
     let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
     let engine = ContextEngine::new(graph.clone());
 
+    // A real ticket the user is directly anchored on is user-authored content, not something
+    // ingested from an untrusted external source -- tagging its real provenance is what a real
+    // production caller creating this kind of object should do (docs/17 T4's own Provenance Trust
+    // Score now weights untagged content at this crate's own conservative default otherwise).
     let anchor = graph
-        .put_node(
+        .put_node_with_provenance(
             &monitor,
             &token,
             None,
             "ticket",
             None,
             json!({"title": "small ticket"}),
+            0,
+            NodeOrigin::UserAuthored,
         )
         .unwrap();
 
@@ -283,4 +289,146 @@ fn small_high_relevance_entries_are_included_full_not_referenced() {
     let entry = bundle.entries.iter().find(|e| e.node_id == anchor).unwrap();
     assert_eq!(entry.inclusion_mode, InclusionMode::Full);
     assert_eq!(entry.content, json!({"title": "small ticket"}));
+}
+
+/// docs/17 T4's own mitigation: "Context retrieval weights candidate objects by Provenance Trust
+/// Score so an untrusted-origin object cannot silently outrank a corroborated one."
+#[test]
+fn an_untrusted_origin_object_ranks_below_an_otherwise_equal_user_authored_one() {
+    let (dir, monitor, token) = setup();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let engine = ContextEngine::new(graph.clone());
+
+    let trusted = graph
+        .put_node_with_provenance(
+            &monitor,
+            &token,
+            None,
+            "document",
+            None,
+            json!({"title": "trusted"}),
+            0,
+            NodeOrigin::UserAuthored,
+        )
+        .unwrap();
+    let untrusted = graph
+        .put_node_with_provenance(
+            &monitor,
+            &token,
+            None,
+            "document",
+            None,
+            json!({"title": "untrusted"}),
+            0,
+            NodeOrigin::IngestedExternal,
+        )
+        .unwrap();
+
+    // Both anchored identically (same graph_distance, same fresh recency, no working-set
+    // history for either) -- the only real difference between the two candidates is provenance.
+    let scope = Scope {
+        intent_id: "intent-1".to_string(),
+        session_id: "session-2".to_string(),
+        mentions: Vec::new(),
+        anchors: vec![trusted, untrusted],
+    };
+    let bundle = engine
+        .assemble(&monitor, &token, &scope, Budget::default())
+        .unwrap();
+
+    let trusted_rank = bundle
+        .entries
+        .iter()
+        .position(|e| e.node_id == trusted)
+        .expect("the trusted entry must be present");
+    let untrusted_rank = bundle
+        .entries
+        .iter()
+        .position(|e| e.node_id == untrusted)
+        .expect("the untrusted entry must be present");
+    assert!(
+        trusted_rank < untrusted_rank,
+        "a user-authored candidate must outrank an otherwise-equal ingested-external one"
+    );
+
+    let trusted_score = bundle
+        .entries
+        .iter()
+        .find(|e| e.node_id == trusted)
+        .unwrap()
+        .relevance_score;
+    let untrusted_score = bundle
+        .entries
+        .iter()
+        .find(|e| e.node_id == untrusted)
+        .unwrap()
+        .relevance_score;
+    assert!(trusted_score > untrusted_score);
+}
+
+/// The other half of T4's own wording: corroboration lets an ingested object close the gap
+/// rather than being permanently capped below a user-authored one.
+#[test]
+fn corroborating_an_ingested_object_raises_its_real_rank() {
+    let (dir, monitor, token) = setup();
+    let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+    let engine = ContextEngine::new(graph.clone());
+
+    let uncorroborated = graph
+        .put_node_with_provenance(
+            &monitor,
+            &token,
+            None,
+            "document",
+            None,
+            json!({"title": "uncorroborated"}),
+            0,
+            NodeOrigin::IngestedExternal,
+        )
+        .unwrap();
+    let corroborated = graph
+        .put_node_with_provenance(
+            &monitor,
+            &token,
+            None,
+            "document",
+            None,
+            json!({"title": "corroborated"}),
+            0,
+            NodeOrigin::IngestedExternal,
+        )
+        .unwrap();
+    for _ in 0..5 {
+        graph
+            .corroborate_node(&monitor, &token, corroborated)
+            .unwrap();
+    }
+
+    let scope = Scope {
+        intent_id: "intent-1".to_string(),
+        session_id: "session-3".to_string(),
+        mentions: Vec::new(),
+        anchors: vec![uncorroborated, corroborated],
+    };
+    let bundle = engine
+        .assemble(&monitor, &token, &scope, Budget::default())
+        .unwrap();
+
+    let corroborated_score = bundle
+        .entries
+        .iter()
+        .find(|e| e.node_id == corroborated)
+        .unwrap()
+        .relevance_score;
+    let uncorroborated_score = bundle
+        .entries
+        .iter()
+        .find(|e| e.node_id == uncorroborated)
+        .unwrap()
+        .relevance_score;
+    assert!(
+        corroborated_score > uncorroborated_score,
+        "a repeatedly-corroborated ingested object must score higher than an unconfirmed one of \
+         the same origin"
+    );
 }

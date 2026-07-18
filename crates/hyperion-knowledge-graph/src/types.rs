@@ -17,6 +17,22 @@ pub type EdgeId = hyperion_storage::ObjectId;
 /// schema migration; a closed enum here would defeat that.
 pub type ObjectType = String;
 
+/// docs/17 §5/§6's `ProvenanceRecord.origin_type` — this crate's own previously-named
+/// "`ProvenanceRecord`/trust-scoring for Knowledge Graph poisoning (T4)" gap, closed for the
+/// node-schema half: docs/17 §6's own literal four-value set (`user-authored`, `ingested-external`,
+/// `agent-generated`, `synced-remote`). `Default` is [`NodeOrigin::IngestedExternal`] -- the least
+/// trusted value, deliberately: a node written before this field existed (or by a caller with no
+/// real provenance to supply) must never silently score as *more* trusted than an honestly-tagged
+/// ingested one just because its real origin was never recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum NodeOrigin {
+    UserAuthored,
+    AgentGenerated,
+    #[default]
+    IngestedExternal,
+    SyncedRemote,
+}
+
 /// docs/09 §4's `Node`, narrowed per this crate's top-level deferred-scope
 /// list (no `content_ref`/blob, no `reasoning_provenance` chain yet — an
 /// edge's own `provenance` field plus `owner`/`device_origin` cover this
@@ -48,6 +64,19 @@ pub struct NodeRecord {
     /// [`Self::tombstone`] already established for its own later addition.
     #[serde(default)]
     pub device_origin: u64,
+    /// docs/17 §6's `ProvenanceRecord.origin_type` -- see [`NodeOrigin`]'s own doc comment for
+    /// why its `Default` is deliberately the least-trusted value. `#[serde(default)]` so a WAL
+    /// record written before this field existed replays as that same honest, conservative value.
+    #[serde(default)]
+    pub origin: NodeOrigin,
+    /// docs/17 §6's `ProvenanceRecord.corroboration_count` -- how many times this node's content
+    /// has been independently reconfirmed, via [`crate::graph::KnowledgeGraph::corroborate_node`].
+    /// `0` (also `#[serde(default)]`'s honest value for pre-existing data) means "never
+    /// corroborated" -- feeds `hyperion-security`'s real Provenance Trust Score (docs/17 §5),
+    /// this crate's own previously-named "layering a trust score on top... deferred" gap, now
+    /// closed from the consuming side.
+    #[serde(default)]
+    pub corroboration_count: u32,
     pub created_at: u64,
     pub updated_at: u64,
     /// This crate's own previously-named "no node-delete operation (only edges tombstone)" gap,

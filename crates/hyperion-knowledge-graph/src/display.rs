@@ -151,6 +151,8 @@ mod tests {
             metadata,
             owner: 1,
             device_origin: 0,
+            origin: crate::types::NodeOrigin::default(),
+            corroboration_count: 0,
             created_at: 0,
             updated_at: 0,
             tombstone: false,

@@ -5,7 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken};
-use hyperion_knowledge_graph::{GraphError, GraphQuery, KnowledgeGraph, NodeId, ProvenanceChain};
+use hyperion_knowledge_graph::{
+    GraphError, GraphQuery, KnowledgeGraph, NodeId, NodeOrigin, NodeRecord, ProvenanceChain,
+};
 use hyperion_storage::ObjectId;
 
 use crate::types::{
@@ -19,6 +21,41 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("system clock before Unix epoch")
         .as_secs()
+}
+
+/// docs/17 §5's real Provenance Trust Score, for docs/17 T4's own "Context retrieval weights
+/// candidate objects by Provenance Trust Score" -- a narrowed, local copy of `hyperion-security::
+/// kg_trust_score`'s *identical* formula, not a dependency on that crate: `hyperion-security`
+/// already transitively depends on this crate (`hyperion-security -> hyperion-recovery ->
+/// hyperion-agent-runtime -> hyperion-netstack -> hyperion-context`, confirmed by a real Cargo
+/// cycle error when a direct dependency was tried), so the reverse direction is a hard cycle --
+/// the same "define a local, narrowed copy in the crate that needs it" pattern this workspace
+/// already uses for `hyperion-security::SensitivityHint`/`hyperion-explainability`'s
+/// `RecoveryPointId`/`SensitivityClass`. Kept in sync by hand with `hyperion-security::
+/// kg_trust_score`'s own doc comment, which carries the full rationale for every constant and
+/// term here (origin tiers, corroboration saturation, age-based maturity, and the `[0.5, 1.0]`
+/// demotion-not-exclusion floor) rather than repeating it in two places.
+const CORROBORATION_SATURATION: f32 = 5.0;
+const CORROBORATION_MAX_BONUS: f32 = 0.3;
+const AGE_MATURITY_SECS: f32 = 24.0 * 3600.0;
+const AGE_MAX_BONUS: f32 = 0.15;
+const MIN_TRUST_SCORE: f32 = 0.5;
+
+fn origin_base_score(origin: NodeOrigin) -> f32 {
+    match origin {
+        NodeOrigin::UserAuthored => 1.0,
+        NodeOrigin::AgentGenerated => 0.85,
+        NodeOrigin::SyncedRemote => 0.65,
+        NodeOrigin::IngestedExternal => 0.4,
+    }
+}
+
+fn kg_trust_score(node: &NodeRecord, now: u64) -> f32 {
+    let corroboration_bonus = (node.corroboration_count as f32 / CORROBORATION_SATURATION).min(1.0)
+        * CORROBORATION_MAX_BONUS;
+    let age_secs = now.saturating_sub(node.created_at) as f32;
+    let age_bonus = (age_secs / AGE_MATURITY_SECS).min(1.0) * AGE_MAX_BONUS;
+    (origin_base_score(node.origin) + corroboration_bonus + age_bonus).clamp(MIN_TRUST_SCORE, 1.0)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -269,11 +306,20 @@ impl ContextEngine {
             };
             let graph_distance = Self::graph_distance_score(distances.get(&node_id).copied());
             let interaction_frequency = working_set.interaction_frequency(node_id);
-            let score = 0.35 * recency
+            let base_score = 0.35 * recency
                 + 0.35 * explicit
                 + 0.20 * graph_distance
                 + 0.10 * interaction_frequency
                 + working_set.hysteresis_bonus(node_id);
+            // docs/17 T4's own mitigation: "Context retrieval weights candidate objects by
+            // Provenance Trust Score so an untrusted-origin object cannot silently outrank a
+            // corroborated one." Multiplicative, not additive -- this demotes a low-trust
+            // candidate relative to a well-attested one without ever re-deriving (and risking
+            // detuning) this method's own already-tuned `base_score` weights or thresholds, and
+            // `kg_trust_score`'s own real floor means this only ever demotes, never excludes,
+            // matching this method's own "excluded entirely, never merely down-ranked" convention
+            // being reserved for real Trust Boundary violations, not provenance distrust.
+            let score = base_score * kg_trust_score(&node, now_ts);
             scored.push((node_id, score, node));
         }
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));

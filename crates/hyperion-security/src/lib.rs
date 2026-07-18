@@ -57,11 +57,22 @@
 //!   crate's own capability-token layer, deliberately not duplicated as a second Noise-static-key
 //!   system — see `hyperion_ipc::noise_session`'s own doc comment for the full reasoning and its
 //!   real "session-key binding" (the handshake's own transcript hash).
-//! - **`ProvenanceRecord`/trust-scoring for Knowledge Graph poisoning
-//!   (T4).** `hyperion-knowledge-graph` already records `owner`/
-//!   `device_origin` per node (its own crate doc's "Per-object ACL
-//!   enforcement" deferral); layering a trust score on top with no
-//!   consumer yet is deferred alongside that.
+//! - ~~**`ProvenanceRecord`/trust-scoring for Knowledge Graph poisoning (T4).**~~ (2026-07-18) —
+//!   now real: `hyperion-knowledge-graph::NodeRecord` gained real `origin`
+//!   (`NodeOrigin`)/`corroboration_count` fields (docs/17 §6's `ProvenanceRecord.origin_type`/
+//!   `corroboration_count`), and [`provenance::kg_trust_score`] is the real docs/17 §5 scoring
+//!   function combining origin, corroboration, and age into T4's own named "Provenance Trust
+//!   Score." `hyperion-context::ContextEngine::assemble` is the real consumer, applying the score
+//!   as a real re-ranking weight so, per T4's own wording, "an untrusted-origin object cannot
+//!   silently outrank a corroborated one" — as a narrowed, local copy of this exact formula
+//!   (`hyperion_context::engine::kg_trust_score`), not a direct dependency on this crate: this
+//!   crate already transitively depends on `hyperion-context` (`hyperion-recovery ->
+//!   hyperion-agent-runtime -> hyperion-netstack -> hyperion-context`), so the reverse direction
+//!   is a hard Cargo cycle, confirmed by trying it — the same "narrowed local copy" pattern this
+//!   workspace already uses for this crate's own `SensitivityHint`/`hyperion-explainability`'s
+//!   `RecoveryPointId`/`SensitivityClass`. See [`provenance`]'s own doc comment for the full
+//!   scoring rationale (origin tiers, corroboration saturation, age-based maturity, and why the
+//!   floor demotes rather than excludes).
 //! - ~~**Blast-radius/sensitivity/reversibility *classifiers*.**~~ — narrowed, not fully closed:
 //!   [`engine::verify_action`] (wired into [`engine::assess_and_prepare`], the one real
 //!   production entry point) re-derives `scope_size` from the real `object_refs.len()` rather
@@ -77,10 +88,12 @@
 
 mod engine;
 mod model_integrity;
+mod provenance;
 mod types;
 
 pub use engine::{assess, assess_and_prepare, cross_agent_delegation_verify, verify_action};
 pub use model_integrity::canary_gate_model_promotion;
+pub use provenance::kg_trust_score;
 pub use types::{
     ActionId, CanaryResult, IntentProvenanceChain, InterventionLevel, ModelIntegrityRecord,
     OriginType, PendingAction, PromotionStatus, ProvenanceNode, RiskAssessment, SecurityError,

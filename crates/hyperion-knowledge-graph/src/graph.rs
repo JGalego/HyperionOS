@@ -10,8 +10,8 @@ use hyperion_storage::{StorageEngine, VersionId};
 use crate::index::GraphIndex;
 use crate::types::{
     EdgeConstraint, EdgeId, EdgeOrigin, EdgeRecord, ExplainRef, GraphError, GraphQuery,
-    GraphSnapshot, ImportReport, LinkOutcome, NodeId, NodeRecord, ObjectType, ProvenanceChain,
-    QueryHit, RankingRationale, Record, Subgraph,
+    GraphSnapshot, ImportReport, LinkOutcome, NodeId, NodeOrigin, NodeRecord, ObjectType,
+    ProvenanceChain, QueryHit, RankingRationale, Record, Subgraph,
 };
 
 fn now() -> u64 {
@@ -414,6 +414,40 @@ impl KnowledgeGraph {
         metadata: serde_json::Value,
         device_origin: u64,
     ) -> Result<NodeId, GraphError> {
+        self.put_node_with_provenance(
+            monitor,
+            token,
+            node_id,
+            object_type,
+            embedding,
+            metadata,
+            device_origin,
+            NodeOrigin::default(),
+        )
+    }
+
+    /// As [`Self::put_node_with_device_origin`], additionally recording a real
+    /// [`NodeOrigin`] — docs/17 §6's `ProvenanceRecord.origin_type`, this crate's own
+    /// previously-named "`ProvenanceRecord`/trust-scoring for Knowledge Graph poisoning (T4)"
+    /// gap, closed for the node-schema half (`hyperion-security`'s own `kg_trust_score` is the
+    /// real consumer). Like `device_origin`, `origin` always overwrites to reflect *this* write —
+    /// a node's most recently written version is what a trust score should describe, not a fixed
+    /// value frozen at first creation. `corroboration_count` is the one field here that is *not*
+    /// reset by a plain content update: it only ever changes via [`Self::corroborate_node`],
+    /// exactly the "independently reconfirmed" event docs/17 §6 names -- overwriting a node's own
+    /// metadata is not, by itself, a re-confirmation of it by anyone else.
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_node_with_provenance(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        node_id: Option<NodeId>,
+        object_type: impl Into<ObjectType>,
+        embedding: Option<Vec<f32>>,
+        metadata: serde_json::Value,
+        device_origin: u64,
+        origin: NodeOrigin,
+    ) -> Result<NodeId, GraphError> {
         self.require(monitor, token, RightsMask::WRITE)?;
         let caller_boundary = token.origin().0;
 
@@ -438,6 +472,7 @@ impl KnowledgeGraph {
         // handling already establishes for edges. `Self::delete_node` is the one real way a
         // tombstone is ever set; nothing here clears it.
         let tombstone = existing.is_some_and(|n| n.tombstone);
+        let corroboration_count = existing.map_or(0, |n| n.corroboration_count);
 
         let record = NodeRecord {
             object_type: object_type.into(),
@@ -445,6 +480,8 @@ impl KnowledgeGraph {
             metadata,
             owner: existing.map_or(caller_boundary, |n| n.owner),
             device_origin,
+            origin,
+            corroboration_count,
             created_at,
             updated_at: now(),
             tombstone,
@@ -456,6 +493,44 @@ impl KnowledgeGraph {
         index.apply(assigned_id, Record::Node(record));
         self.publish_changed(monitor, token, assigned_id.0, caller_boundary, Vec::new());
         Ok(assigned_id)
+    }
+
+    /// Real "independently reconfirmed" event for docs/17 §6's `ProvenanceRecord.
+    /// corroboration_count` -- increments an existing, owned, non-tombstoned node's count by one
+    /// and returns the new value. Capability-gated and owner-checked exactly like
+    /// [`Self::put_node_with_provenance`]'s own update path: a caller can only ever corroborate a
+    /// node its own Trust Boundary already owns, never a foreign one (`GraphError::NotFound`,
+    /// never revealing the node's existence otherwise).
+    pub fn corroborate_node(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        node_id: NodeId,
+    ) -> Result<u32, GraphError> {
+        self.require(monitor, token, RightsMask::WRITE)?;
+        let caller_boundary = token.origin().0;
+
+        let mut index = self.index.lock().unwrap();
+        let expected_version = self.storage.current_version(node_id);
+        let existing = index
+            .nodes
+            .get(&node_id)
+            .filter(|n| !n.tombstone && n.owner == caller_boundary)
+            .cloned()
+            .ok_or(GraphError::NotFound)?;
+
+        let record = NodeRecord {
+            corroboration_count: existing.corroboration_count.saturating_add(1),
+            updated_at: now(),
+            ..existing
+        };
+        let new_count = record.corroboration_count;
+        let payload = serde_json::to_value(Record::Node(record.clone())).unwrap();
+        self.storage
+            .put_object(monitor, token, Some(node_id), expected_version, payload)?;
+        index.apply(node_id, Record::Node(record));
+        self.publish_changed(monitor, token, node_id.0, caller_boundary, Vec::new());
+        Ok(new_count)
     }
 
     /// `graph.get` — docs/09 §6. docs/09 §8's "capability-checked at every hop, not merely at

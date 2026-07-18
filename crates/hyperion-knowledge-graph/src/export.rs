@@ -111,6 +111,8 @@ mod tests {
             metadata: serde_json::json!({"title": "a real doc"}),
             owner: 1,
             device_origin: 42,
+            origin: crate::types::NodeOrigin::default(),
+            corroboration_count: 0,
             created_at: 100,
             updated_at: 100,
             tombstone: false,
