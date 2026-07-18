@@ -41,6 +41,89 @@ See [`CHANGELOG.md`](CHANGELOG.md) for what's new in each release.
 - **Accessible by default**: generated UI with accessibility built in, not bolted on
 - **Fully explainable**: every action traceable, reversible, and undoable
 
+<details>
+<summary>Here's the <strong>full</strong> list of features per crate.</summary><br>
+
+- **Capability tokens** (`hyperion-capability`) — unforgeable, scoped, revocable, attenuable tokens; the security primitive every other crate builds on.
+- **Device identity & signing** (`hyperion-crypto`) — a persisted Ed25519 keystore signs and verifies content workspace-wide.
+- **Encrypted secrets & sealed streams** (`hyperion-crypto`) — ChaCha20-Poly1305 secret storage and a reusable per-record encryption-at-rest primitive.
+- **Cross-device key exchange** (`hyperion-crypto`) — real X25519 Diffie-Hellman key agreement for encrypted, authenticated sync.
+- **WAL-backed storage engine** (`hyperion-storage`) — a write-ahead log is the sole atomicity boundary, with optimistic concurrency and crash-consistent replay recovery.
+- **Compaction & per-object purge** (`hyperion-storage`) — collapses version history to current heads, or removes one object's full history for crypto-shred-grade erasure.
+- **Opt-in encryption at rest** (`hyperion-storage`) — each WAL record can be sealed under a fresh, device-derived key.
+- **Real Linux resource enforcement** (`hyperion-cgroups`) — translates scheduler decisions into real cgroups v2 CPU/memory/PID limits and `SCHED_DEADLINE` scheduling.
+- **Kernel-enforced process sandboxing** (`hyperion-trust-boundary`) — real user namespaces, Landlock, and seccomp-bpf enforce a capability grant on an actually-spawned process.
+- **Supervised PID 1 boot** (`hyperion-init`) — a real Linux init that mounts filesystems and launches every subsystem under a capability-scoped supervision tree.
+- **Process supervision** (`hyperion-supervisor`) — Erlang/OTP-style fork, crash-detect, and respawn under a freshly minted grant, with give-up/alerting after repeated fast failures.
+- **Capability-gated IPC** (`hyperion-ipc`) — call/response and notify messaging over an in-process bus or real Unix domain sockets between processes.
+- **Noise-protocol encrypted sessions** (`hyperion-ipc`) — real `Noise_NN` handshakes seal every IPC claim instead of plaintext.
+- **Admission control & fair dispatch** (`hyperion-scheduler`) — Weighted-EDF + Dominant-Resource-Fair scheduling across CPU/RAM/GPU/storage/network/inference-tokens/battery.
+- **Model-tier degradation & federated offload** (`hyperion-scheduler`) — retries at a cheaper model tier, or offloads to a peer device, when local resources don't fit.
+- **Live load-signal feedback** (`hyperion-scheduler`) — real EWMA-derived CPU/battery/thermal signals from telemetry feed scheduling decisions.
+- **Capability-scoped event bus** (`hyperion-events`) — publish/subscribe with per-subscription delivery-class/backpressure policy and durable replay recovery.
+- **Tiered device pairing & presence** (`hyperion-device`) — view/sense/actuate-tiered pairing with explicit confirmation for actuation, plus a real connectivity state machine.
+- **Signed manifests & KG mirroring** (`hyperion-device`) — Ed25519-signed device manifests, mirrored live as Knowledge Graph nodes.
+- **Web research pipeline** (`hyperion-netstack`) — real HTTP/TLS/DNS fetch, prompt-injection quarantine scanning, entity extraction, and Knowledge Graph merge under domain-egress grants.
+- **Structured signal extraction** (`hyperion-netstack`) — parses real schema.org/JSON-LD/OpenGraph microformats and respects `robots.txt`.
+- **Cross-device capability offload** (`hyperion-federation`) — scores and places capability calls on remote devices, and migrates in-flight agent sessions between instances.
+- **Encrypted device sync** (`hyperion-federation`) — sealed, signed TCP transport carries ledger publications and anti-entropy Knowledge Graph replication.
+- **Privacy-tier consent routing** (`hyperion-privacy`) — deny-by-default, never-assume-consent gate backed by a signed, revocable consent ledger.
+- **Consent-gated erasure** (`hyperion-privacy`) — soft-delete with an undoable grace period, or crypto-shred with full WAL purge.
+- **Risk-assessment engine** (`hyperion-security`) — a composite risk score (blast radius, reversibility, sensitivity, provenance) triggers backup-then-confirm gating, with hard floors for tainted or irreversible actions.
+- **Provenance trust scoring** (`hyperion-security`) — re-ranks Knowledge Graph context by real origin/corroboration/age trust, defending against poisoned data.
+- **Recovery points & conflict-aware undo** (`hyperion-recovery`) — bounded pre-action snapshots with undo/redo that detects real conflicts instead of blind restoration.
+- **Crash recovery** (`hyperion-recovery`) — automatically rolls back every in-flight action and respawns a fresh agent on restart.
+- **Tamper-evident audit ledger** (`hyperion-observability`) — a BLAKE3 hash-chained, Ed25519-anchored log detects corruption or gaps, with background self-verification.
+- **Telemetry & cross-device tracing** (`hyperion-observability`) — metrics/logs/spans with retention-based compaction and real distributed-trace reconstruction across devices.
+- **Explanation records** (`hyperion-explainability`) — every autonomous action opens a queryable explain-then-commit record with reasoning, confidence, and evidence.
+- **Self-consistency confidence** (`hyperion-explainability`) — real repeated-sampling confidence scoring with rolling calibration tracking per agent/capability.
+- **Staged, health-gated rollout** (`hyperion-update`) — signature-verified updates advance through 1%/10%/50%/100% stages, auto-rolling back on a health breach.
+- **A/B image rollback** (`hyperion-update`) — slot-pointer-flip rollback with anti-rollback protection against re-flashing downgraded images.
+- **Release candidate gate** (`hyperion-release-gate`) — aggregates test/benchmark results (with statistical regression checks) into one pass/block/quarantine decision.
+- **Capability degradation ladder** (`hyperion-scalability`) — cheaper tier → alternate implementation → consented cloud upgrade → disable, checked against real scheduler headroom.
+- **Multi-tenant KG partitioning** (`hyperion-scalability`) — tenant-scoped nodes/edges block cross-tenant writes unless explicitly granted.
+- **Threat regression catalog** (`hyperion-threat-model`) — eight attacker-goal/mitigation pairs, each backed by a passing cross-crate regression test.
+- **Plugin manifest gate** (`hyperion-plugin-framework`) — rejects over-requested permissions before consent, mints exactly the requested tokens, cascade-revokes on uninstall.
+- **Signed plugin install/update** (`hyperion-plugin-framework`) — verifies real Ed25519 publisher signatures and shows only newly-added grants on update.
+- **Third-party capability test harness** (`hyperion-sdk`) — golden-case and static permission checks gate a capability before it's signed and installed.
+- **Generated-code review pipeline** (`hyperion-sdk`) — freshly generated Rust is rejected on `unsafe`, then actually compiled and clippy-linted before install.
+- **Unified capability gateway** (`hyperion-api-gateway`) — one authenticated entry point routes Intent/Knowledge-Graph/Memory/Context calls to their real backends.
+- **Ensemble verification dispatch** (`hyperion-api-gateway`) — re-runs a second, architecturally distinct implementation to cross-check high-stakes results.
+- **Sandboxed legacy app compatibility** (`hyperion-compat`) — runs Windows/Linux/Android-style sessions in a real Linux namespace/Landlock/seccomp sandbox with default-deny filesystem access.
+- **Real headless web rendering** (`hyperion-compat`) — fetches and renders pages via a real headless Chromium binary, returning the actual post-script DOM.
+- **Unified node/edge graph** (`hyperion-knowledge-graph`) — typed, weighted, bidirectionally-traversable graph with vector similarity search, materialized over a durable WAL.
+- **Owner-scoped ACL & tombstoning** (`hyperion-knowledge-graph`) — per-object access control, real deletion, and full WAL-history purge for crypto-shred-grade erasure.
+- **Explainable ranking & decay** (`hyperion-knowledge-graph`) — shows why a result ranked where it did, and decays/prunes low-confidence inferred edges over time.
+- **Query-as-navigation virtual filesystem** (`hyperion-semantic-fs`) — synthesizes stable virtual folder paths from structured or POSIX-style queries over the live graph.
+- **Real mounted FUSE filesystem** (`hyperion-semantic-fs`) — a genuine, kernel-mounted POSIX view of the Knowledge Graph on Linux.
+- **Universal search** (`hyperion-semantic-fs`) — resolves natural-language mentions ("everything about my vacation") into folder queries.
+- **Four-tier memory** (`hyperion-memory`) — Episodic/Semantic/Procedural/Long-Term tiers with decay-weighted consolidation and frequency-gated promotion.
+- **Model-assisted salience & distillation** (`hyperion-memory`) — real model-generated salience scoring and working-memory-to-episodic summarization.
+- **HTN utterance decomposition** (`hyperion-intent`) — parses utterances into dependency-linked Intent Graphs via deterministic template matching, stored as real graph nodes.
+- **Model-generated fallback planning** (`hyperion-intent`) — an utterance matching no template gets a real, model-generated step plan instead of an inert root.
+- **"Think mode" checkpoint** (`hyperion-intent`) — pauses decomposition for explicit human confirmation before committing to what a goal means.
+- **Context bundle assembly** (`hyperion-context`) — relevance-ranked, budget-bounded context from a live Knowledge Graph, weighted by provenance trust.
+- **Signed context propagation** (`hyperion-context`) — cryptographically signed, trust-level-redacted context envelopes across trust boundaries.
+- **Adaptive expertise estimation** (`hyperion-context`) — tracks real vocabulary/capability/error-recovery signals into a blended user expertise estimate.
+- **Weighted model/implementation selection** (`hyperion-model-router`) — candidate-gathering → privacy-gate → feasibility-gate → weighted-scoring pipeline with fallback chains and a circuit breaker.
+- **Canary rollout routing** (`hyperion-model-router`) — deterministically samples a declared traffic percentage into health-gated canary candidates.
+- **Local model inference** (`hyperion-ai-runtime`) — a real Candle-loaded model runs on CPU with hardware-adaptive tier step-down and cancellable inference.
+- **Pluggable cloud/local backends** (`hyperion-ai-runtime`) — real Ollama/vLLM, OpenAI, Anthropic, and Gemini backends, each consent-gated for cloud use.
+- **Signed model catalog** (`hyperion-ai-runtime`) — Ed25519 + BLAKE3 verified catalog checks model file integrity before load.
+- **Capability-gated agent lifecycle** (`hyperion-agent-runtime`) — agents run as capability-scoped roles with a consent-gated broker and a runaway-failure circuit breaker.
+- **Real AI/web/cloud dispatch** (`hyperion-agent-runtime`) — `assistant.respond`, `web.research`, and cloud provider calls dispatch to real backends under per-call consent.
+- **Multi-agent task allocation** (`hyperion-coordination`) — assigns HTN-decomposed tasks to trust-tier-eligible agents, with automatic retry-then-escalation on failure.
+- **"Protect the Human" judgment tagging** (`hyperion-coordination`) — flags tasks needing taste/empathy judgment versus purely mechanical ones.
+- **Recovery & explainability integration** (`hyperion-coordination`) — every dispatch opens an Explanation Record and a scoped recovery point for undo.
+- **Text-console assistant pipeline** (`hyperion-console`) — a typed utterance drives Intent parsing, coordination/dispatch, and workspace-rendered text output end to end.
+- **Real visual rendering & OS accessibility** (`hyperion-shell`) — the same compiled Workspace as the console, rendered as real pixels with genuine NVDA/VoiceOver/Orca screen-reader exposure.
+- **Dual visual/accessibility compilation** (`hyperion-workspace`) — one pass compiles both a visual graph and a semantic accessibility tree, so they can never drift apart.
+- **Multiple modality projections** (`hyperion-workspace`) — screen-reader linearization, voice-control grammar, and switch-scan grouping, all derived from one UI contract.
+- **Live incremental re-rendering** (`hyperion-workspace`) — diffs and patches just the affected panel instead of recompiling the whole workspace.
+- **Shared turn pipeline** (`hyperion-turn`) — one utterance→outcome→workspace pipeline shared between the console and visual shell, not duplicated in each.
+
+</details>
+
 ## 🧭 Philosophy
 
 > Your goals are the operating system.
