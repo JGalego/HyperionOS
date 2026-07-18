@@ -5,6 +5,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use hyperion_ai_runtime::{CapabilityContract, InferenceRequest, LocalAiRuntime, ModelClass};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
+use hyperion_explainability::{ControlState, ExplanationStore, ReasoningStep};
 use hyperion_memory::{MemoryEngine, MemoryFilter, MemoryTier};
 use hyperion_model_router::ModelRouter;
 use hyperion_netstack::{FreshnessPolicy, NetstackHub, WebResolutionRequest};
@@ -90,8 +91,11 @@ enum PreparedInvoke {
     /// quota exceeded).
     Resolved(InvokeOutcome),
     /// Admitted; carries the real Scheduler ticket [`AgentRuntime::invoke`]'s own phase 3 must
-    /// `complete` once the real dispatch (phase 2, no lock held) returns.
-    Proceed(TaskId),
+    /// `complete` once the real dispatch (phase 2, no lock held) returns, plus this instance's
+    /// own real `bound_intent` (if any) at admission time -- captured here, under the same
+    /// `instances` lock this function already holds, so [`AgentRuntime::invoke`] never needs a
+    /// second lock acquisition just to open a real Explanation Record before phase 2's dispatch.
+    Proceed(TaskId, Option<u64>),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -152,6 +156,13 @@ pub struct AgentRuntime {
     /// callers have no `MemoryEngine` (itself needing a real `Arc<KnowledgeGraph>`) at all. See
     /// [`Self::spawn`]'s own doc comment for what a fresh instance actually does with it.
     memory: Option<Arc<MemoryEngine>>,
+    /// This crate's own previously-named "agent-runtime/explainability Cargo cycle" gap, real
+    /// now that it's resolved -- see [`Self::with_explainability`]'s own doc comment. `Option`,
+    /// same reasoning as every other optional dependency here: most existing callers (this
+    /// crate's own tests, and any caller that already wraps `invoke()` with its own Explanation
+    /// Record the way `hyperion-federation`/`hyperion-coordination` do) have no need to also
+    /// record one here and would double up if this were on by default.
+    explainability: Option<Arc<ExplanationStore>>,
 }
 
 impl AgentRuntime {
@@ -233,7 +244,25 @@ impl AgentRuntime {
             netstack,
             plugins,
             memory,
+            explainability: None,
         }
+    }
+
+    /// Opts this runtime into real, automatic Explanation Record keeping around every
+    /// [`Self::invoke`] dispatch -- this crate's own previously-named "agent-runtime/
+    /// explainability Cargo cycle" gap (`hyperion-explainability` depended, transitively via
+    /// `hyperion-recovery`/`hyperion-privacy`, right back on this crate; both of those
+    /// dependencies were narrowed to local type copies on `hyperion-explainability`'s own side to
+    /// break it -- see that crate's own doc comment). `hyperion-console`'s own real dispatches
+    /// (`run_teach`, every decomposed task's real Agent invocation) had no Explanation Record
+    /// wiring at all before this, unlike `hyperion-federation`/`hyperion-coordination`, which each
+    /// wrap their own external calls into [`Self::invoke`] with their own separate record. `Option`
+    /// (via this chainable builder, not a required constructor parameter): a caller that already
+    /// wraps `invoke()` externally should not also wire this in, or every real dispatch would be
+    /// recorded twice.
+    pub fn with_explainability(mut self, store: Arc<ExplanationStore>) -> Self {
+        self.explainability = Some(store);
+        self
     }
 
     /// The same, optional `PluginRegistry` [`Self::invoke`] already dispatches an unrecognized
@@ -418,10 +447,18 @@ impl AgentRuntime {
     ) -> Result<InvokeOutcome, AgentError> {
         self.require(monitor, token, RightsMask::EXEC)?;
 
-        let ticket = match self.prepare_invoke(monitor, token, instance_id, capability_ref)? {
-            PreparedInvoke::Resolved(outcome) => return Ok(outcome),
-            PreparedInvoke::Proceed(ticket) => ticket,
-        };
+        let (ticket, bound_intent) =
+            match self.prepare_invoke(monitor, token, instance_id, capability_ref)? {
+                PreparedInvoke::Resolved(outcome) => return Ok(outcome),
+                PreparedInvoke::Proceed(ticket, bound_intent) => (ticket, bound_intent),
+            };
+
+        // Real, optional Explanation Record keeping (see `Self::with_explainability`'s own doc
+        // comment) -- opened here, before phase 2's dispatch, and closed just below it, exactly
+        // the `begin`-then-`transition` shape `hyperion-federation::FederationHub::
+        // dispatch_offload` already established for wrapping this same real dispatch externally.
+        let explanation =
+            self.begin_explanation(monitor, token, instance_id, capability_ref, bound_intent);
 
         // Phase 2: the real capability dispatch, with no lock held -- see this function's own
         // doc comment.
@@ -455,6 +492,14 @@ impl AgentRuntime {
         } else {
             stubs::dispatch(capability_ref, &args)
         };
+
+        self.finish_explanation(
+            monitor,
+            token,
+            explanation,
+            capability_ref,
+            &dispatch_result,
+        );
 
         // Phase 3: re-acquire the lock only to record the real outcome.
         let _ = self.scheduler.lock().unwrap().complete(ticket);
@@ -506,6 +551,74 @@ impl AgentRuntime {
                 Ok(InvokeOutcome::Failed(reason))
             }
         }
+    }
+
+    /// Opens a real Explanation Record for this dispatch if [`Self::with_explainability`] wired a
+    /// store in -- `None` (no record opened) if no store is wired, or if `begin` itself fails
+    /// (an unauthorized token, most concretely: `invoke`'s own `RightsMask::EXEC` check happened
+    /// already, but `ExplanationStore::begin` requires `RightsMask::WRITE`, a real, separate
+    /// right this caller's token might not hold). Never fails `invoke` itself -- explainability is
+    /// an ancillary record of what happened, not a precondition for it happening.
+    fn begin_explanation(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        instance_id: u64,
+        capability_ref: &str,
+        bound_intent: Option<u64>,
+    ) -> Option<(Arc<ExplanationStore>, u64)> {
+        let store = self.explainability.as_ref()?;
+        let action_id = store.next_action_id();
+        let explanation_id = store
+            .begin(
+                monitor,
+                token,
+                action_id,
+                bound_intent.unwrap_or(0),
+                instance_id,
+                capability_ref,
+                Vec::new(),
+                now(),
+            )
+            .ok()?;
+        Some((store.clone(), explanation_id))
+    }
+
+    /// Closes out a real Explanation Record [`Self::begin_explanation`] opened -- a no-op if
+    /// nothing was opened (no store wired, or `begin` itself failed). Appends one real
+    /// `ReasoningStep` naming this dispatch's own capability, then transitions to
+    /// `ControlState::Completed`/`RolledBack` based on `dispatch_result`'s real outcome, mirroring
+    /// `FederationHub::dispatch_offload`'s own real convention for the same two states.
+    fn finish_explanation(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        explanation: Option<(Arc<ExplanationStore>, u64)>,
+        capability_ref: &str,
+        dispatch_result: &Result<serde_json::Value, String>,
+    ) {
+        let Some((store, explanation_id)) = explanation else {
+            return;
+        };
+        let _ = store.append_step(
+            monitor,
+            token,
+            explanation_id,
+            ReasoningStep {
+                step_index: 0,
+                description: format!("invoked {capability_ref}"),
+                capability_ref: Some(capability_ref.to_string()),
+                inputs_ref: Vec::new(),
+                output_ref: None,
+            },
+            Vec::new(),
+        );
+        let final_state = if dispatch_result.is_ok() {
+            ControlState::Completed
+        } else {
+            ControlState::RolledBack
+        };
+        let _ = store.transition(monitor, token, explanation_id, final_state);
     }
 
     /// The real "comes out stronger" half: a real success streak after a resume earns back a
@@ -690,7 +803,7 @@ impl AgentRuntime {
 
         instance.state = LifecycleState::Executing;
         instance.quota.calls_used_this_window += 1;
-        Ok(PreparedInvoke::Proceed(ticket))
+        Ok(PreparedInvoke::Proceed(ticket, instance.bound_intent))
     }
 
     /// The one Capability [`Self::invoke`] dispatches to a real backend rather than

@@ -15,6 +15,12 @@ hyperion-capability = { workspace = true }
 hyperion-memory = { workspace = true }
 hyperion-model-router = { workspace = true }
 hyperion-netstack = { workspace = true }
+# Real, optional (Option<Arc<...>>, same shape as `NetstackHub`/`PluginRegistry` below) Explanation
+# Record wiring around every real `AgentRuntime::invoke` dispatch -- this crate's own previously
+# named "agent-runtime/explainability Cargo cycle" gap, resolved on hyperion-explainability's own
+# side (it no longer depends on hyperion-recovery/hyperion-privacy, which is what made this a hard
+# cycle before). See `AgentRuntime::with_explainability`'s own doc comment.
+hyperion-explainability = { workspace = true }
 # Real, optional (Option<Arc<...>>, same shape as `NetstackHub` below) dispatch to an installed
 # plugin's own real `NativeBinary` implementation when `capability_ref` isn't one of this crate's
 # own hardcoded constants -- docs/998-roadmap.md's Slice 1, closing this crate's own

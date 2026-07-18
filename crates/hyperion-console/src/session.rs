@@ -30,6 +30,7 @@ use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustB
 use hyperion_context::{Budget, ContextBundle, ExpertiseEstimate, ExpertiseLevel, Scope};
 use hyperion_coordination::{CoordinationSession, TaskNode};
 use hyperion_crypto::{Keystore, SecretStore};
+use hyperion_explainability::ExplanationStore;
 use hyperion_intent::{HandleOutcome, IntentEngine};
 use hyperion_knowledge_graph::{GraphError, KnowledgeGraph, NodeId};
 use hyperion_memory::{MemoryEngine, MemoryTier};
@@ -383,11 +384,19 @@ impl ConsoleSession {
         let memory = MemoryEngine::new(graph.clone());
 
         let plugins = Arc::new(PluginRegistry::new());
-        let agent_runtime = Arc::new(AgentRuntime::new_with_netstack_and_plugins(
-            ai_runtime.clone(),
-            Some(netstack.clone()),
-            Some(plugins.clone()),
-        ));
+        // Real, automatic Explanation Record keeping around every real dispatch this session's
+        // own `agent_runtime.invoke` makes -- `AgentRuntime::with_explainability`'s own real
+        // production caller, previously unreachable until a real Cargo cycle on
+        // `hyperion-explainability`'s own side was resolved (see that method's own doc comment).
+        let explainability = Arc::new(ExplanationStore::new());
+        let agent_runtime = Arc::new(
+            AgentRuntime::new_with_netstack_and_plugins(
+                ai_runtime.clone(),
+                Some(netstack.clone()),
+                Some(plugins.clone()),
+            )
+            .with_explainability(explainability),
+        );
         let coordination = CoordinationSession::new(agent_runtime.clone(), graph);
 
         let assistant_manifest = hyperion_coordination::default_manifests()

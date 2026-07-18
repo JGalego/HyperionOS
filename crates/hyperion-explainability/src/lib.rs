@@ -23,10 +23,18 @@
 //! — resolves by `action_id` alone (never requires already knowing an
 //! internal record id), and at `Depth::Full` walks `parent_records`
 //! depth-first exactly as the doc's multi-agent merge describes.
-//! `undo_ref`/`privacy_class` reuse `hyperion-recovery`'s
-//! `RecoveryPointId` and `hyperion-privacy`'s `SensitivityClass` directly
-//! — composing already-real crates rather than re-mocking their
-//! concerns, per this workspace's own convention.
+//! `undo_ref`/`privacy_class` are typed as [`types::RecoveryPointId`]/[`types::SensitivityClass`]
+//! — narrowed local copies of `hyperion-recovery`'s `RecoveryPointId` (a bare `u64` alias, so
+//! values pass through unchanged) and `hyperion-privacy`'s `SensitivityClass`, not those crates'
+//! own types directly. This crate's own previously-named "agent-runtime/explainability Cargo
+//! cycle" gap depended on exactly this: `hyperion-recovery` depends on `hyperion-agent-runtime`
+//! (for its own real crash-recovery re-spawn), and `hyperion-privacy` depends on
+//! `hyperion-recovery` (for its own real erasure grace period) — so this crate depending on
+//! either, for nothing more than a `u64` alias and a 4-variant enum, would have made
+//! `hyperion-agent-runtime` depending on *this* crate a hard Cargo cycle. Narrowing both types
+//! locally (the same precedent `hyperion-security::SensitivityHint` already established) breaks
+//! that cycle for real, and `hyperion_agent_runtime::AgentRuntime::with_explainability` is the
+//! new real caller it unblocks — see that crate's own doc comment.
 //!
 //! Deliberately deferred, and why:
 //!
@@ -134,5 +142,5 @@ pub use store::ExplanationStore;
 pub use types::{
     ActionId, Alternative, CalibrationScore, ConfidenceMethod, ConfidenceScore, ControlState,
     Depth, EvidenceRef, ExplainabilityError, ExplanationId, ExplanationLookup, ExplanationRecord,
-    ExplanationView, ReasoningStep,
+    ExplanationView, ReasoningStep, RecoveryPointId, SensitivityClass,
 };

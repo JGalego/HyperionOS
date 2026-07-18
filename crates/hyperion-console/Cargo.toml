@@ -16,6 +16,12 @@ hyperion-capability = { workspace = true }
 hyperion-context = { workspace = true }
 hyperion-coordination = { workspace = true }
 hyperion-crypto = { workspace = true }
+# Real, automatic Explanation Record keeping around every real Agent invocation this session
+# dispatches -- `hyperion-agent-runtime::AgentRuntime::with_explainability`'s own real production
+# caller. Previously unreachable from this crate: `hyperion-agent-runtime` could not depend on
+# this crate directly until a real Cargo cycle on `hyperion-explainability`'s own side was
+# resolved (see that crate's doc comment).
+hyperion-explainability = { workspace = true }
 hyperion-intent = { workspace = true }
 hyperion-knowledge-graph = { workspace = true }
 # Real, encrypted-nowhere-else "was this meaningful?" reflection signal (docs/998-roadmap.md's

@@ -1,9 +1,29 @@
 use hyperion_knowledge_graph::NodeId;
-use hyperion_privacy::SensitivityClass;
-use hyperion_recovery::RecoveryPointId;
 
 pub type ExplanationId = u64;
 pub type ActionId = u64;
+
+/// A narrowed local copy of `hyperion-recovery`'s own `RecoveryPointId` (itself a bare `u64`
+/// alias) -- this crate's own previously-named "agent-runtime/explainability Cargo cycle" gap,
+/// closed by never depending on `hyperion-recovery` (or, transitively through it,
+/// `hyperion-privacy`) just for a plain integer id. `hyperion_recovery::RecoveryPointId` values
+/// pass through here unchanged (`type` aliases are structurally transparent), so no caller-side
+/// conversion is needed.
+pub type RecoveryPointId = u64;
+
+/// A narrowed local copy of `hyperion-privacy`'s own `SensitivityClass` -- the same
+/// dependency-avoidance this crate's `RecoveryPointId` above uses, and the same precedent
+/// `hyperion-security::SensitivityHint` already established for the identical reason. Every
+/// caller in this workspace always passes `None` for the field this backs today (see
+/// [`ExplanationRecord::privacy_class`]'s own doc comment) — no real value ever needs to convert
+/// between the two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SensitivityClass {
+    Public,
+    Personal,
+    Sensitive,
+    Restricted,
+}
 
 /// docs/18 §4's `ControlState`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +100,10 @@ pub struct ExplanationRecord {
     pub alternatives: Vec<Alternative>,
     pub undo_ref: Option<RecoveryPointId>,
     pub trust_boundary_span: Vec<u64>,
+    /// Recorded for a future consumer to act on, never enforced by this crate -- see this
+    /// crate's own doc comment's "Encryption-at-privacy-tier of the store itself" bullet. Every
+    /// real caller in this workspace passes `None` today; no crate here has a real signal to
+    /// populate it with yet.
     pub privacy_class: Option<SensitivityClass>,
     pub parent_records: Vec<ExplanationId>,
     pub child_records: Vec<ExplanationId>,

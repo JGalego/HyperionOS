@@ -132,14 +132,20 @@
 //!   A full [13 — Dynamic UI Runtime](../13-dynamic-ui-runtime.md)-style graphical consent
 //!   surface (Phase 5) remains its own, separate, later scope — this is a real text-console
 //!   round trip, not that.
-//! - **`hyperion-explainability` integration.** This crate cannot depend
-//!   on `hyperion-explainability` directly — `hyperion-explainability`
-//!   depends on `hyperion-recovery`, which itself depends on this crate
-//!   (for crash-recovery reconciliation against in-flight Agent state),
-//!   so a direct dependency here would be a real cycle. Explanation
-//!   Record wiring for a dispatched Capability call belongs one layer up,
-//!   in whichever crate calls [`AgentRuntime::invoke`] (`hyperion-coordination`,
-//!   `hyperion-federation`) and isn't itself downstream of `hyperion-recovery`.
+//! - ~~**`hyperion-explainability` integration.**~~ (2026-07-18) — now real:
+//!   [`AgentRuntime::with_explainability`] wires a real `hyperion_explainability::ExplanationStore`
+//!   in, and [`AgentRuntime::invoke`] opens a real Explanation Record around its own dispatch
+//!   (`begin` before phase 2, `append_step` + `transition` to `Completed`/`RolledBack` right
+//!   after it). The real cycle this bullet used to name — `hyperion-explainability` depended,
+//!   transitively via `hyperion-recovery`/`hyperion-privacy`, right back on this crate — was
+//!   resolved on `hyperion-explainability`'s own side: it narrowed its `RecoveryPointId`/
+//!   `SensitivityClass` fields to local type copies (the same precedent
+//!   `hyperion-security::SensitivityHint` already established) instead of depending on those two
+//!   crates for nothing more than a `u64` alias and a 4-variant enum. `Option`, not automatic: a
+//!   caller that already wraps `invoke()` externally with its own Explanation Record
+//!   (`hyperion-coordination`, `hyperion-federation`) should not also wire this in, or every real
+//!   dispatch would be recorded twice. `hyperion-console` — which had no Explanation Record
+//!   wiring at all before this — is the new real, direct beneficiary.
 
 mod broker;
 mod runtime;

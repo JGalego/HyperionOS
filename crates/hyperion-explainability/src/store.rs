@@ -2,16 +2,15 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::types::{
+    ActionId, Alternative, CalibrationScore, ConfidenceScore, ControlState, EvidenceRef,
+    ExplainabilityError, ExplanationId, ExplanationLookup, ExplanationRecord, ReasoningStep,
+    RecoveryPointId,
+};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_events::{
     BackpressurePolicy, DeliveryClass, EventBus, EventPayload, SubjectId, SubscriptionId, Topic,
     TopicKind, TopicPattern,
-};
-use hyperion_recovery::RecoveryPointId;
-
-use crate::types::{
-    ActionId, Alternative, CalibrationScore, ConfidenceScore, ControlState, EvidenceRef,
-    ExplainabilityError, ExplanationId, ExplanationLookup, ExplanationRecord, ReasoningStep,
 };
 
 /// docs/18 §5's explain-then-commit: a record is assembled *during*
