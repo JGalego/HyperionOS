@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { hero } from "@/content/hero";
 import { Button } from "@/components/ui/Button";
 import { Container } from "@/components/ui/Container";
@@ -16,6 +17,13 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 export function Hero() {
   const { progress, done } = useLoader();
+  const [clicks, setClicks] = useState(0);
+  const message =
+    clicks === 0
+      ? null
+      : clicks <= hero.progressEasterEgg.length
+        ? hero.progressEasterEgg[clicks - 1]
+        : `Click count: ${clicks}. That number's real. Enjoy it.`;
 
   return (
     <section
@@ -29,38 +37,56 @@ export function Hero() {
         {/* Same grid cell as the content below, so the counter and the headline/subhead/CTAs
             crossfade in place instead of one pushing the other around as it appears. */}
         <div
-          aria-hidden="true"
-          className={`relative col-start-1 row-start-1 flex items-center justify-center transition-opacity duration-300 ${
-            done ? "opacity-0" : "opacity-100"
+          aria-hidden={done}
+          className={`relative col-start-1 row-start-1 flex flex-col items-center justify-center gap-3 transition-opacity duration-300 ${
+            done ? "pointer-events-none opacity-0" : "opacity-100"
           }`}
         >
-          {/* Rotated -90deg so the fill starts at 12 o'clock instead of SVG's default 3 o'clock,
-              echoing the same clockwise sweep as the swirl in the Hyperion mark below. */}
-          <svg viewBox="0 0 100 100" className="absolute h-36 w-36 -rotate-90 sm:h-44 sm:w-44">
-            <circle cx="50" cy="50" r={RING_RADIUS} fill="none" stroke="var(--color-border)" strokeWidth="2" />
-            <circle
-              cx="50"
-              cy="50"
-              r={RING_RADIUS}
-              fill="none"
-              stroke="var(--color-accent)"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeDasharray={RING_CIRCUMFERENCE}
-              strokeDashoffset={RING_CIRCUMFERENCE * (1 - progress / 100)}
-            />
-          </svg>
-          <span
-            className="font-mono text-3xl tabular-nums sm:text-4xl"
-            style={{ color: `color-mix(in srgb, var(--color-accent) ${progress}%, var(--color-fg-muted))` }}
-          >
-            {Math.round(progress)}%
-          </span>
+          <div className="relative flex h-36 w-36 items-center justify-center sm:h-44 sm:w-44">
+            {/* Rotated -90deg so the fill starts at 12 o'clock instead of SVG's default 3
+                o'clock, echoing the same clockwise sweep as the swirl in the Hyperion mark
+                below. Absolutely-positioned elements paint above static ones regardless of DOM
+                order, so without pointer-events-none this decorative ring -- not the button
+                inside it -- would be what actually receives the click. */}
+            <svg
+              viewBox="0 0 100 100"
+              className="pointer-events-none absolute h-36 w-36 -rotate-90 sm:h-44 sm:w-44"
+            >
+              <circle cx="50" cy="50" r={RING_RADIUS} fill="none" stroke="var(--color-border)" strokeWidth="2" />
+              <circle
+                cx="50"
+                cy="50"
+                r={RING_RADIUS}
+                fill="none"
+                stroke="var(--color-accent)"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeDasharray={RING_CIRCUMFERENCE}
+                strokeDashoffset={RING_CIRCUMFERENCE * (1 - progress / 100)}
+              />
+            </svg>
+            {/* For whoever's wondering whether this number tracks anything real -- it doesn't.
+                Click it. Keep clicking it. */}
+            <button
+              type="button"
+              tabIndex={done ? -1 : 0}
+              aria-expanded={clicks > 0}
+              title="Yes, we know."
+              aria-label="Reveal what this counter actually tracks"
+              onClick={() => setClicks((c) => c + 1)}
+              className="font-mono text-3xl tabular-nums cursor-help sm:text-4xl"
+              style={{ color: `color-mix(in srgb, var(--color-accent) ${progress}%, var(--color-fg-muted))` }}
+            >
+              {Math.round(progress)}%
+            </button>
+          </div>
+
+          {message && <p className="max-w-72 text-center font-mono text-xs text-fg-muted">{message}</p>}
         </div>
 
         <div
           className={`col-start-1 row-start-1 flex flex-col items-center transition-all duration-700 ease-out ${
-            done ? "opacity-100" : "translate-y-3 opacity-0"
+            done ? "opacity-100" : "pointer-events-none translate-y-3 opacity-0"
           }`}
         >
           <HeroMark />
