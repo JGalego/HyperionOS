@@ -2,12 +2,11 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { site } from "@/content/site";
 import { siteUrl, jsonLd } from "@/lib/seo";
+import { MINIMAL_MODE_ATTRIBUTE, MINIMAL_MODE_STORAGE_KEY } from "@/lib/minimalMode";
+import { MinimalModeProvider } from "@/components/layout/MinimalModeProvider";
 import { ThemeProvider } from "@/components/layout/ThemeProvider";
-import { LoaderProvider } from "@/components/layout/LoaderProvider";
-import { NavBar } from "@/components/layout/NavBar";
-import { Footer } from "@/components/layout/Footer";
-import { Starfield } from "@/components/ui/Starfield";
-import { DenseStarfield } from "@/components/ui/DenseStarfield";
+import { SiteChrome } from "@/components/layout/SiteChrome";
+import { MinimalHome } from "@/components/sections/MinimalHome";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -54,41 +53,41 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} antialiased`}
     >
       <body className="relative flex min-h-screen flex-col">
+        {/* Sets the minimal-mode attribute before hydration -- everything else about which
+            tree (this full experience or MinimalHome) is visible is decided by CSS keyed off
+            of it, so a returning visitor who left in minimal mode never sees a flash of the
+            full site first. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{if(localStorage.getItem('${MINIMAL_MODE_STORAGE_KEY}')==='true'){document.documentElement.setAttribute('${MINIMAL_MODE_ATTRIBUTE}','true')}}catch(e){}`,
+          }}
+        />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd()) }}
         />
 
-        <LoaderProvider>
-          {/* The page's own starfield, behind every card -- visible in the margins either side
-              of the content column and in the gaps between sections, not just behind the hero.
-              The nebula color washes live in globals.css (`.dark body`, background-attachment:
-              fixed) since they're the same fixed viewport-anchored backdrop everywhere, not
-              something that needs to vary per scroll position the way the stars do.
-
-              Two layers: a canvas-rendered dust field dense enough to fill the whole document
-              height (DOM nodes stop scaling well in the low thousands, so bulk density has to
-              be canvas), plus a lighter set of the same hand-tuned accent dots the rest of the
-              site uses -- kept as plain DOM so a handful of stars still render with JS disabled.
-              The dust field's opacity is tied to LoaderProvider's progress, so it fades in
-              alongside the intro's percentage counter instead of just appearing instantly. */}
-          <DenseStarfield seed="page" />
-          <Starfield seed="page" count={150} />
-
+        <MinimalModeProvider>
           <ThemeProvider>
-            <a
-              href="#main"
-              className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-[100] focus:rounded-full focus:bg-accent focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-accent-fg"
-            >
-              Skip to content
-            </a>
-            <NavBar />
-            <main id="main" className="relative z-10 flex-1">
-              {children}
-            </main>
-            <Footer />
+            {/* The page's own starfield, behind every card -- visible in the margins either
+                side of the content column and in the gaps between sections, not just behind
+                the hero. The nebula color washes live in globals.css (`.dark body`,
+                background-attachment: fixed) since they're the same fixed viewport-anchored
+                backdrop everywhere, not something that needs to vary per scroll position the
+                way the stars do.
+
+                Two layers: a canvas-rendered dust field dense enough to fill the whole document
+                height (DOM nodes stop scaling well in the low thousands, so bulk density has to
+                be canvas), plus a lighter set of the same hand-tuned accent dots the rest of the
+                site uses -- kept as plain DOM so a handful of stars still render with JS
+                disabled. The dust field's opacity is tied to LoaderProvider's progress, so it
+                fades in alongside the intro's percentage counter instead of just appearing
+                instantly. Both are rendered inside SiteChrome, which skips them entirely in
+                minimal mode. */}
+            <SiteChrome>{children}</SiteChrome>
+            <MinimalHome />
           </ThemeProvider>
-        </LoaderProvider>
+        </MinimalModeProvider>
       </body>
     </html>
   );

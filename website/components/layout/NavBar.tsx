@@ -6,6 +6,7 @@ import { Menu, X } from "lucide-react";
 import { navLinks } from "@/content/nav";
 import { site } from "@/content/site";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { MinimalModeToggle } from "@/components/ui/MinimalModeToggle";
 import { Button } from "@/components/ui/Button";
 import { GithubMark } from "@/components/ui/icons/GithubMark";
 import { HyperionMark } from "@/components/ui/icons/HyperionMark";
@@ -43,6 +44,7 @@ export function NavBar() {
           >
             <GithubMark className="h-4 w-4" aria-hidden="true" />
           </a>
+          <MinimalModeToggle />
           <ThemeToggle />
           <Button href="#getting-started" className="text-sm">
             Get started
@@ -90,7 +92,10 @@ export function NavBar() {
               <GithubMark className="h-4 w-4" aria-hidden="true" />
               GitHub
             </a>
-            <ThemeToggle />
+            <div className="flex items-center gap-1">
+              <MinimalModeToggle />
+              <ThemeToggle />
+            </div>
           </div>
           <Button href="#getting-started" className="mt-4 w-full" >
             Get started
