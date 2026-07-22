@@ -144,6 +144,13 @@
     background-attachment: fixed;
   }
 
+  /* Minimal mode (see MinimalModeProvider) drops the nebula gradient entirely -- flat
+     background, no motion, no accent chrome, closer to a plain text document than a marketing
+     site. Same specificity as `.dark body` above, so source order is what makes this win. */
+  [data-minimal] body {
+    background: var(--color-bg);
+  }
+
   ::selection {
     background: var(--color-accent);
     color: var(--color-accent-fg);
@@ -154,6 +161,27 @@
     outline-offset: 2px;
     border-radius: 2px;
   }
+}
+
+/* Both trees -- the full site (`.site-chrome`) and MinimalHome (`.minimal-view`) -- are always
+   in the DOM; which one is visible is decided here, off the `data-minimal` attribute a blocking
+   script sets on <html> before hydration. Nothing about which subtree renders depends on JS
+   running, so there's no hydration mismatch and no flash on load.
+
+   Deliberately unlayered (not inside `@layer base`): both elements also carry Tailwind utility
+   classes like `flex`, which live in Tailwind's utilities layer and would otherwise always beat
+   a same-property rule in the base layer, no matter how specific its selector is -- layer order
+   decides ties before selector specificity ever gets a vote. */
+.minimal-view {
+  display: none;
+}
+
+[data-minimal] .site-chrome {
+  display: none;
+}
+
+[data-minimal] .minimal-view {
+  display: block;
 }
 
 @media (prefers-reduced-motion: reduce) {
