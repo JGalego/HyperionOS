@@ -1,12 +1,12 @@
-import { githubDoc, site } from "./site";
+import { site } from "./site";
 
+// Every section's actual text lives in its own content module (philosophy.ts, traces.ts, and so
+// on) -- MinimalHome renders those directly so the plain-text page can't drift from the real one.
+// This file holds only what's specific to the minimal page itself: the exit control's label and
+// the site-level (not doc-specific) links its footer lists.
 export const minimalHome = {
-  body: "Every prior operating system asked you to manage proxies for what you wanted: a process, a file, a window, an application. Hyperion manages what you actually have.",
   exitLabel: "Full experience",
   links: [
-    { label: "Documentation", href: githubDoc("00-index.md") },
-    { label: "Architecture", href: githubDoc("02-core-architecture.md") },
-    { label: "SDK", href: githubDoc("25-sdk.md") },
     { label: "GitHub", href: site.githubUrl },
     { label: "llms.txt", href: "/llms.txt" },
     { label: `License (${site.license})`, href: `${site.githubUrl}/blob/main/LICENSE` },

@@ -38,3 +38,12 @@ export function classifyConsoleLine(line: string): ConsoleStatus {
   if (isFailure(line)) return "failure";
   return null;
 }
+
+/** Same green/amber/red-and-glyph treatment `crates/hyperion-console/src/color.rs` gives a real
+ * terminal -- shared by every UI that renders a classified console line (the animated
+ * ConsoleDemo and the plain-text MinimalHome alike), so the two can't quietly drift apart. */
+export const CONSOLE_STATUS_STYLE: Record<Exclude<ConsoleStatus, null>, { className: string; glyph: string }> = {
+  success: { className: "text-console-success", glyph: "✓" },
+  warning: { className: "text-console-warning", glyph: "⚠" },
+  failure: { className: "text-console-failure", glyph: "✗" },
+};
