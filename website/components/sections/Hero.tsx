@@ -17,7 +17,13 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 export function Hero() {
   const { progress, done } = useLoader();
-  const [revealed, setRevealed] = useState(false);
+  const [clicks, setClicks] = useState(0);
+  const message =
+    clicks === 0
+      ? null
+      : clicks <= hero.progressEasterEgg.length
+        ? hero.progressEasterEgg[clicks - 1]
+        : `Click count: ${clicks}. That number's real. Enjoy it.`;
 
   return (
     <section
@@ -60,14 +66,14 @@ export function Hero() {
               />
             </svg>
             {/* For whoever's wondering whether this number tracks anything real -- it doesn't.
-                Click it. */}
+                Click it. Keep clicking it. */}
             <button
               type="button"
               tabIndex={done ? -1 : 0}
-              aria-expanded={revealed}
+              aria-expanded={clicks > 0}
               title="Yes, we know."
               aria-label="Reveal what this counter actually tracks"
-              onClick={() => setRevealed((v) => !v)}
+              onClick={() => setClicks((c) => c + 1)}
               className="font-mono text-3xl tabular-nums cursor-help sm:text-4xl"
               style={{ color: `color-mix(in srgb, var(--color-accent) ${progress}%, var(--color-fg-muted))` }}
             >
@@ -75,9 +81,7 @@ export function Hero() {
             </button>
           </div>
 
-          {revealed && (
-            <p className="max-w-72 text-center font-mono text-xs text-fg-muted">{hero.progressEasterEgg}</p>
-          )}
+          {message && <p className="max-w-72 text-center font-mono text-xs text-fg-muted">{message}</p>}
         </div>
 
         <div
