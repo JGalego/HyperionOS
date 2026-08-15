@@ -1,0 +1,27 @@
+# `cargo audit` configuration -- read by the `audit` job in .github/workflows/ci.yml, and by a
+# plain `cargo audit` run locally.
+#
+# Everything here is an *accepted* advisory with a stated reason and a stated way out. Nothing is
+# ignored because it was inconvenient; an entry that can be dropped should be dropped, and a new
+# advisory must be reviewed rather than appended to.
+
+[advisories]
+ignore = [
+    # quick-xml: quadratic parse time on duplicate attribute names, and unbounded
+    # namespace-declaration allocation in `NsReader`. Both are denial-of-service on a parser fed
+    # hostile XML, and both are fixed in quick-xml >= 0.41.
+    #
+    # Neither version in this tree can move. `quick-xml 0.39` is a build-time-only dependency of
+    # `wayland-scanner`, a proc-macro that parses the Wayland protocol XML shipped inside the crate
+    # itself -- not input any attacker supplies, and not present in the built binary at all.
+    # `quick-xml 0.30` comes from `zbus_xml`, which parses D-Bus introspection XML. Both are pinned
+    # by upstream requirements (`wayland-scanner 0.31`, `zbus_xml 4.0`) that no compatible update
+    # relaxes.
+    #
+    # The real fix is bumping `eframe`/`winit`/`accesskit` (the whole chain reaches this workspace
+    # only through `hyperion-shell`'s egui dependency) to a generation that has moved to quick-xml
+    # 0.41+. That is a deliberate UI-stack upgrade with its own testing, not a lockfile nudge --
+    # see the roadmap. Re-check these two on every such bump; they should disappear.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]

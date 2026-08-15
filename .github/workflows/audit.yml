@@ -1,0 +1,49 @@
+name: Audit
+
+# Supply-chain check against the RustSec advisory database. A security-first project that mints
+# capability tokens, signs release images, and sandboxes plugins had no check at all on the ~500
+# third-party crates it links -- the one part of its attack surface nobody in this repo writes.
+#
+# Runs on dependency changes *and* weekly: an advisory published against a dependency that hasn't
+# changed is exactly the case a push-triggered-only job never catches.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/audit.toml"
+      - ".github/workflows/audit.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/audit.toml"
+      - ".github/workflows/audit.yml"
+  schedule:
+    # Mondays, 07:00 UTC.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # A prebuilt binary rather than `cargo install cargo-audit`, which would spend minutes
+      # compiling the tool on every run.
+      - uses: taiki-e/install-action@cargo-audit
+      # Plain `cargo audit`, deliberately: it picks up `.cargo/audit.toml` on its own, so this job
+      # and a developer's local run check exactly the same thing against exactly the same accepted
+      # advisories. Every entry in that file carries its reason and its way out.
+      - run: cargo audit
