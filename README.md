@@ -22,6 +22,7 @@ See [`CHANGELOG.md`](CHANGELOG.md) for what's new in each release.
 - [🧭 Philosophy](#-philosophy)
 - [🧱 Architecture](#-architecture)
 - [🚀 Getting started](#-getting-started)
+  - [Talk to Hyperion (no install, no boot)](#talk-to-hyperion-no-install-no-boot)
 - [🔨 Build it yourself](#-build-it-yourself)
 - [💬 Try it locally](#-try-it-locally)
 - [🛠️ Working on Hyperion](#-working-on-hyperion)
@@ -205,7 +206,30 @@ Conversation, generated screens, and voice: the only parts of Hyperion you direc
 
 ## 🚀 Getting started
 
-Every tagged release publishes ready-to-flash disk images for both reference platforms on the [Releases](https://github.com/JGalego/HyperionOS/releases) page:
+There are two ways in, and **the console is the one to start with** - it needs no spare machine and no USB drive.
+
+### Talk to Hyperion (no install, no boot)
+
+`hyperion-console` is the same real Intent Engine, Agent dispatch, and Knowledge Graph the booted image runs, as an ordinary binary. Download it from the [latest release](https://github.com/JGalego/HyperionOS/releases/latest), make it executable, and speak:
+
+| Your machine | Download |
+|---|---|
+| Linux (x86_64) | `hyperion-console-<version>-x86_64-unknown-linux-gnu` |
+| macOS (Apple silicon) | `hyperion-console-<version>-aarch64-apple-darwin` |
+| macOS (Intel) | `hyperion-console-<version>-x86_64-apple-darwin` |
+
+```sh
+chmod +x hyperion-console-<version>-<target>
+./hyperion-console-<version>-<target>
+```
+
+That drops you into a real session against the built-in mock backend - enough to see intents decompose, agents dispatch, and the knowledge graph grow, with no key and no network. To point it at something real, `/backend ollama http://localhost:11434/v1 llama3` for a local engine, or `connect my openai account` for a cloud provider (see [Try it locally](#-try-it-locally)).
+
+Released binaries include real HTTP/TLS, the OpenAI/Anthropic/Gemini backends, and mDNS peer discovery. In-process Candle inference is a source build (`--features candle`) - it needs a downloaded model, so it isn't baked into a release asset.
+
+### Boot the whole thing
+
+Every tagged release also publishes ready-to-flash disk images for both reference platforms:
 
 | Platform | Download | Boots via |
 |---|---|---|
@@ -225,7 +249,7 @@ Double-check the drive you select in Etcher - flashing overwrites everything on 
 
 ### Check what you downloaded
 
-Every image ships with proof that it's untampered and really came from this project: a `.release.json` manifest holding a BLAKE3 hash of the image and an Ed25519 signature over that hash, signed with Hyperion's release key. Check it against the real, published verifying key before you trust it:
+Every release asset - console binaries included - ships with proof that it's untampered and really came from this project: a `.release.json` manifest holding a BLAKE3 hash of the file and an Ed25519 signature over that hash, signed with Hyperion's release key. Check it against the real, published verifying key before you trust it:
 
 ```
 b5c19b1e890fed3e164342f0285f6a1a1635d724f2284a2ebe00589a122ac90a
@@ -236,9 +260,13 @@ To verify (needs a Rust toolchain and this repo checked out):
 ```sh
 cargo run --release -p hyperion-release-gate --bin verify-release -- \
   hyperion-x86_64-<version>.img hyperion-x86_64-<version>.img.release.json
+
+# ...and the same for a console binary:
+cargo run --release -p hyperion-release-gate --bin verify-release -- \
+  hyperion-console-<version>-<target> hyperion-console-<version>-<target>.release.json
 ```
 
-This recomputes the hash directly from the image's own bytes (it never trusts the manifest's own recorded hash) and confirms the signature checks out against the manifest's recorded key - compare that key against the one published above.
+This recomputes the hash directly from the file's own bytes (it never trusts the manifest's own recorded hash) and confirms the signature checks out against the manifest's recorded key - compare that key against the one published above.
 
 ## 🔨 Build it yourself
 

@@ -85,9 +85,63 @@ jobs:
             boot/.tools/buildroot-2026.05/output-aarch64/images/rootfs.ext2
           retention-days: 1
 
+  build-console:
+    # Downloading a disk image and flashing a USB stick is a lot to ask of someone who just wants
+    # to try Hyperion. `hyperion-console` is the same real Intent Engine, Agent dispatch, and
+    # Knowledge Graph the booted image runs, as an ordinary binary -- so releases ship it too,
+    # signed with the same identity the images are.
+    #
+    # Built with every optional feature that doesn't require downloading a model: real HTTP/TLS,
+    # the three cloud providers, and mDNS. Local-first inference still works out of the box
+    # through a local OpenAI-compatible engine (Ollama, vLLM, LiteLLM) -- in-process Candle is a
+    # `--features candle` source build, since it pulls a heavy dependency tree for a path that
+    # needs a downloaded model anyway. README.md says so where someone would look.
+    name: build console (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: >-
+          cargo build --release --locked --target ${{ matrix.target }}
+          -p hyperion-console --bin hyperion-console
+          --features real-http,openai-compat,anthropic,gemini,mdns
+      # A binary that can't answer one utterance isn't worth signing. Runs the real thing against
+      # the mock backend -- no network, no key, no model.
+      - name: Smoke-test the built binary
+        run: |
+          printf '/backend mock\nhello there\n' > /tmp/smoke.txt
+          OUT=$(HYPERION_CONSOLE_DATA_DIR=$(mktemp -d) \
+            ./target/${{ matrix.target }}/release/hyperion-console /tmp/smoke.txt)
+          echo "$OUT"
+          echo "$OUT" | grep -q "echo: hello there"
+      - name: Stage
+        run: |
+          mkdir -p console-staging
+          cp "target/${{ matrix.target }}/release/hyperion-console" \
+             "console-staging/hyperion-console-${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hyperion-console-${{ matrix.target }}
+          path: console-staging/hyperion-console-${{ matrix.target }}
+          retention-days: 1
+
   publish:
     name: sign + publish release
-    needs: [build-x86_64, build-aarch64]
+    needs: [build-x86_64, build-aarch64, build-console]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -103,6 +157,11 @@ jobs:
         with:
           name: hyperion-aarch64-image
           path: release-staging/aarch64
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hyperion-console-*
+          merge-multiple: true
+          path: release-staging/console
       - name: Determine release version
         id: version
         run: |
@@ -127,6 +186,11 @@ jobs:
             release-staging/aarch64/Image boot/.tools/release-keystore/device.key "$VERSION" aarch64-kernel
           cargo run --release -p hyperion-release-gate --bin sign-release -- \
             release-staging/aarch64/rootfs.ext2 boot/.tools/release-keystore/device.key "$VERSION" aarch64-rootfs
+          for binary in release-staging/console/hyperion-console-*; do
+            if [[ "$binary" == *.release.json ]]; then continue; fi
+            cargo run --release -p hyperion-release-gate --bin sign-release -- \
+              "$binary" boot/.tools/release-keystore/device.key "$VERSION" "$(basename "$binary")"
+          done
       - name: Verify each signature before publishing anything
         run: |
           cargo run --release -p hyperion-release-gate --bin verify-release -- \
@@ -135,6 +199,11 @@ jobs:
             release-staging/aarch64/Image release-staging/aarch64/Image.release.json
           cargo run --release -p hyperion-release-gate --bin verify-release -- \
             release-staging/aarch64/rootfs.ext2 release-staging/aarch64/rootfs.ext2.release.json
+          for binary in release-staging/console/hyperion-console-*; do
+            if [[ "$binary" == *.release.json ]]; then continue; fi
+            cargo run --release -p hyperion-release-gate --bin verify-release -- \
+              "$binary" "$binary.release.json"
+          done
       - name: Rename staged assets to their published release names
         run: |
           VERSION="${{ steps.version.outputs.value }}"
@@ -145,6 +214,14 @@ jobs:
           mv release-staging/aarch64/Image.release.json "release-assets/hyperion-aarch64-$VERSION-Image.release.json"
           mv release-staging/aarch64/rootfs.ext2 "release-assets/hyperion-aarch64-$VERSION-rootfs.ext2"
           mv release-staging/aarch64/rootfs.ext2.release.json "release-assets/hyperion-aarch64-$VERSION-rootfs.ext2.release.json"
+          # Version-stamped the same way the images are, so a downloaded binary says what it is.
+          for binary in release-staging/console/hyperion-console-*; do
+            if [[ "$binary" == *.release.json ]]; then continue; fi
+            name="$(basename "$binary")"
+            mv "$binary" "release-assets/${name/hyperion-console-/hyperion-console-$VERSION-}"
+            mv "$binary.release.json" \
+               "release-assets/${name/hyperion-console-/hyperion-console-$VERSION-}.release.json"
+          done
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

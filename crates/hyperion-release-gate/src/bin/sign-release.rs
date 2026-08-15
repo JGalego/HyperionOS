@@ -62,7 +62,7 @@ fn main() {
     });
 
     println!(
-        "Signed {} v{version} ({platform}): {}",
+        "Signed {} {version} ({platform}): {}",
         image_path.display(),
         manifest_path.display()
     );
