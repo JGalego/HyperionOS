@@ -33,6 +33,11 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// thread is all it takes to exhaust the process, and nothing here ever reclaims them.
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long a connection may take to close its own end after the response is written -- see
+/// [`close_gracefully`]. Much shorter than [`REQUEST_READ_TIMEOUT`]: the exchange is already over,
+/// and a peer that never closes is not owed the same patience as one mid-request.
+const LINGER_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Hard ceiling on a request's header block. Reached without a `\r\n\r\n` in sight, the connection
 /// is refused rather than buffered indefinitely -- a headers-only stream is otherwise unbounded.
 const MAX_HEADER_BYTES: usize = 64 * 1024;
@@ -149,12 +154,30 @@ fn handle_connection(mut stream: TcpStream, handler: &impl Handler) {
         response_body.len()
     );
     let _ = stream.write_all(response.as_bytes());
-    // `Connection: close` promises this socket ends here, so end it deliberately: flush, then
-    // half-close so the peer sees a clean FIN. Letting the `TcpStream` drop instead leaves the
-    // shutdown to `close(2)`, which can reach the client as an RST -- a client that had the whole
-    // response sitting in its buffer then gets `ConnectionReset` out of a completed exchange.
+    close_gracefully(stream);
+}
+
+/// Ends a connection so the peer reliably receives what was just written to it.
+///
+/// `Connection: close` promises the socket ends here, and simply dropping the `TcpStream` leaves
+/// that to `close(2)`. On BSD-derived stacks -- macOS, in this project's CI -- closing a socket
+/// that still has anything unread in its receive queue sends an RST, and an RST **discards the
+/// send buffer**. The response can be written, complete and correct, and never arrive: the client
+/// gets `ConnectionReset` where the reply should have been. That is not a test artifact; it is a
+/// server that loses its own answers, intermittently, on one platform.
+///
+/// The fix is the standard graceful close: half-close so the peer sees a clean FIN, then read
+/// until it closes too. Draining leaves the receive queue empty, so the final `close(2)` has no
+/// reason to reset, and the FIN tells a well-behaved client the response is complete.
+///
+/// Bounded by [`LINGER_TIMEOUT`] rather than the request timeout: a client that never closes its
+/// end shouldn't hold this thread for the same generous window a client mid-request gets.
+fn close_gracefully(mut stream: TcpStream) {
     let _ = stream.flush();
     let _ = stream.shutdown(std::net::Shutdown::Write);
+    let _ = stream.set_read_timeout(Some(LINGER_TIMEOUT));
+    let mut sink = [0u8; 1024];
+    while matches!(stream.read(&mut sink), Ok(n) if n > 0) {}
 }
 
 /// Why this request must not be served, or `None` to serve it.
