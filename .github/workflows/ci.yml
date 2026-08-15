@@ -9,6 +9,14 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
+# A newer push to the same branch should win over an older one still running.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: test (${{ matrix.os }})
@@ -26,13 +34,16 @@ jobs:
           # hyperion-trust-boundary/tests/enforcement.rs and hyperion-supervisor/tests/real_supervision.rs
           # (both Linux-only, both #[cfg(target_os = "linux")]-gated) each build a real, statically
           # linked musl probe/service binary at test time to run under real Landlock/seccomp
-          # enforcement -- needs this target installed, same as the boot-image job below already
+          # enforcement -- needs this target installed, same as the boot-image workflow already
           # does. Meaningless on macOS (those test files don't even compile there), so only added
           # for the ubuntu leg of this matrix.
           targets: ${{ matrix.os == 'ubuntu-latest' && 'x86_64-unknown-linux-musl' || '' }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --workspace --all-targets
-      - run: cargo test --workspace
+      # `--locked` throughout: without it CI silently resolves newer semver-compatible dependency
+      # versions than the committed Cargo.lock, so a green run does not prove the lockfile every
+      # contributor and every release build actually uses is green.
+      - run: cargo build --workspace --all-targets --locked
+      - run: cargo test --workspace --locked
 
   lint:
     name: clippy + fmt
@@ -44,86 +55,5 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-  # docs/998-roadmap.md M0/M1: the boot image is a separate build system
-  # (Buildroot), not a cargo workspace member, so it gets its own job rather
-  # than folding into `test`/`lint` above. Only runs when boot/ itself or the
-  # crates it packages (hyperion-init) change, since a from-scratch Buildroot
-  # build is much slower than the pure-Rust jobs above.
-  boot-image:
-    name: boot image (QEMU + OVMF)
-    runs-on: ubuntu-latest
-    if: >-
-      contains(github.event.head_commit.modified, 'boot/') ||
-      contains(github.event.head_commit.added, 'boot/')
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@v2
-      - name: Install qemu + OVMF + Buildroot host dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            qemu-system-x86 ovmf \
-            build-essential bc cpio rsync unzip file libncurses-dev
-      - name: Cache Buildroot download + build output
-        uses: actions/cache@v4
-        with:
-          path: boot/.tools
-          key: buildroot-x86_64-${{ hashFiles('boot/scripts/fetch-buildroot.sh', 'boot/board/hyperion-x86_64/**', 'boot/configs/hyperion_x86_64_efi_defconfig') }}
-      - run: boot/scripts/build-image.sh
-      - run: boot/scripts/boot-test.sh
-        env:
-          BOOT_TEST_TIMEOUT: "300"
-      # docs/998-roadmap.md M6: re-validates hyperion-storage's crash-consistency-by-replay
-      # guarantee against a real power-loss simulation (a real, dedicated block device, hard-
-      # killed mid-write), not just the existing host-tempfile fault-injection tests.
-      - run: boot/scripts/storage-crash-test.sh
-        env:
-          STORAGE_TEST_TIMEOUT: "300"
-      # docs/998-roadmap.md M7 stage 1: a real utterance typed at the real booted console
-      # (over a real Unix-socket serial port, not just boot-test.sh's output-only log capture)
-      # produces a real Intent Graph, a real Agent invocation, and real rendered text -- proven
-      # for both the one real HTN-decomposed utterance shape and the undecomposed fallback path.
-      - run: boot/scripts/console-test.sh "" "I need to launch my startup" "market_research"
-        env:
-          CONSOLE_TEST_TIMEOUT: "300"
-      - run: boot/scripts/console-test.sh "" "what is the weather like today" "generic_goal"
-        env:
-          CONSOLE_TEST_TIMEOUT: "300"
-
-  # docs/998-roadmap.md M11: Hyperion's second reference platform. A separate job (not a
-  # matrix leg of boot-image above) because it needs its own cross-toolchain and its own Buildroot
-  # output directory (see build-image-aarch64.sh's own comment on why output/ and output-aarch64/
-  # can't be shared) -- catching an aarch64-only regression here, on every push, rather than only
-  # at release time.
-  boot-image-aarch64:
-    name: boot image aarch64 (QEMU, direct kernel boot)
-    runs-on: ubuntu-latest
-    if: >-
-      contains(github.event.head_commit.modified, 'boot/') ||
-      contains(github.event.head_commit.added, 'boot/')
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@v2
-      - name: Install qemu + Buildroot host dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            qemu-system-arm \
-            build-essential bc cpio rsync unzip file libncurses-dev
-      - name: Cache Buildroot download + build output
-        uses: actions/cache@v4
-        with:
-          path: boot/.tools
-          key: buildroot-aarch64-${{ hashFiles('boot/scripts/fetch-buildroot.sh', 'boot/board/hyperion-aarch64/**', 'boot/configs/hyperion_aarch64_virt_defconfig') }}
-      - run: boot/scripts/build-image-aarch64.sh
-      - run: boot/scripts/boot-test-aarch64.sh
-        env:
-          BOOT_TEST_TIMEOUT: "300"
