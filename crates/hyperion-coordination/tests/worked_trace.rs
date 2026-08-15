@@ -72,11 +72,17 @@ fn setup_with_backend(
 }
 
 /// A real `InferenceBackend` that takes a controlled, real amount of wall-clock time --
-/// standing in for a real, slow network round trip to a real cloud model. See
-/// `a_ticks_ready_tasks_dispatch_concurrently_not_sequentially` below.
+/// standing in for a real, slow network round trip to a real cloud model -- and records when each
+/// call actually ran. See `a_ticks_ready_tasks_dispatch_concurrently_not_sequentially` below.
 struct SlowBackend {
     delay: std::time::Duration,
+    /// Every real `generate` call's own `(start, end)`, so a test can ask whether two calls
+    /// genuinely overlapped instead of inferring it from how long the whole tick took.
+    spans: DispatchSpans,
 }
+
+type DispatchSpans =
+    std::sync::Arc<std::sync::Mutex<Vec<(std::time::Instant, std::time::Instant)>>>;
 
 impl InferenceBackend for SlowBackend {
     fn generate(
@@ -85,7 +91,12 @@ impl InferenceBackend for SlowBackend {
         request: &InferenceRequest,
         _cancel: &CancellationToken,
     ) -> String {
+        let start = std::time::Instant::now();
         std::thread::sleep(self.delay);
+        self.spans
+            .lock()
+            .unwrap()
+            .push((start, std::time::Instant::now()));
         format!("slow echo: {}", request.prompt)
     }
 }
@@ -332,11 +343,19 @@ fn ready_task_descriptions_previews_exactly_what_the_next_allocate_call_will_dis
 /// helps because `hyperion_agent_runtime::AgentRuntime::invoke` (and, one layer further down,
 /// `hyperion_ai_runtime::LocalAiRuntime::infer`) no longer hold a lock across their own real
 /// dispatch either -- see both of those functions' own doc comments.
+///
+/// The assertion is that the two dispatches' own time spans genuinely **overlap**, not that the
+/// tick finished under some wall-clock budget. A budget makes the *result* depend on machine
+/// load: this test previously allowed 350ms for two 200ms dispatches and failed on a loaded CI
+/// runner at 372ms, having actually run them concurrently exactly as designed. Overlapping
+/// intervals are disjoint under sequential dispatch no matter how fast or slow the machine is.
 #[test]
 fn a_ticks_ready_tasks_dispatch_concurrently_not_sequentially() {
+    let spans: DispatchSpans = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let (_dir, monitor, token, intent_engine, coordination) =
         setup_with_backend(Box::new(SlowBackend {
             delay: std::time::Duration::from_millis(200),
+            spans: std::sync::Arc::clone(&spans),
         }));
     let root = match intent_engine
         .handle_utterance(&monitor, &token, "I need to launch my startup", "s1")
@@ -355,20 +374,29 @@ fn a_ticks_ready_tasks_dispatch_concurrently_not_sequentially() {
         .unwrap();
 
     coordination.allocate(&monitor, &token, session).unwrap(); // tick 1: market_research alone
+    spans.lock().unwrap().clear(); // only tick 2's dispatches are under test
 
-    let start = std::time::Instant::now();
     let records = coordination.allocate(&monitor, &token, session).unwrap(); // tick 2: both ready
-    let elapsed = start.elapsed();
 
     assert_eq!(
         records.len(),
         2,
         "business_model and branding must both become ready in this one tick"
     );
+
+    let spans = spans.lock().unwrap();
+    assert_eq!(
+        spans.len(),
+        2,
+        "both ready tasks must really have dispatched"
+    );
+    let (a_start, a_end) = spans[0];
+    let (b_start, b_end) = spans[1];
     assert!(
-        elapsed < std::time::Duration::from_millis(350),
-        "two real 200ms dispatches in one tick took {elapsed:?} -- expected them to genuinely \
-         overlap (~200ms total), not run back to back (~400ms total)"
+        a_start < b_end && b_start < a_end,
+        "the two dispatches ran back to back rather than concurrently: {:?} and {:?}",
+        a_end.duration_since(a_start),
+        b_end.duration_since(b_start),
     );
 }
 
