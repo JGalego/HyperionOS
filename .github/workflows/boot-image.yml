@@ -44,11 +44,22 @@ env:
 permissions:
   contents: read
 
-# A newer push should win over an older one still building a full image, rather than queue behind
-# it -- these are the longest jobs in the repo.
+# Deliberately *not* `cancel-in-progress: true`, unlike every other workflow here.
+#
+# Cancelling is right for a fast job: the newest commit is what matters and an hour of stale
+# results isn't worth the runner minutes. It is wrong for this one, for two reasons that only
+# showed up once these jobs started running. A from-scratch Buildroot build takes the better part
+# of an hour, so an active afternoon cancels every run before it produces anything -- five in a row
+# on the day this was written. And `actions/cache` only saves in a job's post-step, which a
+# cancelled job never reaches: so the Buildroot cache that would make the *next* run cheap never
+# gets written, and every run pays the full cost forever.
+#
+# Queuing instead means each push's image really does get built and boot-tested, and the first
+# completed run seeds a cache that makes the rest fast. This is the only end-to-end proof the
+# operating system still boots; a result an hour late beats no result at all.
 concurrency:
   group: boot-image-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   x86_64:
