@@ -9,7 +9,7 @@ use std::path::Path;
 use hyperion_capability::RightsMask;
 use landlock::{
     AccessFs, BitFlags, CompatLevel, Compatible, PathBeneath, PathFd, Ruleset, RulesetAttr,
-    RulesetCreatedAttr,
+    RulesetCreatedAttr, RulesetStatus,
 };
 use seccompiler::{BpfProgram, SeccompAction, SeccompFilter, TargetArch};
 
@@ -133,9 +133,37 @@ pub fn apply_landlock(
         created = created.add_rule(PathBeneath::new(PathFd::new(rendezvous_dir)?, ipc_access))?;
     }
 
-    created.restrict_self()?;
+    // `CompatLevel::BestEffort` is what lets one ruleset run across kernels with different
+    // Landlock ABI versions, dropping access rights the running kernel doesn't know rather than
+    // refusing outright. Its other, much less welcome behaviour: on a kernel with no Landlock at
+    // all, `restrict_self()` returns `Ok` having enforced *nothing*. This crate's whole claim is
+    // that "the OS mechanism and the capability algorithm agree by construction", and a spawn that
+    // reports success while the child runs completely unconfined is the one outcome that claim
+    // cannot survive -- so check what was actually installed rather than that the call returned.
+    //
+    // `PartiallyEnforced` is accepted: an older ABI that understands some of the requested rights
+    // still genuinely confines the child, and refusing it would trade real (if weaker) enforcement
+    // for none at all. `NotEnforced` is refused, and `spawn`'s child branch turns that into an
+    // `exit(127)` -- the target program never runs.
+    ensure_really_enforced(created.restrict_self()?.ruleset)
+}
 
-    Ok(())
+/// Turns what the kernel *actually* installed into a decision about whether this boundary may
+/// exist -- see [`apply_landlock`]'s own comment for why the return value of `restrict_self()`
+/// isn't enough on its own.
+///
+/// Split out from its one caller purely so this decision is testable: the kernel-dependent half
+/// (which status a given machine produces) can't be exercised in a unit test, but which statuses
+/// are acceptable is exactly the part worth pinning.
+fn ensure_really_enforced(status: RulesetStatus) -> Result<(), EnforcementError> {
+    match status {
+        RulesetStatus::FullyEnforced | RulesetStatus::PartiallyEnforced => Ok(()),
+        RulesetStatus::NotEnforced => Err(EnforcementError::Io(std::io::Error::other(
+            "this kernel applied no Landlock restrictions at all (no Landlock support, or it is \
+             disabled) -- refusing to run a Trust Boundary process that would be unconfined. \
+             Check `cat /sys/kernel/security/lsm` for `landlock`.",
+        ))),
+    }
 }
 
 /// The baseline syscall allowlist for a simple, statically-linked Linux binary: enough to start
@@ -283,4 +311,35 @@ pub fn apply_seccomp(allow_ipc: bool) -> Result<(), EnforcementError> {
     seccompiler::apply_filter(&bpf_program)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The property this crate cannot be allowed to lose: a kernel that installed nothing must
+    /// not produce a "successfully sandboxed" process. `CompatLevel::BestEffort` -- which this
+    /// crate wants, so one ruleset spans several Landlock ABI versions -- returns `Ok` from
+    /// `restrict_self()` in exactly that case, so the status is the only thing that tells the
+    /// truth.
+    #[test]
+    fn a_kernel_that_enforced_nothing_is_refused_rather_than_reported_as_sandboxed() {
+        let refused = ensure_really_enforced(RulesetStatus::NotEnforced);
+        let message = refused
+            .expect_err("an unenforced ruleset must not be treated as a real sandbox")
+            .to_string();
+        assert!(
+            message.contains("Landlock"),
+            "the error must name the actual cause so an operator can act on it, got: {message}"
+        );
+    }
+
+    /// The other half: an older ABI that understood only some of the requested rights still
+    /// genuinely confines the child. Refusing it would trade real, if weaker, enforcement for
+    /// none at all.
+    #[test]
+    fn partial_enforcement_is_accepted_as_real_confinement() {
+        assert!(ensure_really_enforced(RulesetStatus::PartiallyEnforced).is_ok());
+        assert!(ensure_really_enforced(RulesetStatus::FullyEnforced).is_ok());
+    }
 }
