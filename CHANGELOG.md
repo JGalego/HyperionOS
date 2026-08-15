@@ -53,6 +53,17 @@ version numbers track release sequence, not API stability.
   `concurrency` groups.
 - A pull-request template carrying CLAUDE.md's own six PR questions.
 
+**Distribution and contribution**
+- `hyperion-console` now ships as a release asset for Linux x86_64 and both macOS
+  architectures -- smoke-tested before signing, and signed with the same Ed25519
+  release identity the disk images use. Trying Hyperion no longer requires
+  flashing a USB stick or building from source.
+- `claims.toml` pairs 34 load-bearing guarantees with the exact test that fails
+  if each stops being true; `scripts/check-claims.py` enforces the mapping in CI,
+  so renaming a test names the guarantee that just lost its evidence.
+- `CONTRIBUTING.md` and issue templates, including one for the case this codebase
+  is prone to: the code works as written and the documentation overreaches.
+
 ### Security
 - `webbrowser` advanced to 1.2.4 (RUSTSEC-2026-0257). The two remaining
   `quick-xml` advisories are accepted in `.cargo/audit.toml` with their reasoning
