@@ -71,18 +71,38 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
+      # Seconds, and it catches the class of bug that made this job's first ever real run fail:
+      # the console driver's own logic, exercised against a recorded console stream instead of
+      # only behind an hour-long image build.
+      - name: Test the console driver
+        run: boot/scripts/console-drive-test.py
       - name: Install qemu + OVMF + Buildroot host dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 ovmf \
             build-essential bc cpio rsync unzip file libncurses-dev
-      - name: Cache Buildroot download + build output
-        uses: actions/cache@v4
+      # Split restore/save rather than plain `actions/cache`, whose save step is skipped when the
+      # job fails. This job's first real run built the image successfully in 58 minutes and then
+      # failed a later test -- and threw the whole build away, so the next run would have paid the
+      # 58 minutes again. The Buildroot output is valid whatever the tests downstream of it say.
+      #
+      # The save deliberately carries no `always()`: sitting immediately after the build, the
+      # default condition already means "the build succeeded", which is the thing worth caching.
+      # `always()` would also cache a tree left behind by a *failed* build.
+      - name: Restore Buildroot download + build output
+        id: buildroot-cache
+        uses: actions/cache/restore@v4
         with:
           path: boot/.tools
           key: buildroot-x86_64-${{ hashFiles('boot/scripts/fetch-buildroot.sh', 'boot/board/hyperion-x86_64/**', 'boot/configs/hyperion_x86_64_efi_defconfig') }}
       - run: boot/scripts/build-image.sh
+      - name: Save Buildroot download + build output
+        if: steps.buildroot-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: boot/.tools
+          key: ${{ steps.buildroot-cache.outputs.cache-primary-key }}
       - run: boot/scripts/boot-test.sh
         env:
           BOOT_TEST_TIMEOUT: "300"
@@ -122,12 +142,20 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             qemu-system-arm \
             build-essential bc cpio rsync unzip file libncurses-dev
-      - name: Cache Buildroot download + build output
-        uses: actions/cache@v4
+      # See the x86_64 job's own comment on why this is split restore/save.
+      - name: Restore Buildroot download + build output
+        id: buildroot-cache
+        uses: actions/cache/restore@v4
         with:
           path: boot/.tools
           key: buildroot-aarch64-${{ hashFiles('boot/scripts/fetch-buildroot.sh', 'boot/board/hyperion-aarch64/**', 'boot/configs/hyperion_aarch64_virt_defconfig') }}
       - run: boot/scripts/build-image-aarch64.sh
+      - name: Save Buildroot download + build output
+        if: steps.buildroot-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: boot/.tools
+          key: ${{ steps.buildroot-cache.outputs.cache-primary-key }}
       - run: boot/scripts/boot-test-aarch64.sh
         env:
           BOOT_TEST_TIMEOUT: "300"

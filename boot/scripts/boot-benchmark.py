@@ -20,6 +20,9 @@ import socket
 import sys
 import time
 
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+from console_stream import is_ready_for_input, turn_is_complete  # noqa: E402
+
 
 def main():
     sock_path, t0, utterance, timeout_s = (
@@ -36,7 +39,6 @@ def main():
     buf = ""
     deadline = time.monotonic() + timeout_s
     sent = False
-    prompts_seen = 0
     console_ready_elapsed = None
     first_intent_elapsed = None
 
@@ -48,7 +50,7 @@ def main():
         except socket.timeout:
             pass
 
-        if not sent and "Hyperion -- tell me what you'd like to do." in buf:
+        if not sent and is_ready_for_input(buf):
             console_ready_elapsed = time.time() - t0
             # Same real settle delay console-drive.py itself uses before typing.
             time.sleep(0.5)
@@ -56,11 +58,9 @@ def main():
             sent = True
             continue
 
-        if sent:
-            prompts_seen = buf.count("\n> ")
-            if prompts_seen >= 2:
-                first_intent_elapsed = time.time() - t0
-                break
+        if sent and turn_is_complete(buf):
+            first_intent_elapsed = time.time() - t0
+            break
 
     sock.close()
     print(buf)

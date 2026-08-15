@@ -15,6 +15,9 @@ import socket
 import sys
 import time
 
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+from console_stream import is_ready_for_input, turn_is_complete  # noqa: E402
+
 def main():
     sock_path, utterance, timeout_s = sys.argv[1], sys.argv[2], float(sys.argv[3])
 
@@ -25,7 +28,6 @@ def main():
     buf = ""
     deadline = time.monotonic() + timeout_s
     sent = False
-    prompts_seen = 0
 
     while time.monotonic() < deadline:
         try:
@@ -35,21 +37,16 @@ def main():
         except socket.timeout:
             pass
 
-        if not sent and "Hyperion -- tell me what you'd like to do." in buf:
-            # The real console really started; give its first real "> " prompt a moment to
-            # actually be written before sending, then send the real utterance as a real typed
-            # line (with its own newline, exactly like a human pressing Enter).
+        if not sent and is_ready_for_input(buf):
+            # The console has printed a prompt, so it is genuinely waiting for a line. Settle
+            # briefly, then send the utterance exactly as a human pressing Enter would.
             time.sleep(0.5)
             sock.sendall((utterance + "\n").encode("utf-8"))
             sent = True
             continue
 
-        if sent:
-            prompts_seen = buf.count("\n> ")
-            # One prompt for the initial banner, a second once this turn's real output has been
-            # printed and the loop is back waiting for the next line.
-            if prompts_seen >= 2:
-                break
+        if sent and turn_is_complete(buf):
+            break
 
     sock.close()
     print(buf)
