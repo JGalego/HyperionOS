@@ -1,0 +1,54 @@
+name: Website
+
+# The website had no CI at all: `deploy-pages.yml` runs `npm run build` only on a push to `main`,
+# and only as the first step of a deployment. A pull request that broke the type check, tripped a
+# lint rule, or failed the static export got no signal whatsoever -- the breakage surfaced as a
+# failed *deploy* after merge, with `main` already carrying it.
+#
+# This runs the same three checks on every pull request that touches the site, so a website change
+# is verified before it can reach the deploy path.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/website.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/website.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint + typecheck + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: website/.nvmrc
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      # `next build` type-checks too, but only after a full compile. Running `tsc` first fails in
+      # seconds on a type error instead of minutes, and keeps the build step's failures about the
+      # build.
+      - run: npx tsc --noEmit
+      - run: npm run build
+        env:
+          # Same real production origin deploy-pages.yml builds with -- see lib/seo.ts's own doc
+          # comment on why this isn't a hardcoded fallback. A build here that used a different
+          # origin wouldn't be checking what actually ships.
+          NEXT_PUBLIC_SITE_URL: https://try-hyperion.org
