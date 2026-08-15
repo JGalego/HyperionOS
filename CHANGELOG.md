@@ -6,6 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Hyperion doesn't yet promise Semantic Versioning compatibility guarantees --
 version numbers track release sequence, not API stability.
 
+## [Unreleased]
+
+### Fixed
+
+**Enforcement and durability**
+- A Trust Boundary is now refused rather than reported as sandboxed when the
+  kernel applied no Landlock restrictions at all. `CompatLevel::BestEffort`
+  returns `Ok` from `restrict_self()` on a kernel without Landlock, and nothing
+  checked the resulting `RulesetStatus` -- so `spawn` reported success while the
+  child ran completely unconfined.
+- FUSE writes are committed on `flush` rather than only on `release`, so
+  close-to-open consistency holds. `release` is asynchronous and `close(2)` never
+  waited for it, meaning a file read straight after being written could observe
+  the empty object `create` made.
+- Local `/mcp-server`, `/a2a-server`, and `/mesh-dashboard` no longer send
+  `Access-Control-Allow-Origin: *`, and refuse cross-site `Origin` and
+  non-loopback `Host` headers -- any web page could previously drive a real
+  agent turn on these unauthenticated endpoints and read the result. Request
+  reads are now bounded by a timeout, a header cap, and a body cap.
+- `robots.txt`: a malformed bare `User-agent:` line no longer matches every
+  crawler (which silently blocked whole sites), and an equal-length `Allow`
+  now beats a `Disallow` per RFC 9309 §2.2.2 instead of resolving by file order.
+- Stopping an audit-ledger verification schedule or a federation lease heartbeat
+  now returns promptly instead of blocking for up to a full interval -- including
+  in `Drop`, where a production-scale interval meant a hang nobody would suspect.
+
+**Tests and documentation**
+- Five timing-dependent tests no longer assert on wall-clock budgets or fixed
+  sleeps; they poll for the outcome, or check that operations' time spans
+  genuinely overlap. One of them had turned CI red on macOS.
+- 58 dead intra-doc links repaired across the workspace.
+
+### Added
+
+**CI**
+- The boot-image jobs now actually run. Their `if:` condition
+  (`contains(head_commit.modified, 'boot/')`) could never be true, so no commit
+  had ever boot-tested an image.
+- New jobs: website lint/typecheck/build (previously validated only at deploy
+  time, after merge), `cargo doc` with broken links denied, `cargo audit` on
+  dependency changes and weekly, and a job that compiles and tests the optional
+  features -- `real-http`, the cloud backends, mDNS -- which no job had ever
+  built. Turning them on found a failing test that had never executed anywhere.
+- `--locked` on every cargo invocation, least-privilege `permissions`, and
+  `concurrency` groups.
+- A pull-request template carrying CLAUDE.md's own six PR questions.
+
+### Security
+- `webbrowser` advanced to 1.2.4 (RUSTSEC-2026-0257). The two remaining
+  `quick-xml` advisories are accepted in `.cargo/audit.toml` with their reasoning
+  and their actual way out recorded.
+
 ## [0.3.0] -- 2026-07-17
 
 ### Added
