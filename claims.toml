@@ -1,0 +1,232 @@
+# The load-bearing claims Hyperion makes about itself, each paired with the test that fails if
+# it stops being true.
+#
+# ## Why this file exists
+#
+# Every crate's doc comment asserts what it does, in prose, in the present tense, and nothing
+# checked that the assertion still held. That gap is not theoretical: a code review found
+# `hyperion-trust-boundary` reporting a successfully sandboxed process on a kernel that had
+# applied no Landlock restrictions at all, and `hyperion-semantic-fs` acknowledging a write that
+# a subsequent read could miss. Both crates documented the opposite. Both had tests -- neither
+# had a test for the claim that was wrong.
+#
+# `scripts/check-claims.py` verifies that every `test` named here genuinely exists in its crate,
+# and runs them. Renaming or deleting one fails CI with the claim it was carrying, rather than
+# quietly leaving prose behind that nothing stands behind.
+#
+# ## What belongs here
+#
+# Not every test -- there are over a thousand, and a list of all of them is a list of none of
+# them. A claim earns a place here when it is something a *user or operator would be harmed by
+# believing wrongly*: an enforcement boundary, a durability guarantee, a consent gate, a
+# cryptographic property, an erasure promise.
+#
+# ## Adding one
+#
+# Give it a stable `id`, state the claim as a sentence someone could be wrong about, and name the
+# crate and the exact test path (as `cargo test -p <crate> -- --list` prints it). If no single
+# test proves the claim, that is the finding -- write the test first.
+
+[[claim]]
+id = "capability.no-escalation"
+claim = "A derived capability token can never hold rights its parent did not have."
+crate = "hyperion-capability"
+test = "derivation_can_never_escalate_rights"
+
+[[claim]]
+id = "capability.revocation-reaches-the-subtree"
+claim = "Revoking a token invalidates exactly its descendants, and no sibling."
+crate = "hyperion-capability"
+test = "revoking_root_invalidates_every_descendant_but_not_siblings"
+
+[[claim]]
+id = "capability.wire-tokens-are-claims-not-authority"
+claim = "A token arriving as bytes from outside the process cannot forge rights it was never granted."
+crate = "hyperion-capability"
+test = "wire::tests::a_wire_token_claiming_escalated_rights_is_rejected"
+
+[[claim]]
+id = "capability.wire-tokens-cannot-be-replayed-by-another-device"
+claim = "A signed wire token captured from one device does not authenticate on another."
+crate = "hyperion-capability"
+test = "wire::tests::a_replayed_token_signed_by_a_different_real_device_is_rejected"
+
+[[claim]]
+id = "trust-boundary.unconfined-is-refused-not-reported-as-sandboxed"
+claim = "A Trust Boundary is refused, not reported as sandboxed, when the kernel applied no Landlock restrictions at all."
+crate = "hyperion-trust-boundary"
+test = "enforcement::tests::a_kernel_that_enforced_nothing_is_refused_rather_than_reported_as_sandboxed"
+
+[[claim]]
+id = "trust-boundary.grant-is-enforced-by-the-kernel"
+claim = "A sandboxed process really cannot read outside its granted path or make a syscall outside its allowlist."
+crate = "hyperion-trust-boundary"
+test = "sandbox_enforces_scoped_filesystem_and_denies_unlisted_syscalls"
+
+[[claim]]
+id = "trust-boundary.revocation-kills-the-process"
+claim = "Revoking a token ends the real process holding it, so revocation means the same thing to the OS and to the capability algorithm."
+crate = "hyperion-trust-boundary"
+test = "revoking_a_token_kills_the_real_process"
+
+[[claim]]
+id = "privacy.consent-is-never-assumed"
+claim = "A cloud-eligible call with no standing grant degrades rather than proceeding on assumed consent."
+crate = "hyperion-privacy"
+test = "local_preferred_with_consent_and_no_standing_grant_degrades_never_assumes_consent"
+
+[[claim]]
+id = "privacy.residency-overrides-tier"
+claim = "An object whose residency forbids cloud stays local even under a cloud-assisted privacy tier."
+crate = "hyperion-privacy"
+test = "a_restricted_object_forbids_cloud_even_under_cloud_assisted_tier"
+
+[[claim]]
+id = "privacy.erasure-is-real"
+claim = "Crypto-shredding an object really deletes it rather than hiding it."
+crate = "hyperion-privacy"
+test = "crypto_shredding_an_object_really_deletes_it_and_returns_a_receipt"
+
+[[claim]]
+id = "privacy.grants-cannot-be-forged"
+claim = "A consent grant tampered with after issue no longer verifies."
+crate = "hyperion-privacy"
+test = "a_tampered_grant_field_invalidates_the_signature"
+
+[[claim]]
+id = "security.poisoned-corroboration-cannot-buy-down-a-floor"
+claim = "A poisoned corroboration signal cannot pull a maximal-risk action under the backup-first floor."
+crate = "hyperion-security"
+test = "a_poisoned_corroboration_signal_cannot_buy_down_the_backup_first_floor"
+
+[[claim]]
+id = "security.backup-precedes-the-action"
+claim = "An action classified backup-first gets its recovery point before it is allowed to run, not after."
+crate = "hyperion-security"
+test = "a_backup_first_action_gets_a_recovery_point_before_it_proceeds"
+
+[[claim]]
+id = "security.unverifiable-references-are-never-assumed-safe"
+claim = "An action naming an object that cannot be confirmed to exist is never treated as safely reversible."
+crate = "hyperion-security"
+test = "an_action_referencing_an_unverifiable_object_is_never_treated_as_safely_reversible"
+
+[[claim]]
+id = "storage.optimistic-concurrency-holds"
+claim = "A write against a stale expected version is rejected rather than silently overwriting a newer one."
+crate = "hyperion-storage"
+test = "stale_expected_version_is_rejected_not_silently_overwritten"
+
+[[claim]]
+id = "storage.encryption-at-rest-is-real"
+claim = "An encrypted WAL never contains the plaintext metadata on disk."
+crate = "hyperion-storage"
+test = "an_encrypted_wal_never_contains_the_plaintext_metadata_on_disk"
+
+[[claim]]
+id = "storage.wrong-key-recovers-nothing"
+claim = "Opening an encrypted WAL with the wrong key recovers nothing, rather than garbage that looks like data."
+crate = "hyperion-storage"
+test = "opening_an_encrypted_wal_with_the_wrong_key_recovers_nothing_not_garbage"
+
+[[claim]]
+id = "crypto.tampered-ciphertext-fails-closed"
+claim = "Opening tampered sealed data fails rather than returning altered plaintext."
+crate = "hyperion-crypto"
+test = "sealed_stream::tests::opening_tampered_ciphertext_fails_closed"
+
+[[claim]]
+id = "crypto.signatures-bind-exact-bytes"
+claim = "A signature verifies only against the exact bytes that were signed."
+crate = "hyperion-crypto"
+test = "a_real_signature_verifies_only_against_the_exact_signed_bytes"
+
+[[claim]]
+id = "ipc.revocation-reaches-an-open-channel"
+claim = "Revoking a token blocks the very next call over an already-open IPC channel."
+crate = "hyperion-ipc"
+test = "revoking_a_token_blocks_the_very_next_call_over_an_already_open_channel"
+
+[[claim]]
+id = "ipc.sessions-are-independently-keyed"
+claim = "A message encrypted under one Noise session cannot be decrypted by another."
+crate = "hyperion-ipc"
+test = "noise_session::tests::a_message_encrypted_under_one_session_cannot_be_decrypted_by_another"
+
+[[claim]]
+id = "knowledge-graph.encryption-at-rest-is-real"
+claim = "An encrypted Knowledge Graph never writes plaintext metadata to disk."
+crate = "hyperion-knowledge-graph"
+test = "an_encrypted_knowledge_graph_never_writes_plaintext_metadata_to_disk"
+
+[[claim]]
+id = "knowledge-graph.deletion-survives-replay"
+claim = "A deleted node stays deleted across a real WAL replay."
+crate = "hyperion-knowledge-graph"
+test = "a_tombstone_survives_a_real_wal_replay"
+
+[[claim]]
+id = "knowledge-graph.purge-is-scoped-to-one-object"
+claim = "Purging one object's history never disturbs another object's."
+crate = "hyperion-knowledge-graph"
+test = "purge_node_history_never_disturbs_a_different_nodes_own_history"
+
+[[claim]]
+id = "plugin-framework.uninstall-revokes-everything"
+claim = "Uninstalling a plugin revokes every token it was ever minted."
+crate = "hyperion-plugin-framework"
+test = "uninstalling_a_plugin_revokes_every_token_it_was_minted"
+
+[[claim]]
+id = "plugin-framework.install-requires-consent"
+claim = "A plugin cannot be installed without consent."
+crate = "hyperion-plugin-framework"
+test = "installation_without_consent_is_rejected"
+
+[[claim]]
+id = "update.unsigned-updates-are-refused"
+claim = "An update manifest signed by an untrusted key fails verification."
+crate = "hyperion-update"
+test = "a_manifest_signed_by_an_untrusted_key_fails_verification"
+
+[[claim]]
+id = "update.health-breach-rolls-back"
+claim = "A health breach during rollout triggers automatic rollback and restores the objects it touched."
+crate = "hyperion-update"
+test = "a_health_breach_triggers_automatic_rollback_and_restores_touched_objects"
+
+[[claim]]
+id = "update.anti-rollback-holds"
+claim = "Re-applying an update that already failed its health check is refused, not silently retried."
+crate = "hyperion-update"
+test = "retrying_the_exact_same_update_after_a_health_breach_rollback_is_refused"
+
+[[claim]]
+id = "observability.tampering-is-detected-at-its-exact-entry"
+claim = "A tampered audit-ledger entry is detected at its exact sequence number, not silently accepted."
+crate = "hyperion-observability"
+test = "ledger::tests::a_real_tampered_entry_is_detected_as_corrupt_at_its_exact_seq"
+
+[[claim]]
+id = "observability.background-verification-really-runs"
+claim = "The background verification schedule catches a tamper on its own tick, with no on-demand call."
+crate = "hyperion-observability"
+test = "ledger::tests::the_background_schedule_catches_a_real_tamper_on_its_own_next_tick_not_an_on_demand_call"
+
+[[claim]]
+id = "semantic-fs.close-to-open-consistency"
+claim = "A write through the mounted filesystem is readable by the next reader the instant close returns."
+crate = "hyperion-semantic-fs"
+test = "a_write_is_readable_by_the_next_reader_the_instant_close_returns"
+
+[[claim]]
+id = "console.local-servers-refuse-cross-site-browsers"
+claim = "A page on another origin cannot drive a real agent turn through the local MCP/A2A servers."
+crate = "hyperion-console"
+test = "http_server::tests::a_cross_site_browser_request_never_reaches_the_handler"
+
+[[claim]]
+id = "console.local-servers-refuse-rebound-dns"
+claim = "A request addressed to a non-loopback name is refused, closing the DNS-rebinding path to a loopback service."
+crate = "hyperion-console"
+test = "http_server::tests::a_rebound_dns_name_is_refused_even_though_it_resolves_to_loopback"

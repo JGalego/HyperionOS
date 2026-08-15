@@ -57,6 +57,22 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  claims:
+    name: claims
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # The trust-boundary claims spawn a real sandboxed musl binary; see the `test` job.
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      # Verifies every claim in claims.toml still names a test that exists, then runs those tests.
+      # The `test` job already runs all of them -- what this adds is the mapping: rename or delete
+      # a test that a stated guarantee depends on, and CI says which guarantee just lost its
+      # evidence, instead of the prose quietly outliving the proof. See claims.toml's own header.
+      - run: scripts/check-claims.py
+
   features:
     name: optional features
     runs-on: ubuntu-latest
