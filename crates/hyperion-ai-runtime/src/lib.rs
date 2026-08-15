@@ -18,7 +18,7 @@
 //!
 //! docs/998-roadmap.md M8 adds exactly the swap this crate's own doc comment already
 //! anticipated: behind the `candle` Cargo feature (off by default -- see
-//! [`candle_backend`]'s own doc comment for why), [`candle_backend::CandleBackend`] is a real
+//! `candle_backend`'s own doc comment for why), `candle_backend::CandleBackend` is a real
 //! [`InferenceBackend`] running a real, small Candle-loaded model on CPU. `MockBackend` remains
 //! the default for every existing test and every caller that doesn't opt in.
 //!
@@ -32,15 +32,15 @@
 //! deferral (`hyperion-netstack`'s entity resolution, `hyperion-sdk`'s harness,
 //! `hyperion-memory`'s entity clustering each named it independently): a real, deterministic
 //! feature-hashing text embedding, not a neural one — this crate's own real Candle backend has no
-//! encoder/embedding architecture wired in (see [`candle_backend`]'s own doc comment: causal-LM
+//! encoder/embedding architecture wired in (see `candle_backend`'s own doc comment: causal-LM
 //! `llama2.c` weights only) — but a real, principled, well-established technique nonetheless,
 //! swappable for a real neural embedder later behind the same function signature with no
 //! consumer-side change.
 //!
 //! "Phase 2: cloud providers" adds real OpenAI (a preset atop the same `OpenAiCompatBackend`,
 //! since OpenAI's own API already speaks that same shape) plus two genuinely new backends behind
-//! their own Cargo features, [`anthropic_backend::AnthropicBackend`] and
-//! [`gemini_backend::GeminiBackend`], for the two providers whose real wire protocols aren't
+//! their own Cargo features, `anthropic_backend::AnthropicBackend` and
+//! `gemini_backend::GeminiBackend`, for the two providers whose real wire protocols aren't
 //! OpenAI-shaped. Gated behind a real, console-level user consent -- see
 //! `hyperion-console::ConsoleSession`'s own docs on the capability-gated dispatch that enforces
 //! it -- since these send real data to a real, paid, external service.
@@ -51,7 +51,7 @@
 //!   reaching docs/36's actual 1-3B-parameter "small resident" production tier, on real
 //!   NPU/GPU-accelerated reference hardware within its stated latency budget, is: this crate's
 //!   real backend runs a genuinely tiny (15M-parameter) checkpoint on CPU only, proving the
-//!   mechanism, not the production-scale target (see [`candle_backend`]'s own doc comment).
+//!   mechanism, not the production-scale target (see `candle_backend`'s own doc comment).
 //! - **Scheduler governor integration (§5.3).** Real integration would
 //!   subscribe to `hyperion-scheduler`'s `ResourceLedger.capacity` scaling;
 //!   this crate instead takes a caller-supplied [`PowerMode`] directly via
@@ -62,7 +62,7 @@
 //! - ~~**Cancellable streaming (§Data Structures' `TokenStream`)**~~ — now real: a caller-visible
 //!   `request_id` (via [`LocalAiRuntime::infer_cancellable`]) registers a real
 //!   [`runtime::CancellationToken`] in a real `in_flight` registry, and [`LocalAiRuntime::cancel`]
-//!   flips it for real rather than being the previous no-op stub. [`candle_backend::CandleBackend`]
+//!   flips it for real rather than being the previous no-op stub. `candle_backend::CandleBackend`
 //!   is the one real backend with a genuine per-token loop to check it at; every HTTP-backed
 //!   backend receives the token but can't act on it mid-call (one blocking round trip, no
 //!   per-chunk boundary) — see [`runtime::CancellationToken`]'s own doc comment for the honest
@@ -75,7 +75,7 @@
 //!   named, not silently implied fixed by this crate's own upgrade.
 //! - ~~**A signed catalog naming exactly which real model sources this crate trusts, with a real
 //!   integrity check on what actually gets downloaded.**~~ — now real: [`model_catalog::
-//!   ModelCatalog`] names [`candle_backend`]'s own three real download constants (repo/revision/
+//!   ModelCatalog`] names `candle_backend`'s own three real download constants (repo/revision/
 //!   filename/format) plus a real BLAKE3 hash of each real file, [`model_catalog::sign_catalog`]/
 //!   [`model_catalog::verify_catalog`] mirror [`sign`]/[`verify`]'s own real Ed25519-over-
 //!   canonical-bytes shape, and [`model_catalog::verify_file_hash`] is now checked by every

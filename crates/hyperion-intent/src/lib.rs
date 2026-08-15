@@ -70,7 +70,7 @@
 //!   it) — docs/05 §7's `infer(slot, ctx, MemoryEngine.working_memory(...))`
 //!   made real for the bookkeeping half. Actually *using* those turns to
 //!   help resolve an ambiguous mention (rather than escalating to
-//!   [`EntityResolution::Ambiguous`] immediately) needs real text/semantic
+//!   [`hyperion_context::EntityResolution::Ambiguous`] immediately) needs real text/semantic
 //!   matching this workspace's mock AI backend can't do yet — grounding
 //!   itself still only reads `hyperion-context`.
 //! - ~~`submit()` handing off to a real Multi-Agent Coordination~~ — now

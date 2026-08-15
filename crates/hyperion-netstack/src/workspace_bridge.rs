@@ -22,7 +22,7 @@ const DISAMBIGUATION_CATEGORY: &str = "web_disambiguation_candidate";
 /// already established) in a synthetic Context Bundle and compiles it
 /// through the real `hyperion-workspace` Phase 5 pipeline, closing this
 /// crate's own "surfacing `needs_review` through an active Workspace is
-/// [13]'s concern and not wired into this crate" gap.
+/// docs/13's concern and not wired into this crate" gap.
 pub fn present_disambiguation_as_workspace(
     compiler: &WorkspaceCompiler,
     monitor: &CapabilityMonitor,

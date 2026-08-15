@@ -69,7 +69,7 @@ pub struct TaskNode {
     #[serde(default)]
     pub extra_context: Option<String>,
     /// docs/998-roadmap.md's Backlog "Protect the Human" item — see [`JudgmentClass`]. Set once,
-    /// at [`crate::CoordinationEngine::create_session`] time, from this task's own real predicate
+    /// at [`crate::CoordinationSession::create_session`] time, from this task's own real predicate
     /// via [`crate::catalog::judgment_class_for`].
     #[serde(default = "default_judgment_class")]
     pub judgment_class: JudgmentClass,

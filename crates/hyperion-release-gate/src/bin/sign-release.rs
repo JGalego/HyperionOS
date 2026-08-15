@@ -6,7 +6,7 @@
 //! need to check it. Not part of the Cargo workspace's own test/build path for anything else --
 //! invoked directly by `boot/scripts/package-release.sh` at release-packaging time.
 //!
-//! Usage: sign-release <image-path> <keystore-path> <version> <platform>
+//! Usage: `sign-release <image-path> <keystore-path> <version> <platform>`
 
 use std::env;
 use std::fs;

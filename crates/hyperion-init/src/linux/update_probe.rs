@@ -9,7 +9,7 @@
 //! `/proc/cmdline`, the same way a real init process actually receives boot parameters) so this
 //! is completely inert on every other boot -- M7/M11/M12's own boot tests never pass this flag.
 //!
-//! Self-contained within one boot, unlike [`crate::storage_probe`]'s own crash-consistency test:
+//! Self-contained within one boot, unlike [`crate::linux::storage_probe`]'s own crash-consistency test:
 //! there is no crash/interruption semantics to prove here, just a real, signed update applied and
 //! then really rolled back. Writes a real node to a dedicated real
 //! [`hyperion_knowledge_graph::KnowledgeGraph`] on the persistent data partition, applies a real

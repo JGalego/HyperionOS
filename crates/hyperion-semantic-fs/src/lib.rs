@@ -10,7 +10,7 @@
 //! folder," and between "a legacy path" and a Semantic Object.
 //!
 //! Also covers this phase's other two mandate items: **universal search**
-//! ([`resolve_query_from_mention`] turns "everything related to my
+//! ([`SemanticFilesystem::resolve_query_from_mention`] turns "everything related to my
 //! vacation" into a [`QuerySpec`] by reusing
 //! [`hyperion_context::ContextEngine::resolve_entity`] for anchor
 //! resolution — the same grounding mechanism `hyperion-intent` already

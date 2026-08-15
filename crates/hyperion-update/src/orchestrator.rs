@@ -312,7 +312,7 @@ impl UpdateOrchestrator {
 
     /// docs/32 §5's `update_rollback(subject, to_version) -> RollbackReceipt
     /// // delegates to 33` — the literal relationship docs/32 states:
-    /// "[33] is what actually makes an update reversible." Restores
+    /// "docs/33 is what actually makes an update reversible." Restores
     /// every object the pre-update recovery point captured via
     /// `hyperion_recovery::RecoveryService::restore_to`, then moves the
     /// active-version pointer back — callable both mid-rollout (from

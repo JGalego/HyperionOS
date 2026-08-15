@@ -24,7 +24,7 @@
 //! [`registry::PluginRegistry::register_implementation`] implements the
 //! structural-compatibility check that decides whether a colliding
 //! `capability_id` competes as one more implementation, or — via a real
-//! [`registry::version_variant`]-minted id — registers as a genuinely
+//! `version_variant()`-minted id — registers as a genuinely
 //! separate entry instead.
 //!
 //! Every non-`Capability` `Contribution` variant this crate implements now has a real, live

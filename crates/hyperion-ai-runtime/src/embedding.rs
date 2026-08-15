@@ -12,7 +12,7 @@ pub const EMBEDDING_DIMS: usize = 128;
 /// vocabularies) with signed accumulation, then L2-normalized so plain cosine similarity behaves
 /// sanely across vectors of different input lengths.
 ///
-/// This crate's own real [`crate::candle_backend::CandleBackend`] has no encoder/embedding
+/// This crate's own real `candle_backend::CandleBackend` has no encoder/embedding
 /// architecture wired in — it runs a real, causal-LM-only (`llama2.c` weight format) checkpoint,
 /// which has no sentence-embedding head to call — so this is a real, principled, non-neural
 /// substitute rather than a fabricated placeholder: every consumer that previously used a

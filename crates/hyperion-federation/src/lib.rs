@@ -125,7 +125,7 @@
 //!   restart; last-applied-wins, not true CRDT conflict merge).
 //! - ~~**The Fleet aggregate-submission network endpoint** (`Fleet.submitAggregate`).~~
 //!   (2026-07-18) — `hyperion-observability`'s own crate doc named this as its remaining gap
-//!   ("[`aggregate::build_aggregate`] produces the gated report; nothing here sends it anywhere --
+//!   ("`build_aggregate` produces the gated report; nothing here sends it anywhere --
 //!   no real network transport exists in this hosted simulator"), but that crate can't own the
 //!   transport itself: this crate already depends on it, so the reverse direction would be a hard
 //!   Cargo cycle -- the same reasoning that placed [`kg_sync`] here rather than in

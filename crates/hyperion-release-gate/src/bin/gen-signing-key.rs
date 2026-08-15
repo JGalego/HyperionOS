@@ -9,7 +9,7 @@
 //! private key (e.g. `base64 -w0 <path>` to get the value for `gh secret set`) and never commit
 //! it to the repository.
 //!
-//! Usage: gen-signing-key <keystore-output-path>
+//! Usage: `gen-signing-key <keystore-output-path>`
 
 use std::env;
 use std::path::PathBuf;

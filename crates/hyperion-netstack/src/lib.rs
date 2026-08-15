@@ -30,10 +30,10 @@
 //! sitting unused on the node's metadata.
 //!
 //! docs/998-roadmap.md M10 adds real HTTP/TLS/DNS behind a new `real-http` Cargo feature
-//! (off by default, same reason `hyperion-ai-runtime`'s `candle` feature is): [`fetch::ReqwestFetchBackend`]
-//! is a real [`fetch::FetchBackend`] (real `reqwest` blocking client, real rustls TLS with a
-//! *bundled* root store, real DNS) and [`extract::HtmlHeuristicExtractionBackend`] is a real
-//! [`extract::ExtractionBackend`] (real `<title>`/`<meta name="description">`/`<p>` tag parsing
+//! (off by default, same reason `hyperion-ai-runtime`'s `candle` feature is): `fetch::ReqwestFetchBackend`
+//! is a real `fetch::FetchBackend` (real `reqwest` blocking client, real rustls TLS with a
+//! *bundled* root store, real DNS) and `extract::HtmlHeuristicExtractionBackend` is a real
+//! `extract::ExtractionBackend` (real `<title>`/`<meta name="description">`/`<p>` tag parsing
 //! via `scraper`, no model in the loop). `MockFetchBackend`/`MockExtractionBackend` remain the
 //! default for every existing test. See each real type's own doc comment for what real HTML/DOM
 //! parsing and real transport-failure classification actually cover and don't.
@@ -43,13 +43,13 @@
 //! - ~~**The real HTTP/1.1/2/3, TLS 1.3, and DNS stack.**~~ — now real for HTTP/1.1 + TLS 1.3 +
 //!   DNS (see the M10 note above); real HTTP/2/3(QUIC) specifically remain whatever `reqwest`'s
 //!   own default negotiation provides, not something this crate configures or asserts on.
-//! - ~~**Real HTML/DOM parsing** beyond [`extract::HtmlHeuristicExtractionBackend`]'s real but
+//! - ~~**Real HTML/DOM parsing** beyond `extract::HtmlHeuristicExtractionBackend`'s real but
 //!   narrow `<title>`/`<meta name="description">`/`<p>` tag selectors~~ — real `schema.org`/
-//!   JSON-LD/OpenGraph microformat parsing now exists: [`microformats::parse`] reads a real
+//!   JSON-LD/OpenGraph microformat parsing now exists: `microformats::parse` reads a real
 //!   `<script type="application/ld+json">` block (preferred) or real `<meta property="og:*">`
-//!   tags (fallback) and [`fetch::ReqwestFetchBackend`] populates
+//!   tags (fallback) and `fetch::ReqwestFetchBackend` populates
 //!   [`types::FetchedPage::structured`] with it for real, rather than always `None`.
-//!   ~~[`microformats`]'s own doc comment named one still-deferred piece: nested JSON-LD
+//!   ~~`microformats`'s own doc comment named one still-deferred piece: nested JSON-LD
 //!   relationships~~ — now real too: every top-level property whose value is itself a real
 //!   JSON-LD object (or array of objects) declaring its own `@type` (`author`/`publisher`, etc.)
 //!   becomes a real [`types::StructuredSignal::relationships`] `(predicate, identifier)` pair,
@@ -65,8 +65,8 @@
 //!   [`hub::NetstackHub::web_research`] now stores a real embedding on every resolved node
 //!   (previously always `None`) so a future embedding-based `graph.query` against these same
 //!   nodes has real data to search over, not silence.
-//! - **A real local-model extraction pass.** [`extract::ExtractionBackend`]
-//!   is a trait; [`extract::MockExtractionBackend`] deterministically
+//! - **A real local-model extraction pass.** `extract::ExtractionBackend`
+//!   is a trait; `extract::MockExtractionBackend` deterministically
 //!   derives a low-confidence generic `WebPage` from the fetched text,
 //!   reaching docs/19 §9's own "no confident entity → generic WebPage"
 //!   outcome without a model in the loop. Routing through
@@ -74,8 +74,8 @@
 //!   [23 — Multi-Model Orchestration](../23-multi-model-orchestration.md)
 //!   is a real integration this crate's trait boundary leaves open but
 //!   does not perform.
-//! - ~~**`robots.txt` fetching/parsing.**~~ — now real for [`fetch::ReqwestFetchBackend`]:
-//!   [`robots::RobotsRules`] is a real parser (group selection by matched `User-agent`, falling
+//! - ~~**`robots.txt` fetching/parsing.**~~ — now real for `fetch::ReqwestFetchBackend`:
+//!   `robots::RobotsRules` is a real parser (group selection by matched `User-agent`, falling
 //!   back to `*`; longest-matching-prefix-wins between `Allow`/`Disallow`), and
 //!   `ReqwestFetchBackend` performs a real `GET {scheme}://{host}/robots.txt` (cached per host for
 //!   the lifetime of the backend) before ever fetching a disallowed path, setting

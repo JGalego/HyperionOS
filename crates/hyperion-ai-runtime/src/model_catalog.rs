@@ -1,12 +1,12 @@
 //! A real, Ed25519-signed catalog of known-good model sources -- this crate's own previously-
-//! unnamed gap: [`crate::candle_backend`]'s own real Hugging Face Hub repo/revision/filename
+//! unnamed gap: `candle_backend`'s own real Hugging Face Hub repo/revision/filename
 //! constants (`stories15M.bin`, the real quantized GGUF checkpoint, the real safetensors export)
 //! were hardcoded directly in that module with no real integrity check on what actually gets
 //! downloaded and loaded, and no single place a caller could inspect "what model sources does
 //! this build actually trust." [`ModelCatalog`] is that place: a real list of named sources, each
 //! naming exactly where its real weights come from (`repo`/`revision`/`filename`, `hf-hub`'s own
 //! addressing scheme) and a real BLAKE3 content hash the downloaded bytes must match before
-//! [`crate::candle_backend::CandleBackend`] ever loads them -- the same "capability-based,
+//! `candle_backend::CandleBackend` ever loads them -- the same "capability-based,
 //! auditable, reversible" bar CLAUDE.md sets for every other action in this workspace, applied to
 //! "which model weights get to run."
 //!
@@ -16,30 +16,30 @@
 //!
 //! Deliberately not wired into a persisted, user-editable file yet -- see backlog item 28's own
 //! `model_selection.json` follow-up; this module is the real, standalone primitive that follow-up
-//! builds on, proven here against [`crate::candle_backend`]'s own three already-real, already-
+//! builds on, proven here against `candle_backend`'s own three already-real, already-
 //! verified download constants.
 
 use std::path::Path;
 
 use hyperion_crypto::{Keystore, Signature, VerifyingKey};
 
-/// The real file format a [`ModelCatalogEntry`] names -- matches [`crate::candle_backend`]'s own
+/// The real file format a [`ModelCatalogEntry`] names -- matches `candle_backend`'s own
 /// three real loading paths exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelFormat {
-    /// Karpathy's own bespoke `llama2.c` binary layout ([`crate::candle_backend::CandleBackend::load`]).
+    /// Karpathy's own bespoke `llama2.c` binary layout (`candle_backend::CandleBackend::load`).
     Llama2CBinary,
     /// A real quantized GGUF file in llama.cpp's own standard format
-    /// ([`crate::candle_backend::CandleBackend::load_gguf`]).
+    /// (`candle_backend::CandleBackend::load_gguf`).
     Gguf,
     /// A real Hugging Face `transformers`-format safetensors export
-    /// ([`crate::candle_backend::CandleBackend::load_safetensors`]).
+    /// (`candle_backend::CandleBackend::load_safetensors`).
     Safetensors,
 }
 
 /// One real, verifiable model source -- exactly enough to name where a real checkpoint comes
 /// from and what its real bytes must hash to once downloaded, never anything about the weights'
-/// own internal architecture (that's [`crate::candle_backend`]'s concern, derived from the real
+/// own internal architecture (that's `candle_backend`'s concern, derived from the real
 /// file itself at load time).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelCatalogEntry {
@@ -50,7 +50,7 @@ pub struct ModelCatalogEntry {
     /// A real `"owner/name"` Hugging Face Hub repo id.
     pub repo: String,
     /// A real, pinned commit hash -- never a mutable ref like `"main"`, the same
-    /// zero-network-after-first-fetch property [`crate::candle_backend`]'s own revision
+    /// zero-network-after-first-fetch property `candle_backend`'s own revision
     /// constants already established.
     pub revision: String,
     pub filename: String,
@@ -68,7 +68,7 @@ pub struct ModelCatalog {
 
 impl ModelCatalog {
     /// The one real, verified catalog this crate ships -- exactly
-    /// [`crate::candle_backend`]'s own three already-real, already-boot-tested download
+    /// `candle_backend`'s own three already-real, already-boot-tested download
     /// constants, now named and hash-pinned in one inspectable place instead of scattered
     /// `const` declarations with no cross-check.
     pub fn built_in() -> Self {
@@ -168,7 +168,7 @@ pub fn verify_catalog(
 
 /// Verifies `path`'s real content hash against `entry`'s own pinned [`ModelCatalogEntry::blake3_hex`]
 /// -- the real supply-chain integrity check a bare, unverified `hf-hub` download never had: a
-/// corrupted or substituted download is caught before [`crate::candle_backend::CandleBackend`]
+/// corrupted or substituted download is caught before `candle_backend::CandleBackend`
 /// ever loads it, not silently trusted just because the filename matched.
 pub fn verify_file_hash(path: &Path, entry: &ModelCatalogEntry) -> Result<(), ModelCatalogError> {
     let bytes = std::fs::read(path)?;

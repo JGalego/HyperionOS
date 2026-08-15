@@ -83,7 +83,7 @@ pub fn apply_sched_deadline(pid: libc::pid_t, budget: DeadlineBudget) -> Result<
 /// Fallback real-time policy via the classic `sched_setscheduler(2)` API (which *does* have a
 /// libc wrapper) — the roadmap's other listed option, for a kernel or use case where
 /// `SCHED_DEADLINE`'s admission control is a worse fit than a plain fixed-priority round-robin
-/// class. Not used by [`crate::apply`] by default; kept available for exactly the case its own
+/// class. Not used by [`apply_sched_deadline`] by default; kept available for exactly the case its own
 /// module docs describe.
 pub fn apply_sched_rr(pid: libc::pid_t, priority: i32) -> Result<(), RealtimeError> {
     // SAFETY: `sched_param` is a plain-data struct of integers with no invariants beyond that;

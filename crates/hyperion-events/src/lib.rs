@@ -1,10 +1,10 @@
 //! Hyperion system-wide publish/subscribe Event Bus — docs/31-event-system.md,
 //! the L2 Platform Service every other crate's own doc comment has, until
-//! now, only ever cited as "not built": [`hyperion-netstack`]'s
-//! `web.entity.resolved`, [`hyperion-workspace`]'s live incremental
-//! re-render, [`hyperion-coordination`]'s progress/escalation broadcast,
-//! [`hyperion-explainability`]'s `best_effort_reconstruction`, and
-//! [`hyperion-semantic-fs`]'s live `VirtualFolder` invalidation all name
+//! now, only ever cited as "not built": `hyperion-netstack`'s
+//! `web.entity.resolved`, `hyperion-workspace`'s live incremental
+//! re-render, `hyperion-coordination`'s progress/escalation broadcast,
+//! `hyperion-explainability`'s `best_effort_reconstruction`, and
+//! `hyperion-semantic-fs`'s live `VirtualFolder` invalidation all name
 //! this exact document as their missing dependency.
 //!
 //! Real: every one of docs/31's core properties, translated for a

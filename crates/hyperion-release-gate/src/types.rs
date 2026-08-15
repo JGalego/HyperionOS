@@ -69,7 +69,7 @@ pub enum GateAction {
 #[derive(Debug, Clone, Copy)]
 pub enum RegressionThreshold {
     /// This crate's original mechanism: a flat percent delta against a single, caller-set
-    /// baseline point ([`BenchmarkRegistry::set_baseline`]).
+    /// baseline point ([`crate::BenchmarkRegistry::set_baseline`]).
     Percent(f32),
     /// docs/36 §1/§2's real statistical-significance test: flags a regression only when a
     /// result's own z-score against a rolling baseline window's real, computed mean/standard

@@ -57,7 +57,8 @@ pub struct QuotaState {
     pub calls_used_this_window: u32,
     pub max_calls_per_window: u32,
     pub consecutive_failures: u32,
-    /// Real epoch-seconds ([`crate::runtime::now`]) this instance was last suspended --
+    /// Real epoch-seconds (the same `now()` the runtime stamps with) this instance was last
+    /// suspended --
     /// informational display/audit metadata only. `None` once resumed. The actual adaptive
     /// backoff window (keyed on [`Self::times_suspended`]) is gated by
     /// [`crate::AgentRuntime::prepare_invoke`] against a real monotonic clock kept separately
@@ -76,7 +77,7 @@ pub struct QuotaState {
     pub times_suspended: u32,
     /// How many *consecutive* real successes this instance has had since its last resume --
     /// counted only while [`Self::times_suspended`] is still above zero, and reset by any real
-    /// failure. Once this reaches [`crate::runtime::SUCCESS_STREAK_TO_DECAY`], `times_suspended`
+    /// failure. Once this reaches the runtime's own `SUCCESS_STREAK_TO_DECAY`, `times_suspended`
     /// decays by one and this counter resets -- the concrete trigger for "earns its caution back."
     pub consecutive_successes_since_resume: u32,
 }

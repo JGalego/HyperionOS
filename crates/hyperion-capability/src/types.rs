@@ -5,7 +5,7 @@ use bitflags::bitflags;
 
 /// Opaque, monitor-assigned identifier for a kernel object (a page, a thread,
 /// an endpoint, a device register range, ...). Never user-synthesizable:
-/// the only way to obtain one is to receive a [`CapabilityToken`] naming it.
+/// the only way to obtain one is to receive a [`crate::CapabilityToken`] naming it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ObjectId(pub u64);
 

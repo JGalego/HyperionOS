@@ -47,7 +47,7 @@ pub struct WireToken {
     /// TTL granularity this system uses, and never makes an expired token look unexpired (transit
     /// time only ever makes the reconstructed deadline earlier than the original, never later).
     pub expiry_millis_remaining: Option<u64>,
-    /// `None` for a `WireToken` built via [`From<&CapabilityToken>`] (this struct's original,
+    /// `None` for a `WireToken` built via this struct's `From<&CapabilityToken>` impl (its original,
     /// still-real, still-supported unsigned path) — `Some` only when built via
     /// [`WireToken::signed`]. A real Ed25519 signature over every other field's own canonical
     /// bytes ([`canonical_bytes`]), checked by [`CapabilityMonitor::authenticate_wire_token_signed`].

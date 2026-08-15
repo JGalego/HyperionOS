@@ -86,8 +86,8 @@ pub enum DataScope {
 
 /// docs/16 §4's `ConsentGrant` — `revocable` is always `true` per the doc
 /// (not a field a caller could set `false`). `proof` is a real Ed25519
-/// signature over this grant's own canonical bytes (see [`crate::consent::sign_grant`]/
-/// [`crate::consent::verify_grant`]), minted by the issuing device's own `Keystore` at
+/// signature over this grant's own canonical bytes (see the consent ledger's own `sign_grant`/
+/// `verify_grant`), minted by the issuing device's own `Keystore` at
 /// [`crate::consent::ConsentLedger::request`] time — the real, independently-verifiable
 /// artifact [`crate::consent::ConsentLedger::import`] checks before trusting a grant that arrived
 /// from anywhere other than this device's own `request` call.

@@ -26,7 +26,7 @@ fn now() -> u64 {
 /// [`LocalAiRuntime::infer_cancellable`] call (running [`InferenceBackend::generate`] on it) is
 /// still running. Honest scope: only a backend with a genuine token-by-token (or otherwise
 /// interruptible) loop can act on this before its own `generate` call returns —
-/// [`crate::candle_backend::CandleBackend`] is the one real backend in this workspace with such a
+/// `candle_backend::CandleBackend` is the one real backend in this workspace with such a
 /// loop; every HTTP-backed backend (`OpenAiCompatBackend`/`AnthropicBackend`/`GeminiBackend`) and
 /// [`crate::MockBackend`] still complete their one blocking call before anything could check this,
 /// so they receive it and simply never consult it -- named here, not silently pretended otherwise.

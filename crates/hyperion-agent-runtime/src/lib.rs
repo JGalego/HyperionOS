@@ -100,7 +100,7 @@
 //!   Framework](../24-plugin-framework.md), Phase 9) — `invoke()` dispatches
 //!   `assistant.respond`/`web.research`/`document.draft`/`web.search` (plus the three cloud
 //!   capabilities) through a real backend apiece; every *other* `capability_ref` is now a real
-//!   [`runtime::PluginRegistry::query`] lookup — when a caller wired one in (`plugins: Some(...)`,
+//!   [`hyperion_plugin_framework::PluginRegistry::query`] lookup — when a caller wired one in (`plugins: Some(...)`,
 //!   e.g. `hyperion-console`'s own `ConsoleSession`) and it names an installed capability backed
 //!   by `hyperion_plugin_framework::ImplementationKind::NativeBinary`, the call runs for real
 //!   under that registry's Landlock/seccomp sandbox via

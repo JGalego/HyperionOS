@@ -10,7 +10,7 @@
 //! restraint.
 //!
 //! Deliberately a warning, never a boot-blocking failure: a real machine below these thresholds
-//! can still boot and run Hyperion's own console on [`crate::linux::MockBackend`]-class inference
+//! can still boot and run Hyperion's own console on `hyperion-ai-runtime`'s `MockBackend`-class inference
 //! (or a smaller real model than the default) -- refusing to boot at all over a memory/disk
 //! shortfall would leave a person with a genuinely less useful failure mode (no system at all)
 //! than a real, honest warning plus a system that still runs, degraded. Matches

@@ -29,7 +29,7 @@
 //! `hyperion-device`'s `tests/cross_device_workspace.rs` (dev-dependency
 //! only, no coupling added here) proves `DeviceRegistry::find_render_surfaces`'s
 //! real query genuinely decides which, and how many, real devices a
-//! compiled [`compiler::WorkspaceGraph`] mounts onto — docs/20 §5.5's
+//! compiled [`WorkspaceGraph`] mounts onto — docs/20 §5.5's
 //! Cross-Device Workspace Assembly's first, closable half.
 //! [`plugin_contracts::known_contract_for`] (2026-07-16, docs/998-roadmap.md's Resourceful
 //! pillar) is a real UI-component registry: a plugin's own
@@ -57,7 +57,7 @@
 //!   ([22 — Local AI Runtime](../22-local-ai-runtime.md)'s real backend,
 //!   not the mock one) or a real rendering surface to retarget fonts/
 //!   spacing against — neither exists yet.
-//! - **Eye-gaze projection** — needs a real [`InputDeviceProfile`] from
+//! - **Eye-gaze projection** — needs a real `InputDeviceProfile` from
 //!   [20 — Device Framework](../20-device-framework.md) (Phase 7, not
 //!   built) to size dwell targets against; screen-reader, voice, and
 //!   switch-scan projections need no such device input.

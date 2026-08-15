@@ -1,7 +1,7 @@
 use hyperion_scheduler::ResourceVector;
 
 /// docs/21 §Data Structures' `DeviceRecord.trust_tier`. Declaration order
-/// is *not* trust order here — see [`FederationHub`]'s tie-break, which
+/// is *not* trust order here — see [`crate::FederationHub`]'s tie-break, which
 /// ranks by actual trust (`OwnedPrimary` most trusted), not discriminant
 /// value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +60,7 @@ impl VirtualResourceLedger {
 }
 
 /// docs/21 §Data Structures' `OffloadDescriptor`, narrowed to what
-/// [`FederationHub::dispatch_offload`] actually scores against.
+/// [`crate::FederationHub::dispatch_offload`] actually scores against.
 #[derive(Debug, Clone)]
 pub struct OffloadDescriptor {
     pub request: ResourceVector,

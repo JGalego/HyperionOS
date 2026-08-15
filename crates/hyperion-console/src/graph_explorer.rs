@@ -44,7 +44,7 @@ pub enum GraphDumpFormat {
 
 pub struct GraphExplorer {
     graph: Arc<KnowledgeGraph>,
-    /// The node ids behind the most recently rendered numbered list -- `refs[0]` is "[1]", etc.
+    /// The node ids behind the most recently rendered numbered list -- `refs[0]` is `[1]`, etc.
     /// `/why`/`/related` resolve their own `<n>` argument against this rather than a raw `NodeId`
     /// ever crossing the console's own text boundary.
     refs: Vec<NodeId>,

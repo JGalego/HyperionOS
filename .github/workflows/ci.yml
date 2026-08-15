@@ -57,3 +57,24 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  docs:
+    name: rustdoc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Every public component here documents its purpose, inputs, outputs, failure modes, and
+      # security implications (CLAUDE.md's own Definition of Done), and those doc comments lean
+      # heavily on intra-doc links to each other. A link resolving to nothing is a silently dead
+      # cross-reference, and 58 of them had accumulated unnoticed because nothing ever built the
+      # docs.
+      #
+      # `private_intra_doc_links` is deliberately allowed. This workspace's doc comments routinely
+      # name the internal helper that implements a behaviour (`Self::prepare_dispatches`,
+      # `crate::quarantine::scan`) because the audience for them is someone reading the source.
+      # That is how this codebase documents itself, not a defect to lint away.
+      - run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: "-D warnings -D rustdoc::broken_intra_doc_links -A rustdoc::private_intra_doc_links"
+

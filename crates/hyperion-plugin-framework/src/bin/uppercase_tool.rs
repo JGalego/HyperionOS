@@ -4,8 +4,8 @@
 //! start (a dynamically linked binary needs to *read* the host's own dynamic linker/libc from
 //! `/lib`/`/usr/lib`, outside any real `fs_scope` -- see
 //! `hyperion-trust-boundary/tests/enforcement.rs`'s own `probe_bin()` doc comment for the exact
-//! same reasoning, already proven in this workspace). Reads `input.json` (argv[1]), uppercases
-//! its `"text"` field, writes `output.json` (argv[2]) -- exactly the real contract
+//! same reasoning, already proven in this workspace). Reads `input.json` (`argv[1]`), uppercases
+//! its `"text"` field, writes `output.json` (`argv[2]`) -- exactly the real contract
 //! `PluginRegistry::invoke_native_binary` expects of any `NativeBinary` implementation.
 
 use std::env;

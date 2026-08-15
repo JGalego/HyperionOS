@@ -5,7 +5,7 @@
 //! passed; nonzero means the image is either corrupted (hash mismatch) or the signature doesn't
 //! verify (tampered, or signed by a different key than the one recorded).
 //!
-//! Usage: verify-release <image-path> <manifest-path>
+//! Usage: `verify-release <image-path> <manifest-path>`
 
 use std::env;
 use std::fs;

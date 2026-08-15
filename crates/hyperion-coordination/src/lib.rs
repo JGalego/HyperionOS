@@ -50,7 +50,7 @@
 //! - **Contradictory-subplan detection is manual, not automatic.** docs/12
 //!   §5.2's "two `TaskNode`s' stated assumptions about a shared fact
 //!   diverge" needs semantic comparison of Agent outputs this crate has no
-//!   model to perform; [`CoordinationSession::flag_contradiction`] lets a
+//!   model to perform; [`CoordinationSession::arbitrate_contradiction`] lets a
 //!   caller (standing in for whatever *would* detect the divergence) raise
 //!   one directly, and the same Coordinator-arbitration/escalation ladder
 //!   (§5.2) runs from there.

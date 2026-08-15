@@ -3,7 +3,7 @@
 //! Implements docs/25-sdk.md's local test harness and publish workflow
 //! on top of the real `hyperion-plugin-framework` registry — the Phase 9
 //! exit criterion: "a third-party developer (not the core team) builds,
-//! tests locally, and publishes a Capability using only [25]'s public
+//! tests locally, and publishes a Capability using only docs/25's public
 //! tooling, and the Model Router correctly selects between it and a
 //! first-party equivalent." This crate is that tooling's Rust shape;
 //! docs/25 itself is written in a TypeScript-flavored CDL (Capability
@@ -81,7 +81,7 @@
 //!   separate, real follow-up work this bullet does not claim to close.
 //! - ~~**`Implementation.resourceProfile`.** Not modeled — no consumer~~ — now real:
 //!   [`types::Implementation`] carries an optional `hyperion_scheduler::ResourceVector`, threaded
-//!   through [`publish::to_capability_manifest`] into `hyperion-plugin-framework`'s own
+//!   through `to_capability_manifest` into `hyperion-plugin-framework`'s own
 //!   `CapabilityManifest`/`ImplementationDescriptor`. `hyperion-agent-runtime::AgentRuntime::
 //!   prepare_invoke` is the real consumer: it looks a capability's installed implementation up
 //!   and submits its declared reservation to the real Scheduler admission algorithm, falling back
