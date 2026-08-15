@@ -72,8 +72,14 @@ fn setup_with_backend(
 /// this test needing one. See `concurrent_invokes_against_the_same_instance_genuinely_overlap_
 /// not_serialize` below, the one test in this file that actually needs real elapsed time to mean
 /// something.
+/// Every real call's own `(start, end)`, so a test can ask whether two calls genuinely overlapped
+/// instead of inferring it from how long the pair took in total.
+type DispatchSpans =
+    std::sync::Arc<std::sync::Mutex<Vec<(std::time::Instant, std::time::Instant)>>>;
+
 struct SlowBackend {
     delay: std::time::Duration,
+    spans: DispatchSpans,
 }
 
 impl InferenceBackend for SlowBackend {
@@ -83,7 +89,12 @@ impl InferenceBackend for SlowBackend {
         request: &InferenceRequest,
         _cancel: &CancellationToken,
     ) -> String {
+        let start = std::time::Instant::now();
         std::thread::sleep(self.delay);
+        self.spans
+            .lock()
+            .unwrap()
+            .push((start, std::time::Instant::now()));
         format!("slow echo: {}", request.prompt)
     }
 }
@@ -504,17 +515,23 @@ mod real_content_generation {
 /// realistic case `hyperion-coordination::allocate` actually hits (one writer instance handles
 /// `business_model`/`branding`/`legal_formation`; see that crate's own "one research + one writer
 /// instance, reused across tasks" test).
+///
+/// Asserted as overlapping time spans rather than a wall-clock budget: a budget makes the result
+/// depend on machine load, and the same shape elsewhere in this workspace failed on a loaded CI
+/// runner while behaving exactly as designed. Two spans are disjoint under serialization however
+/// fast or slow the machine is.
 #[test]
 fn concurrent_invokes_against_the_same_instance_genuinely_overlap_not_serialize() {
+    let spans: DispatchSpans = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let (monitor, token, runtime) = setup_with_backend(Box::new(SlowBackend {
         delay: std::time::Duration::from_millis(200),
+        spans: std::sync::Arc::clone(&spans),
     }));
     let id = runtime.spawn(&monitor, &token, manifest(), None).unwrap();
     runtime
         .grant_capability(&monitor, &token, id, "document.draft")
         .unwrap();
 
-    let start = std::time::Instant::now();
     std::thread::scope(|scope| {
         for _ in 0..2 {
             scope.spawn(|| {
@@ -530,12 +547,20 @@ fn concurrent_invokes_against_the_same_instance_genuinely_overlap_not_serialize(
             });
         }
     });
-    let elapsed = start.elapsed();
 
+    let spans = spans.lock().unwrap();
+    assert_eq!(
+        spans.len(),
+        2,
+        "both real dispatches must have reached the backend"
+    );
+    let (a_start, a_end) = spans[0];
+    let (b_start, b_end) = spans[1];
     assert!(
-        elapsed < std::time::Duration::from_millis(350),
-        "two real 200ms dispatches against the SAME agent instance took {elapsed:?} -- expected \
-         them to genuinely overlap (~200ms total if they run concurrently), not serialize behind \
-         one global lock (~400ms total if they don't)"
+        a_start < b_end && b_start < a_end,
+        "two real dispatches against the SAME agent instance serialized behind one global lock \
+         rather than overlapping: {:?} and {:?}",
+        a_end.duration_since(a_start),
+        b_end.duration_since(b_start),
     );
 }

@@ -163,8 +163,14 @@ fn no_registered_model_for_the_class_is_infeasible_not_a_panic() {
 
 /// A real `InferenceBackend` that takes a controlled, real amount of wall-clock time -- standing
 /// in for a real, slow network round trip to a real cloud model. See the concurrency test below.
+/// Every real call's own `(start, end)`, so a test can ask whether two calls genuinely overlapped
+/// instead of inferring it from how long the pair took in total.
+type DispatchSpans =
+    std::sync::Arc<std::sync::Mutex<Vec<(std::time::Instant, std::time::Instant)>>>;
+
 struct SlowBackend {
     delay: std::time::Duration,
+    spans: DispatchSpans,
 }
 
 impl InferenceBackend for SlowBackend {
@@ -174,7 +180,12 @@ impl InferenceBackend for SlowBackend {
         request: &InferenceRequest,
         _cancel: &CancellationToken,
     ) -> String {
+        let start = std::time::Instant::now();
         std::thread::sleep(self.delay);
+        self.spans
+            .lock()
+            .unwrap()
+            .push((start, std::time::Instant::now()));
         format!("slow echo: {}", request.prompt)
     }
 }
@@ -312,14 +323,21 @@ fn cancel_on_an_unknown_request_id_is_a_harmless_no_op() {
 /// bug `hyperion_agent_runtime::AgentRuntime::invoke`'s own three-phase split fixes one layer up.
 /// Fixed by storing an `Arc<dyn InferenceBackend>` behind the mutex instead of a bare `Box`, so
 /// `infer` clones the `Arc` (cheap) and drops the lock before ever calling `generate`.
+///
+/// Asserted as overlapping time spans rather than a wall-clock budget: a budget makes the result
+/// depend on machine load, and the same shape elsewhere in this workspace failed on a loaded CI
+/// runner while behaving exactly as designed. Two spans are disjoint under serialization however
+/// fast or slow the machine is.
 #[test]
 fn concurrent_infer_calls_genuinely_overlap_not_serialize() {
     let mut monitor = CapabilityMonitor::new();
     let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
     let (_dir, keystore) = keystore();
+    let spans: DispatchSpans = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let runtime = LocalAiRuntime::new(
         Box::new(SlowBackend {
             delay: std::time::Duration::from_millis(200),
+            spans: std::sync::Arc::clone(&spans),
         }),
         8_000,
     );
@@ -338,7 +356,6 @@ fn concurrent_infer_calls_genuinely_overlap_not_serialize() {
         prompt: "hello".to_string(),
     };
 
-    let start = std::time::Instant::now();
     std::thread::scope(|scope| {
         for _ in 0..2 {
             scope.spawn(|| {
@@ -348,12 +365,20 @@ fn concurrent_infer_calls_genuinely_overlap_not_serialize() {
             });
         }
     });
-    let elapsed = start.elapsed();
 
+    let spans = spans.lock().unwrap();
+    assert_eq!(
+        spans.len(),
+        2,
+        "both real infer calls must have reached the backend"
+    );
+    let (a_start, a_end) = spans[0];
+    let (b_start, b_end) = spans[1];
     assert!(
-        elapsed < std::time::Duration::from_millis(350),
-        "two real 200ms infer calls took {elapsed:?} -- expected them to genuinely overlap \
-         (~200ms total if they run concurrently), not serialize behind the backend lock \
-         (~400ms total if they don't)"
+        a_start < b_end && b_start < a_end,
+        "two real infer calls serialized behind the backend lock rather than overlapping: \
+         {:?} and {:?}",
+        a_end.duration_since(a_start),
+        b_end.duration_since(b_start),
     );
 }
