@@ -1,0 +1,64 @@
+name: Bug report
+description: Something behaves differently from what it says it does.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Hyperion is experimental. A gap between the docs and reality is worth reporting even if
+        you're not sure which side is wrong — that ambiguity is itself the finding.
+
+        For a **security vulnerability**, please don't use this form. Report it privately through
+        [security advisories](https://github.com/JGalego/HyperionOS/security/advisories/new).
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect, and what made you expect it?
+      description: >-
+        A line from the README, a crate's doc comment, a docs/ page — if something told you it
+        would work this way, quote it. Knowing which claim is wrong is most of the fix.
+      placeholder: |
+        README says released binaries include mDNS discovery, but /mcp-discover reports
+        "this binary wasn't built with the mdns feature".
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+      description: Paste the real output. Trim it if it's long, but don't paraphrase it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How can we reproduce it?
+      description: >-
+        Exact commands. A scenario file (see `scenarios/`) is ideal, since it replays identically.
+      placeholder: |
+        printf 'launch my startup\n/graph\n' > /tmp/repro.txt
+        HYPERION_CONSOLE_DATA_DIR=/tmp/scratch ./hyperion-console /tmp/repro.txt
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Which build?
+      description: A release asset name, or `git rev-parse --short HEAD` for a source build.
+      placeholder: hyperion-console-v0.3.0-aarch64-apple-darwin
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Where were you running it?
+      description: OS and architecture — and whether it was the console or a booted image.
+      placeholder: macOS 15.3 (Apple silicon), console binary
+    validations:
+      required: true

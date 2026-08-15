@@ -1,0 +1,44 @@
+name: Overreaching claim
+description: Something in the docs or a crate comment claims more than the code actually does.
+labels: ["honest-scope"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project's docs assert a great deal about what is "real". Where an assertion has
+        drifted ahead of the code, that's worth its own report — a named gap is worth more than an
+        unnamed one, and far more than a claim that overreaches.
+
+        If the code is simply *broken*, file a bug instead. This is for the case where the code
+        works as written and the writing is what's wrong.
+
+  - type: textarea
+    id: claim
+    attributes:
+      label: What does it claim?
+      description: Quote it, and link the file and line.
+      placeholder: |
+        crates/hyperion-netstack/src/lib.rs:78 — "respects robots.txt for real"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reality
+    attributes:
+      label: What does the code actually do?
+      description: >-
+        What's missing, or narrower than stated. If you found it by reading rather than running,
+        say so — that's still a valid report.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: fix
+    attributes:
+      label: Which side should move?
+      options:
+        - Narrow the claim to what's true today
+        - Build the missing piece
+        - Not sure — that's part of what I'm asking
+    validations:
+      required: true

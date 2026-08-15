@@ -361,7 +361,9 @@ A real, live recording of [`scenarios/cloud-provider-comparison.txt`](scenarios/
 
 ## 🛠️ Working on Hyperion
 
-`cargo build`, `cargo test`, `cargo clippy`, and `cargo fmt` are the whole loop - the same four things [CI](.github/workflows/ci.yml) runs, plus `cargo doc` and `cargo audit`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full loop, what gets reviewed hardest, and how to report a security issue.
+
+`cargo build`, `cargo test`, `cargo clippy`, and `cargo fmt` are the day-to-day of it - the same four things [CI](.github/workflows/ci.yml) runs, plus `cargo doc`, `cargo audit`, and `scripts/check-claims.py`.
 
 On **Linux**, one extra target is needed before `cargo test --workspace` passes. Several tests spawn a real, statically-linked companion binary into a real Landlock/seccomp sandbox, and a dynamically-linked one can't start in there - its own loader would have to read `/lib`, outside any granted `fs_scope`:
 
