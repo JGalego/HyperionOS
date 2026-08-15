@@ -123,3 +123,31 @@ fn stopping_a_heartbeat_really_stops_it_from_renewing_further() {
         "a stopped heartbeat must let the lease genuinely go stale"
     );
 }
+
+#[test]
+fn stopping_a_heartbeat_does_not_wait_out_its_whole_renewal_interval() {
+    let (monitor, token, hub) = setup();
+    hub.acquire_lease(&monitor, &token, 42, 1, real_now(), 60)
+        .unwrap();
+
+    // A real lease renews on a minutes-scale interval, not the sub-second one every other test
+    // here uses to keep itself fast. A `stop` that only noticed the request when its current
+    // sleep happened to end would block the caller for that whole interval -- and `stop` is also
+    // what `Drop` runs, so the hang would land wherever the handle went out of scope, which is
+    // the last place anyone looks.
+    let heartbeat = hub.start_lease_heartbeat(
+        Arc::clone(&monitor),
+        token.clone(),
+        42,
+        1,
+        Duration::from_secs(3_600),
+    );
+
+    let started = std::time::Instant::now();
+    heartbeat.stop();
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "stop() must interrupt the pending renewal interval rather than wait it out -- took {:?}",
+        started.elapsed()
+    );
+}

@@ -149,6 +149,7 @@ mod fleet;
 mod hub;
 mod kg_sync;
 mod offload_bridge;
+mod shutdown;
 mod transport;
 mod types;
 

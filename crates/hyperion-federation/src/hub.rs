@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -16,6 +16,7 @@ use hyperion_explainability::{
 use hyperion_observability::{TelemetryCollector, TraceId};
 use hyperion_scheduler::{ResourceDimension, ResourceVector};
 
+use crate::shutdown::StopSignal;
 use crate::types::{
     AnchorLease, FederationTrustTier, MigrationOutcome, MigrationReceipt, OffloadDescriptor,
     PrivacyTier, VirtualResourceLedger,
@@ -55,18 +56,19 @@ struct AgentRef {
 /// merely detached, so a caller can be sure it has genuinely stopped renewing before proceeding
 /// (e.g. before releasing the lease it was renewing, to avoid a benign but confusing race).
 pub struct LeaseHeartbeat {
-    stop: Arc<AtomicBool>,
+    stop: Arc<StopSignal>,
     handle: Option<JoinHandle<()>>,
 }
 
 impl LeaseHeartbeat {
     /// Signals the real background thread to stop and blocks until it has genuinely exited.
+    /// Returns promptly regardless of how long the renewal interval is -- see [`StopSignal`].
     pub fn stop(mut self) {
         self.stop_and_join();
     }
 
     fn stop_and_join(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop.request_stop();
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -675,15 +677,11 @@ impl FederationHub {
         device_id: u64,
         interval: Duration,
     ) -> LeaseHeartbeat {
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(StopSignal::default());
         let thread_stop = Arc::clone(&stop);
         let hub = Arc::clone(self);
         let handle = std::thread::spawn(move || {
-            while !thread_stop.load(Ordering::Relaxed) {
-                std::thread::sleep(interval);
-                if thread_stop.load(Ordering::Relaxed) {
-                    break;
-                }
+            while !thread_stop.sleep_unless_stopped(interval) {
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .expect("system clock before Unix epoch")
