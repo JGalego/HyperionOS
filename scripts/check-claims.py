@@ -15,9 +15,16 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import tomllib
 from collections import defaultdict
 from pathlib import Path
+
+try:
+    import tomllib  # standard library from Python 3.11
+except ModuleNotFoundError:
+    sys.exit(
+        f"this needs Python 3.11 or newer for `tomllib` (found {sys.version.split()[0]}). "
+        "Install a newer Python, or `pip install tomli` and change the import."
+    )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / "claims.toml"
