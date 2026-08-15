@@ -32,6 +32,14 @@ version numbers track release sequence, not API stability.
   now returns promptly instead of blocking for up to a full interval -- including
   in `Drop`, where a production-scale interval meant a hang nobody would suspect.
 
+**The boot path, once CI could see it**
+- `console-drive.py` never typed anything: it waited for a greeting string the
+  console does not print, and counted prompts in a way ANSI colour makes
+  impossible. `boot-benchmark.py` had both bugs too. Both now share
+  `console_stream.py`, which matches on the prompt itself, and the driver has its
+  own test that replays a real console stream in seconds rather than only behind
+  an hour-long image build.
+
 **Tests and documentation**
 - Five timing-dependent tests no longer assert on wall-clock budgets or fixed
   sleeps; they poll for the outcome, or check that operations' time spans
