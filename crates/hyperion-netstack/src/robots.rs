@@ -73,10 +73,15 @@ impl RobotsRules {
             groups.push(group);
         }
 
+        // `!a.is_empty()` matters: `agent.contains("")` is true for every agent, so a malformed
+        // bare `User-agent:` line would otherwise be selected as the *specific* group for
+        // everyone, beating the real `User-agent: *` group. On a site whose robots.txt has one
+        // stray empty line of that shape, that silently applied someone else's rules -- and since
+        // this parser fails closed, typically meant refusing to fetch the site at all.
         let specific = groups.iter().find(|(agents, _)| {
             agents
                 .iter()
-                .any(|a| a != "*" && agent.contains(a.as_str()))
+                .any(|a| !a.is_empty() && a != "*" && agent.contains(a.as_str()))
         });
         let wildcard = groups
             .iter()
@@ -88,23 +93,35 @@ impl RobotsRules {
     }
 
     /// `true` if `path` (the request's own URL path, e.g. `/private/page`) is allowed under this
-    /// ruleset -- longest matching prefix wins (a real `Disallow` only beats a real `Allow` of
-    /// the same or shorter length, matching real crawlers' own precedence); no matching rule at
-    /// all is allowed by default. An empty `Disallow`/`Allow` value is a real, explicit
-    /// "no restriction" per the de facto spec, modeled as the weakest possible (zero-length)
-    /// match so any real, non-empty rule always outranks it.
+    /// ruleset.
+    ///
+    /// The longest matching prefix wins, and where an `Allow` and a `Disallow` match with the
+    /// *same* length, the `Allow` wins -- RFC 9309 §2.2.2's "the least restrictive rule" tiebreak,
+    /// which is what real crawlers implement. File order deliberately doesn't enter into it: a
+    /// site writing `Allow: /docs/` above `Disallow: /docs/` and one writing them the other way
+    /// round mean the same thing, and resolving by whichever came last made Hyperion's answer
+    /// depend on the order a site happened to list two equivalent rules in.
+    ///
+    /// No matching rule at all is allowed by default. An empty `Disallow`/`Allow` value is an
+    /// explicit "no restriction" per the de facto spec, modeled as the weakest possible
+    /// (zero-length) allow, so any real, non-empty rule outranks it.
     pub fn allows(&self, path: &str) -> bool {
         let mut best: Option<(usize, bool)> = None;
         for (is_allow, prefix) in &self.rules {
-            if prefix.is_empty() {
-                if best.is_none() {
-                    best = Some((0, true));
-                }
+            let candidate = if prefix.is_empty() {
+                (0, true)
+            } else if path.starts_with(prefix.as_str()) {
+                (prefix.len(), *is_allow)
+            } else {
                 continue;
-            }
-            if path.starts_with(prefix.as_str()) && prefix.len() >= best.map_or(0, |(len, _)| len) {
-                best = Some((prefix.len(), *is_allow));
-            }
+            };
+            best = Some(match best {
+                None => candidate,
+                Some(current) if candidate.0 > current.0 => candidate,
+                // Equal length: the least restrictive of the two wins.
+                Some(current) if candidate.0 == current.0 => (current.0, current.1 || candidate.1),
+                Some(current) => current,
+            });
         }
         best.is_none_or(|(_, is_allow)| is_allow)
     }
@@ -162,6 +179,37 @@ mod tests {
         let body = "User-agent: agent-a\nUser-agent: hyperionos\nDisallow: /blocked/\n";
         let rules = RobotsRules::parse(body, "hyperionos-netstack");
         assert!(!rules.allows("/blocked/page"));
+    }
+
+    #[test]
+    fn an_allow_beats_a_disallow_of_the_same_length_whichever_order_they_are_written_in() {
+        for body in [
+            "User-agent: *\nAllow: /docs/\nDisallow: /docs/\n",
+            "User-agent: *\nDisallow: /docs/\nAllow: /docs/\n",
+        ] {
+            let rules = RobotsRules::parse(body, "hyperionos-netstack");
+            assert!(
+                rules.allows("/docs/page"),
+                "RFC 9309 §2.2.2: an equal-length Allow wins, regardless of which was written \
+                 first -- failed for {body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_malformed_empty_user_agent_group_does_not_capture_every_crawler() {
+        // The empty group would match every agent via `contains("")`, shadowing the real wildcard
+        // group below it -- and since it disallows everything, silently blocking the whole site.
+        let body = "User-agent:\nDisallow: /\n\nUser-agent: *\nDisallow: /private/\n";
+        let rules = RobotsRules::parse(body, "hyperionos-netstack");
+        assert!(
+            rules.allows("/public/page"),
+            "a bare `User-agent:` line names no agent and must not select a group"
+        );
+        assert!(
+            !rules.allows("/private/page"),
+            "the wildcard group still applies"
+        );
     }
 
     #[test]
