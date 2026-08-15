@@ -24,6 +24,13 @@ use hyperion_plugin_framework::{
     PrivacyTier, SemanticContract, SideEffect, TrustDepth,
 };
 
+/// Every test in this file builds a real, statically-linked musl companion binary to run under
+/// the real sandbox. That target isn't installed by default, and cargo's own failure for a missing
+/// one (`can't find crate for `core``, repeated per dependency) doesn't say so -- this does.
+const MUSL_TARGET_HINT: &str = "if the cargo output above says \"can't find crate for `core`\", \
+     the x86_64-unknown-linux-musl target isn't installed: run \
+     `rustup target add x86_64-unknown-linux-musl`";
+
 fn keystore() -> (tempfile::TempDir, Keystore) {
     let dir = tempfile::tempdir().unwrap();
     let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
@@ -1410,7 +1417,7 @@ fn invoke_capability_dispatches_to_a_real_installed_native_binary_plugin() {
             .expect("run cargo build for the musl uppercase_tool binary");
         assert!(
             status.success(),
-            "building the musl uppercase_tool binary failed"
+            "building the musl uppercase_tool binary failed -- {MUSL_TARGET_HINT}",
         );
 
         let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

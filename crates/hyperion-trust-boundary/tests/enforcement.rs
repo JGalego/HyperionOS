@@ -12,6 +12,12 @@ use std::time::{Duration, Instant};
 
 use hyperion_trust_boundary::{spawn, RightsMask, SpawnGrant, TrustBoundaryId, TrustDepth};
 
+/// Every test in this file builds a real, statically-linked musl companion binary to run under
+/// the real sandbox. That target isn't installed by default, and cargo's own failure for a missing
+/// one (`can't find crate for `core``, repeated per dependency) doesn't say so -- this does.
+const MUSL_TARGET_HINT: &str = "if the cargo output above says \"can't find crate for `core`\", \
+     the x86_64-unknown-linux-musl target isn't installed: run \
+     `rustup target add x86_64-unknown-linux-musl`";
 /// The default `CARGO_BIN_EXE_probe` binary is dynamically linked against the host's glibc,
 /// which needs to *read* (not just execute) the dynamic linker and libc `.so` files from
 /// `/lib`/`/usr/lib` as part of `execve()` itself -- outside any `fs_scope` a test grants, so
@@ -34,7 +40,10 @@ fn probe_bin() -> PathBuf {
         ])
         .status()
         .expect("run cargo build for the musl probe binary");
-    assert!(status.success(), "building the musl probe binary failed");
+    assert!(
+        status.success(),
+        "building the musl probe binary failed -- {MUSL_TARGET_HINT}"
+    );
 
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()

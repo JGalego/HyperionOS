@@ -18,6 +18,12 @@ use hyperion_capability::RightsMask;
 use hyperion_supervisor::{ServiceSpec, Supervisor};
 use hyperion_trust_boundary::TrustDepth;
 
+/// Every test in this file builds a real, statically-linked musl companion binary to run under
+/// the real sandbox. That target isn't installed by default, and cargo's own failure for a missing
+/// one (`can't find crate for `core``, repeated per dependency) doesn't say so -- this does.
+const MUSL_TARGET_HINT: &str = "if the cargo output above says \"can't find crate for `core`\", \
+     the x86_64-unknown-linux-musl target isn't installed: run \
+     `rustup target add x86_64-unknown-linux-musl`";
 const MUSL_TARGET: &str = "x86_64-unknown-linux-musl";
 
 /// Builds `bin_name` (owned by `crate_name`) for the musl target and returns its path. A
@@ -38,7 +44,10 @@ fn service_bin(crate_name: &str, bin_name: &str) -> PathBuf {
         ])
         .status()
         .expect("run cargo build for the musl service binary");
-    assert!(status.success(), "building {bin_name} for musl failed");
+    assert!(
+        status.success(),
+        "building {bin_name} for musl failed -- {MUSL_TARGET_HINT}"
+    );
 
     workspace_root()
         .join("target")

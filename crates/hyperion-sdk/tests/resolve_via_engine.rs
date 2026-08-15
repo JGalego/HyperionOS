@@ -17,6 +17,12 @@ use hyperion_plugin_framework::{
 use hyperion_sdk::{resolve_via_engine, Contract, Implementation, LatencyClass, Runtime};
 use serde_json::json;
 
+/// Every test in this file builds a real, statically-linked musl companion binary to run under
+/// the real sandbox. That target isn't installed by default, and cargo's own failure for a missing
+/// one (`can't find crate for `core``, repeated per dependency) doesn't say so -- this does.
+const MUSL_TARGET_HINT: &str = "if the cargo output above says \"can't find crate for `core`\", \
+     the x86_64-unknown-linux-musl target isn't installed: run \
+     `rustup target add x86_64-unknown-linux-musl`";
 fn keystore() -> (tempfile::TempDir, Keystore) {
     let dir = tempfile::tempdir().unwrap();
     let keystore = Keystore::open_or_create(&dir.path().join("device.key")).unwrap();
@@ -41,7 +47,7 @@ fn engine_launcher_bin() -> PathBuf {
         .unwrap_or_else(|e| panic!("run cargo build for the musl engine_echo_tool binary: {e}"));
     assert!(
         status.success(),
-        "building the musl engine_echo_tool binary failed"
+        "building the musl engine_echo_tool binary failed -- {MUSL_TARGET_HINT}"
     );
 
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))

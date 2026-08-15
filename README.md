@@ -24,6 +24,7 @@ See [`CHANGELOG.md`](CHANGELOG.md) for what's new in each release.
 - [🚀 Getting started](#-getting-started)
 - [🔨 Build it yourself](#-build-it-yourself)
 - [💬 Try it locally](#-try-it-locally)
+- [🛠️ Working on Hyperion](#-working-on-hyperion)
 - [📄 License](#-license)
 
 ## ✨ Features
@@ -329,6 +330,20 @@ A real, live recording of [`scenarios/cloud-provider-comparison.txt`](scenarios/
 <img src="assets/demo-cloud-providers.gif" alt="A recorded hyperion-console session: the same question asked of OpenAI, Anthropic, and Groq in a row, each connected and switched to live, with genuinely different real answers." width="100%" />
 
 `.env` is already gitignored, so a real key never gets committed. A scenario file only ever references a key by name (`$GROQ_API_KEY`), never as a literal - see [Usage Scenarios](docs/999-usage-scenarios.md)' "Running a scenario from a file" for how that expansion works.
+
+## 🛠️ Working on Hyperion
+
+`cargo build`, `cargo test`, `cargo clippy`, and `cargo fmt` are the whole loop - the same four things [CI](.github/workflows/ci.yml) runs, plus `cargo doc` and `cargo audit`.
+
+On **Linux**, one extra target is needed before `cargo test --workspace` passes. Several tests spawn a real, statically-linked companion binary into a real Landlock/seccomp sandbox, and a dynamically-linked one can't start in there - its own loader would have to read `/lib`, outside any granted `fs_scope`:
+
+```sh
+rustup target add x86_64-unknown-linux-musl
+```
+
+Without it, those tests fail with cargo's ``can't find crate for `core` `` rather than anything that names the cause. On macOS they're `#[cfg(target_os = "linux")]`-gated and don't run at all.
+
+Building a bootable image needs more (QEMU, Buildroot host dependencies); see [boot/README.md](boot/README.md).
 
 ## 📄 License
 
