@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -354,17 +354,13 @@ impl AuditLedger {
         self: &Arc<Self>,
         interval: Duration,
     ) -> VerificationSchedule {
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(StopSignal::default());
         let thread_stop = Arc::clone(&stop);
         let last_report = Arc::new(Mutex::new(None));
         let thread_report = Arc::clone(&last_report);
         let ledger = Arc::clone(self);
         let handle = std::thread::spawn(move || {
-            while !thread_stop.load(Ordering::Relaxed) {
-                std::thread::sleep(interval);
-                if thread_stop.load(Ordering::Relaxed) {
-                    break;
-                }
+            while !thread_stop.sleep_unless_stopped(interval) {
                 let to_seq = ledger.next_seq.load(Ordering::Relaxed).saturating_sub(1);
                 let report = ledger.verify_chain(1, to_seq);
                 *thread_report.lock().unwrap() = Some(report);
@@ -378,12 +374,45 @@ impl AuditLedger {
     }
 }
 
+/// An interruptible "sleep until the next tick, unless we're told to stop first."
+///
+/// A plain `thread::sleep(interval)` would make [`VerificationSchedule::stop`] (and its `Drop`)
+/// block for up to a whole `interval` before the thread noticed the flag -- invisible at a test's
+/// 50ms cadence, but a real hang at the hour-scale interval a production ledger actually verifies
+/// on, in the exact place a caller least expects to block: dropping a value. Parking on a
+/// [`Condvar`] instead means a stop request wakes the thread immediately, so shutdown latency is
+/// bounded by the verification pass itself rather than by the polling interval.
+#[derive(Default)]
+struct StopSignal {
+    stopped: Mutex<bool>,
+    woken: Condvar,
+}
+
+impl StopSignal {
+    /// Waits up to `interval`, returning `true` if a stop was requested (either already pending or
+    /// signalled while waiting) and `false` if the interval genuinely elapsed and the caller should
+    /// run another tick.
+    fn sleep_unless_stopped(&self, interval: Duration) -> bool {
+        let stopped = self.stopped.lock().unwrap();
+        if *stopped {
+            return true;
+        }
+        let (stopped, _timeout) = self.woken.wait_timeout(stopped, interval).unwrap();
+        *stopped
+    }
+
+    fn request_stop(&self) {
+        *self.stopped.lock().unwrap() = true;
+        self.woken.notify_all();
+    }
+}
+
 /// A real background thread [`AuditLedger::start_periodic_verification`] returns -- mirrors
 /// `hyperion-federation::FederationHub`'s own `LeaseHeartbeat` `stop`/join-on-drop shape exactly:
 /// a genuinely running thread the caller can stop and block on, or simply drop to have it
 /// stopped and joined automatically.
 pub struct VerificationSchedule {
-    stop: Arc<AtomicBool>,
+    stop: Arc<StopSignal>,
     handle: Option<JoinHandle<()>>,
     last_report: Arc<Mutex<Option<VerificationReport>>>,
 }
@@ -395,7 +424,7 @@ impl VerificationSchedule {
     }
 
     fn stop_and_join(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop.request_stop();
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -608,26 +637,58 @@ mod tests {
         );
     }
 
+    /// The background thread's tick cadence for the two schedule tests below -- short enough that
+    /// they finish fast on an idle machine, while [`await_report`] (not this interval) is what
+    /// actually bounds how long they'll wait on a loaded one.
+    const TEST_TICK: Duration = Duration::from_millis(20);
+
+    /// Blocks until the background thread has published a report satisfying `expected`, or fails
+    /// the test after a deliberately generous deadline.
+    ///
+    /// Sleeping a fixed multiple of the tick interval and asserting once is the shape that made
+    /// these two tests flaky: it assumes the verifier thread gets scheduled promptly, which a
+    /// loaded CI runner (the real macOS failure this replaced) does not guarantee. Polling for the
+    /// outcome instead keeps the property under test identical -- the report still has to come
+    /// from the thread's own tick, never an on-demand `verify_chain` call here -- while making the
+    /// test's runtime, not its result, the thing that varies with machine load.
+    fn await_report(
+        schedule: &VerificationSchedule,
+        expected: VerificationReport,
+    ) -> VerificationReport {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let report = schedule.last_report();
+            if report.as_ref() == Some(&expected) {
+                return expected;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the background thread never published {expected:?} -- last report was {report:?}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
     fn the_background_schedule_produces_a_real_intact_report_on_its_own_first_tick() {
         let (monitor, root, ledger) = setup();
         append_n(&monitor, &root, &ledger, 3);
         let ledger = Arc::new(ledger);
 
-        let schedule = ledger.start_periodic_verification(Duration::from_millis(50));
+        // A tick interval far longer than this assertion takes to run, so "nothing reported yet"
+        // is a real property of the schedule rather than a race this test happened to win. `stop`
+        // still returns immediately despite it -- that promptness is what `StopSignal` exists for,
+        // and this test would hang for a full minute if it ever regressed.
+        let unticked = ledger.start_periodic_verification(Duration::from_secs(60));
         assert_eq!(
-            schedule.last_report(),
+            unticked.last_report(),
             None,
             "no tick has run yet -- nothing to report"
         );
+        unticked.stop();
 
-        std::thread::sleep(Duration::from_millis(150));
-        assert_eq!(
-            schedule.last_report(),
-            Some(VerificationReport::Intact),
-            "the background thread's own real tick must have run and found the untampered chain \
-             intact"
-        );
+        let schedule = ledger.start_periodic_verification(TEST_TICK);
+        await_report(&schedule, VerificationReport::Intact);
         schedule.stop();
     }
 
@@ -637,9 +698,8 @@ mod tests {
         append_n(&monitor, &root, &ledger, 3);
         let ledger = Arc::new(ledger);
 
-        let schedule = ledger.start_periodic_verification(Duration::from_millis(50));
-        std::thread::sleep(Duration::from_millis(150));
-        assert_eq!(schedule.last_report(), Some(VerificationReport::Intact));
+        let schedule = ledger.start_periodic_verification(TEST_TICK);
+        await_report(&schedule, VerificationReport::Intact);
 
         // Tamper directly, the same way the on-demand verify_chain tests above do -- then wait
         // for the background thread's own next tick, never calling verify_chain ourselves.
@@ -648,13 +708,25 @@ mod tests {
             entries[1].payload = AuditPayload::Note("tampered".to_string());
         }
 
-        std::thread::sleep(Duration::from_millis(150));
-        assert_eq!(
-            schedule.last_report(),
-            Some(VerificationReport::Corrupt { at_seq: 2 }),
-            "the background thread's own next real tick must catch the tamper on its own, with \
-             no on-demand verify_chain call from this test"
-        );
+        await_report(&schedule, VerificationReport::Corrupt { at_seq: 2 });
         schedule.stop();
+    }
+
+    #[test]
+    fn stopping_a_schedule_does_not_wait_out_its_whole_verification_interval() {
+        let (monitor, root, ledger) = setup();
+        append_n(&monitor, &root, &ledger, 3);
+        let ledger = Arc::new(ledger);
+
+        // A production ledger verifies on an hour-scale interval; a stop that waited for the
+        // current sleep to elapse would block the caller for that long, in a `Drop` no less.
+        let schedule = ledger.start_periodic_verification(Duration::from_secs(3_600));
+        let started = std::time::Instant::now();
+        schedule.stop();
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "stop() must interrupt the pending interval, not wait it out -- took {:?}",
+            started.elapsed()
+        );
     }
 }
