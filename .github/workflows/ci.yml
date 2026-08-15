@@ -57,6 +57,35 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  features:
+    name: optional features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # `cargo test --workspace` builds default features only, so everything behind an optional
+      # feature -- the real HTTP/TLS fetch stack, the robots.txt and microformats parsers, the
+      # three cloud backends, mDNS discovery -- was never compiled, let alone run, by any job here.
+      # Tests written behind those gates simply never executed; one of them had been failing
+      # unnoticed.
+      #
+      # These four are cheap enough to actually run. `candle` is deliberately excluded: its
+      # dependency tree (candle-core/nn/transformers, tokenizers, hf-hub) costs several minutes to
+      # build for a code path whose own tests need a downloaded model anyway. That leaves a real,
+      # named gap rather than a silent one.
+      - run: >-
+          cargo test --locked
+          -p hyperion-console -p hyperion-netstack -p hyperion-ai-runtime
+          --features hyperion-console/real-http,hyperion-console/openai-compat,hyperion-console/anthropic,hyperion-console/gemini,hyperion-console/mdns
+      - run: >-
+          cargo clippy --locked --all-targets
+          -p hyperion-console -p hyperion-netstack -p hyperion-ai-runtime
+          --features hyperion-console/real-http,hyperion-console/openai-compat,hyperion-console/anthropic,hyperion-console/gemini,hyperion-console/mdns
+          -- -D warnings
+
   docs:
     name: rustdoc
     runs-on: ubuntu-latest

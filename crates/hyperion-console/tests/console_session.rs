@@ -575,8 +575,14 @@ fn a_custom_engine_backend_switch_reaches_a_real_local_server_end_to_end() {
 #[cfg(feature = "openai-compat")]
 #[test]
 fn cloud_consent_lifecycle_grants_in_session_but_reasks_fresh_after_a_restart() {
+    // Deliberately far more than the flow below needs. The fixture stops serving after this many
+    // requests, and an exhausted one fails as "couldn't reach <url>" -- which reads like a
+    // connectivity problem, not a budget the test set itself. A tight budget was what broke this
+    // test when model-selection persistence started reconnecting the backend at open time,
+    // costing one extra `/v1/models` probe per session; nothing here asserts on request counts,
+    // so there is no reason for the budget to be tight.
     let base_url = common::spawn_fixture_server(
-        5,
+        64,
         common::openai_compat_handler("gpt-fixture", "openai fixture echo"),
     );
     std::env::set_var("HYPERION_OPENAI_BASE_URL", &base_url);
@@ -623,12 +629,17 @@ fn cloud_consent_lifecycle_grants_in_session_but_reasks_fresh_after_a_restart() 
     {
         let mut session = ConsoleSession::open(dir.path()).expect("reopen the real ConsoleSession");
 
+        // Either wording is a pass: the session may have restored the persisted `/backend`
+        // choice while opening (model-selection persistence landed after this test was written),
+        // in which case the command is correctly a no-op. What matters is that the stored key
+        // still gets this session onto the openai backend without re-entering it.
         let switched = session
             .handle_utterance("/backend openai gpt-fixture")
             .join("\n");
         assert!(
-            switched.starts_with("Switched to the openai"),
-            "the already-stored key must still let a fresh session switch to it, got: \
+            switched.starts_with("Switched to the openai")
+                || switched.starts_with("Already using the openai"),
+            "the already-stored key must still leave a fresh session on the openai backend, got: \
              {switched:?}"
         );
 
@@ -653,11 +664,13 @@ fn cloud_consent_lifecycle_grants_in_session_but_reasks_fresh_after_a_restart() 
         let mut session =
             ConsoleSession::open(dir.path()).expect("reopen the real ConsoleSession again");
 
+        // As in session 2: a restored persisted selection makes this command a correct no-op.
         let switched = session
             .handle_utterance("/backend openai gpt-fixture")
             .join("\n");
         assert!(
-            switched.starts_with("Switched to the openai"),
+            switched.starts_with("Switched to the openai")
+                || switched.starts_with("Already using the openai"),
             "got: {switched:?}"
         );
 

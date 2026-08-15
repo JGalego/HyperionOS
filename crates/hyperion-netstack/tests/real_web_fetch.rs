@@ -154,22 +154,32 @@ fn a_real_tls_certificate_failure_classifies_as_tls_not_dns_or_timeout() {
 }
 
 /// The other half of docs/19 §13's "chaos tests": a real connection that never completes must
-/// classify as [`FetchError::Timeout`]. Deliberately *not* a third-party test endpoint (an
-/// earlier version of this test used `httpbin.org/delay/10`, which is exactly the kind of
-/// external-service flakiness risk this crate's own tests should avoid: it failed for real,
-/// non-vacuously, the very first time this workspace's CI-equivalent gate happened to run while
-/// `httpbin.org` itself was returning a real `503 Service Temporarily Unavailable` instead of
-/// really delaying). Uses a real closed local port instead -- this exact target
-/// (`http://127.0.0.1:1/`) was empirically probed before writing [`fetch::ReqwestFetchBackend`]
-/// at all (see that module's own doc comment) and confirmed to reliably hang to a real client-side
-/// timeout in this workspace's own sandbox, with no dependency on any remote service's
-/// availability or behavior.
+/// classify as [`FetchError::Timeout`].
+///
+/// The hang is manufactured, not found. Earlier versions of this test looked for somewhere that
+/// happened to be slow -- first `httpbin.org/delay/10` (which failed the first time CI ran while
+/// that service was returning a real 503 instead of really delaying), then a connection to the
+/// closed port `127.0.0.1:1`, on the strength of a one-off probe in one sandbox. Whether a closed
+/// port hangs or refuses is a property of the host, not of this crate: a machine that answers with
+/// RST -- as a plain Linux container does -- classifies as `ConnectionFailed`, and the test fails
+/// for a reason that has nothing to do with the code under test.
+///
+/// A listener that accepts nothing is deterministic everywhere instead. The kernel completes the
+/// TCP handshake from its own backlog, so the connection genuinely establishes; nothing ever reads
+/// the request or writes a response, so the client genuinely waits out its own timeout. That is
+/// exactly the real-world shape being classified -- a server that took the connection and then
+/// went quiet.
 #[test]
 fn a_real_connection_that_never_completes_classifies_as_timeout() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a real local port");
+    let addr = listener.local_addr().unwrap();
+    // Deliberately never `accept()`ed, and held open for the whole test so the port stays bound.
+
     let backend = ReqwestFetchBackend::with_timeout(std::time::Duration::from_secs(2)).unwrap();
-    let result = backend.fetch("http://127.0.0.1:1/");
+    let result = backend.fetch(&format!("http://{addr}/"));
     assert!(
         matches!(result, Err(FetchError::Timeout(_))),
         "expected a real Timeout classification, got: {result:?}"
     );
+    drop(listener);
 }
