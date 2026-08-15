@@ -187,3 +187,52 @@ fn a_plain_non_json_write_is_wrapped_rather_than_rejected() {
 
     drop(session);
 }
+
+/// Close-to-open consistency, the property POSIX programs assume without thinking about it: once
+/// `close(2)` has returned, the bytes are there for the next reader.
+///
+/// The mount used to commit a handle's buffered bytes only on FUSE `release`, which the kernel
+/// sends asynchronously and makes nothing wait for -- so `close()` could return before the write
+/// had reached the graph at all, and the very next read observed the empty object `create` made.
+/// The loop is deliberate: the window is small, and one round trip lands on the right side of it
+/// often enough to look like a pass.
+#[test]
+fn a_write_is_readable_by_the_next_reader_the_instant_close_returns() {
+    let (_kg_dir, monitor, token, fs) = setup();
+
+    let mountpoint = tempfile::tempdir().unwrap();
+    let session = spawn_mount_posix(fs, monitor, token, mountpoint.path()).unwrap();
+    let root = mountpoint.path().to_path_buf();
+
+    // Several writer threads rather than one: the window between `close(2)` returning and an
+    // asynchronous `release` landing only opens under contention for the single-threaded FUSE
+    // session, which is why the original bug surfaced on a loaded CI runner and stayed hidden
+    // on an idle machine. This is a stress test, not a deterministic reproducer -- the
+    // deterministic half of the fix (that a committed handle is not committed twice) is unit
+    // tested in `posix.rs` instead.
+    std::thread::scope(|scope| {
+        for writer in 0..3 {
+            let root = root.clone();
+            scope.spawn(move || {
+                for round in 0..50 {
+                    let path = root.join(format!("note-{writer}-{round}"));
+                    let written = format!("writer {writer} round {round}");
+
+                    std::fs::write(&path, written.as_bytes()).unwrap();
+                    // No sleep, no retry, no reopen: exactly what a shell pipeline or any
+                    // ordinary program does immediately after a write.
+                    let read_back = std::fs::read_to_string(&path).unwrap();
+
+                    let parsed: serde_json::Value = serde_json::from_str(&read_back).unwrap();
+                    assert_eq!(
+                        parsed["text"], written,
+                        "writer {writer} round {round}: a read issued right after close must see \
+                         the written bytes, got {read_back}"
+                    );
+                }
+            });
+        }
+    });
+
+    drop(session);
+}

@@ -149,6 +149,12 @@ fn handle_connection(mut stream: TcpStream, handler: &impl Handler) {
         response_body.len()
     );
     let _ = stream.write_all(response.as_bytes());
+    // `Connection: close` promises this socket ends here, so end it deliberately: flush, then
+    // half-close so the peer sees a clean FIN. Letting the `TcpStream` drop instead leaves the
+    // shutdown to `close(2)`, which can reach the client as an RST -- a client that had the whole
+    // response sitting in its buffer then gets `ConnectionReset` out of a completed exchange.
+    let _ = stream.flush();
+    let _ = stream.shutdown(std::net::Shutdown::Write);
 }
 
 /// Why this request must not be served, or `None` to serve it.
@@ -337,12 +343,26 @@ mod tests {
         .expect("bind a real ephemeral port")
     }
 
+    /// Reads the whole response, treating a reset that arrives *after* the response bytes as the
+    /// end of the exchange rather than a failure. The server half-closes deliberately, but a peer
+    /// is still entitled to reset a connection it considers finished, and on macOS it sometimes
+    /// does -- a test that insisted on a textbook FIN would be asserting on the platform's TCP
+    /// stack, not on this server.
     fn round_trip(server: &RunningServer, request: &str) -> String {
         let mut stream = TcpStream::connect(server.addr()).expect("connect to the real server");
         stream.write_all(request.as_bytes()).unwrap();
-        let mut response = String::new();
-        stream.read_to_string(&mut response).unwrap();
-        response
+
+        let mut response = Vec::new();
+        let mut chunk = [0u8; 1024];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => response.extend_from_slice(&chunk[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => break,
+                Err(e) => panic!("reading the real response failed: {e}"),
+            }
+        }
+        String::from_utf8_lossy(&response).into_owned()
     }
 
     /// Proves the real mechanics directly (bind, real request/response round trip, clean

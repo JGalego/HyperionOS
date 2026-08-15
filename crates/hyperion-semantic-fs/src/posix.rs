@@ -208,9 +208,13 @@ pub struct PosixMount {
     /// Bytes accumulated for a file handle opened for writing, keyed by that handle — FUSE
     /// delivers a write as a sequence of possibly-partial, possibly-out-of-order `write()` calls;
     /// [`SemanticFilesystem::write_back`] takes one complete `serde_json::Value`, so this buffers
-    /// until `release()` closes the handle.
-    write_buffers: Mutex<HashMap<u64, Vec<u8>>>,
-    /// The synthesized path a write-open file handle will `write_back` to on release.
+    /// until the handle is committed.
+    ///
+    /// The flag is whether anything has been written since the last commit. Both `flush` and
+    /// `release` can commit a handle, and a file descriptor duplicated with `dup`/`fork` produces
+    /// one `flush` per `close`, so without it a single write would be committed several times.
+    write_buffers: Mutex<HashMap<u64, (Vec<u8>, bool)>>,
+    /// The synthesized path a write-open file handle will `write_back` to when committed.
     fh_paths: Mutex<HashMap<u64, String>>,
 }
 
@@ -229,6 +233,38 @@ impl PosixMount {
             write_buffers: Mutex::new(HashMap::new()),
             fh_paths: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Commits a write-open handle's buffered bytes, if any are uncommitted.
+    ///
+    /// The commit has to happen here, on `flush`, and not only on `release`: the kernel waits for
+    /// a `flush` reply before `close(2)` returns, but sends `release` asynchronously and never
+    /// makes anything wait for it. Committing only on `release` meant `write(path); read(path)`
+    /// could genuinely observe the empty object `create` made -- a real close-to-open consistency
+    /// violation that showed up as an intermittently failing mount test, not as a test-only
+    /// artifact.
+    fn commit(&self, fh: u64) {
+        let Some(path) = self.fh_paths.lock().unwrap().get(&fh).cloned() else {
+            return;
+        };
+        let buf = {
+            let mut buffers = self.write_buffers.lock().unwrap();
+            match buffers.get_mut(&fh) {
+                // Clean: either nothing was written through this handle, or a previous `flush`
+                // already committed exactly these bytes.
+                Some((_, false)) | None => return,
+                Some((buf, dirty)) => {
+                    *dirty = false;
+                    buf.clone()
+                }
+            }
+        };
+        let metadata = serde_json::from_slice::<serde_json::Value>(&buf).unwrap_or_else(
+            |_| serde_json::json!({ "text": String::from_utf8_lossy(&buf).into_owned() }),
+        );
+        let _ = self
+            .fs
+            .write_back(&self.monitor, &self.token, &path, metadata);
     }
 
     fn all_paths(&self) -> Result<Vec<DirEntry>, ()> {
@@ -396,7 +432,10 @@ impl Filesystem for PosixMount {
         let writable = flags.0 & (libc::O_WRONLY | libc::O_RDWR) != 0;
         if writable {
             self.fh_paths.lock().unwrap().insert(fh, path);
-            self.write_buffers.lock().unwrap().insert(fh, Vec::new());
+            self.write_buffers
+                .lock()
+                .unwrap()
+                .insert(fh, (Vec::new(), false));
         }
         reply.opened(FileHandle(fh), FopenFlags::empty());
     }
@@ -414,7 +453,7 @@ impl Filesystem for PosixMount {
         reply: ReplyWrite,
     ) {
         let mut buffers = self.write_buffers.lock().unwrap();
-        let Some(buf) = buffers.get_mut(&fh.0) else {
+        let Some((buf, dirty)) = buffers.get_mut(&fh.0) else {
             reply.error(fuser::Errno::EBADF);
             return;
         };
@@ -423,7 +462,20 @@ impl Filesystem for PosixMount {
             buf.resize(offset + data.len(), 0);
         }
         buf[offset..offset + data.len()].copy_from_slice(data);
+        *dirty = true;
         reply.written(data.len() as u32);
+    }
+
+    fn flush(
+        &self,
+        _req: &Request,
+        _ino: INodeNo,
+        fh: FileHandle,
+        _lock_owner: LockOwner,
+        reply: ReplyEmpty,
+    ) {
+        self.commit(fh.0);
+        reply.ok();
     }
 
     fn release(
@@ -436,16 +488,12 @@ impl Filesystem for PosixMount {
         _flush: bool,
         reply: ReplyEmpty,
     ) {
-        let buf = self.write_buffers.lock().unwrap().remove(&fh.0);
-        let path = self.fh_paths.lock().unwrap().remove(&fh.0);
-        if let (Some(buf), Some(path)) = (buf, path) {
-            let metadata = serde_json::from_slice::<serde_json::Value>(&buf).unwrap_or_else(
-                |_| serde_json::json!({ "text": String::from_utf8_lossy(&buf).into_owned() }),
-            );
-            let _ = self
-                .fs
-                .write_back(&self.monitor, &self.token, &path, metadata);
-        }
+        // Normally a no-op by now: `flush` ran first and left the handle clean. It still matters
+        // for the paths where the kernel skips `flush` entirely -- an `mmap`-only writer, or a
+        // process that dies with the file open.
+        self.commit(fh.0);
+        self.write_buffers.lock().unwrap().remove(&fh.0);
+        self.fh_paths.lock().unwrap().remove(&fh.0);
         reply.ok();
     }
 
@@ -485,7 +533,10 @@ impl Filesystem for PosixMount {
         let ino = self.inodes.ino_for(&full);
         let fh = self.next_fh.fetch_add(1, Ordering::Relaxed);
         self.fh_paths.lock().unwrap().insert(fh, full);
-        self.write_buffers.lock().unwrap().insert(fh, Vec::new());
+        self.write_buffers
+            .lock()
+            .unwrap()
+            .insert(fh, (Vec::new(), false));
         reply.created(
             &TTL,
             &file_attr(ino, &node, req.uid(), req.gid()),
@@ -574,4 +625,94 @@ pub fn spawn_mount_posix(
     let mut config = Config::default();
     config.mount_options = vec![MountOption::FSName("hyperion-semantic-fs".to_string())];
     fuser::spawn_mount2(mount, mountpoint.as_ref(), &config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyperion_capability::{RightsMask, TrustBoundaryId};
+    use hyperion_context::ContextEngine;
+    use hyperion_knowledge_graph::KnowledgeGraph;
+
+    /// The graph is handed back alongside the mount so a test can ask it directly how many times
+    /// an object was really written, rather than inferring it from the mount's own state.
+    fn mount() -> (tempfile::TempDir, Arc<KnowledgeGraph>, PosixMount) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut monitor = CapabilityMonitor::new();
+        let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+        let graph = Arc::new(KnowledgeGraph::open(dir.path().join("kg.jsonl")).unwrap());
+        let context = Arc::new(ContextEngine::new(graph.clone()));
+        let fs = Arc::new(SemanticFilesystem::new(graph.clone(), context));
+        (dir, graph, PosixMount::new(fs, monitor, token))
+    }
+
+    fn open_dirty_handle(mount: &PosixMount, fh: u64, path: &str, bytes: &[u8]) {
+        mount.fh_paths.lock().unwrap().insert(fh, path.to_string());
+        mount
+            .write_buffers
+            .lock()
+            .unwrap()
+            .insert(fh, (bytes.to_vec(), true));
+    }
+
+    fn version_of(mount: &PosixMount, graph: &KnowledgeGraph, path: &str) -> Option<u64> {
+        let id = mount
+            .fs
+            .resolve_path(&mount.monitor, &mount.token, path)
+            .expect("the object exists");
+        graph.current_version(id).map(|v| v.0)
+    }
+
+    /// The half of the commit-on-flush fix that doesn't depend on kernel timing: a handle whose
+    /// bytes have already been committed must not be committed again.
+    ///
+    /// This matters because both `flush` and `release` call [`PosixMount::commit`], and a file
+    /// descriptor duplicated with `dup`/`fork` produces one `flush` per `close` -- so a single
+    /// write could otherwise reach `write_back` several times, each one a distinct version in the
+    /// object's history for a write the user made once.
+    #[test]
+    fn a_handle_already_committed_is_not_written_back_a_second_time() {
+        let (_dir, graph, mount) = mount();
+        open_dirty_handle(&mount, 1, "note", b"hello");
+
+        mount.commit(1);
+        assert!(
+            !mount.write_buffers.lock().unwrap()[&1].1,
+            "committing must mark the handle clean"
+        );
+        let after_first_commit = version_of(&mount, &graph, "note");
+
+        mount.commit(1);
+        mount.commit(1);
+        assert_eq!(
+            version_of(&mount, &graph, "note"),
+            after_first_commit,
+            "one user-visible write must be one version, however many times the kernel calls \
+             flush and release"
+        );
+    }
+
+    /// The other direction: a handle written to again since its last commit is genuinely dirty,
+    /// and the next commit must pick the new bytes up rather than skip them as already-written.
+    #[test]
+    fn writing_again_after_a_commit_makes_the_handle_dirty_again() {
+        let (_dir, graph, mount) = mount();
+        open_dirty_handle(&mount, 1, "note", b"first");
+        mount.commit(1);
+        let after_first_commit = version_of(&mount, &graph, "note");
+
+        {
+            let mut buffers = mount.write_buffers.lock().unwrap();
+            let (buf, dirty) = buffers.get_mut(&1).unwrap();
+            *buf = b"second".to_vec();
+            *dirty = true;
+        }
+        mount.commit(1);
+
+        assert_ne!(
+            version_of(&mount, &graph, "note"),
+            after_first_commit,
+            "a genuinely new write must reach the graph"
+        );
+    }
 }
