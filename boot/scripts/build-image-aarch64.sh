@@ -41,13 +41,15 @@ REPO_ROOT="$(cd "$BOOT_DIR/.." && pwd)"
 echo "Cross-compiling hyperion-init and hyperion-console (static, aarch64-unknown-linux-musl)..."
 # Scoped to just this invocation -- the cross-gcc is only needed to *link* the Rust binaries
 # above; Buildroot's own `make` below uses its own internal toolchain and, unlike qemu/cargo,
+# See build-image.sh on why every --bin is named: one --bin filters the whole invocation.
 # explicitly refuses to run at all if it inherits a stray LD_LIBRARY_PATH (its dependencies.mk
 # pre-flight check rejects any trailing-colon/cwd-implying entry), so it must not leak past here.
 ( cd "$REPO_ROOT" && \
   PATH="$BOOT_DIR/.tools/aarch64-cross-root/usr/bin:$PATH" \
   LD_LIBRARY_PATH="$BOOT_DIR/.tools/aarch64-cross-root/usr/lib/x86_64-linux-gnu" \
   cargo build --release --target aarch64-unknown-linux-musl \
-    -p hyperion-init -p hyperion-console \
+    -p hyperion-init --bin hyperion-init \
+    -p hyperion-console --bin hyperion-console \
     -p hyperion-observability --bin hyperion-observability-service \
     -p hyperion-explainability --bin hyperion-explainability-service )
 MUSL_RELEASE="$REPO_ROOT/target/aarch64-unknown-linux-musl/release"
