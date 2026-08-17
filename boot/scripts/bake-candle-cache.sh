@@ -20,7 +20,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BOOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=./fetch-buildroot.sh
 source "$SCRIPT_DIR/fetch-buildroot.sh"

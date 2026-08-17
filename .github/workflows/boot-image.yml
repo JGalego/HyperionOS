@@ -121,6 +121,16 @@ jobs:
         env:
           BOOT_TEST_TIMEOUT: "300"
           BOOT_TEST_EXPECT: "[hyperion-init] started explainability"
+      # M12's cold-boot measurement, reported and never gated on. The numbers a shared CI runner
+      # produces under TCG emulation say nothing about real hardware, so failing a build on them
+      # would be the wall-clock-assertion mistake this repo has already been bitten by. What it
+      # does give is a number that is actually produced by running the thing, on every build --
+      # `boot-benchmark.py` shared the console driver's two bugs until this week and would have
+      # reported `never` for both milestones.
+      - name: Cold-boot benchmark (reported, not gated)
+        run: boot/scripts/boot-benchmark.sh x86_64 || true
+        env:
+          BOOT_BENCHMARK_TIMEOUT: "300"
       # docs/998-roadmap.md M6: re-validates hyperion-storage's crash-consistency-by-replay
       # guarantee against a real power-loss simulation (a real, dedicated block device, hard-
       # killed mid-write), not just the existing host-tempfile fault-injection tests.
@@ -188,3 +198,8 @@ jobs:
         env:
           BOOT_TEST_TIMEOUT: "300"
           BOOT_TEST_EXPECT: "[hyperion-init] started observability"
+      - name: Cold-boot benchmark (reported, not gated)
+        run: boot/scripts/boot-benchmark.sh aarch64 || true
+        env:
+          BOOT_BENCHMARK_TIMEOUT: "300"
+

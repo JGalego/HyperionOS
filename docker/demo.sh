@@ -58,7 +58,7 @@ require_image() {
 # Every node writes to its own fifo; holding the write end open is what keeps the console alive,
 # since it exits at end-of-input like any other well-behaved stdin-driven program.
 start_node() {
-    local name="$1" port="$2" capabilities="$3"
+    local name="$1" capabilities="$2"
     rm -f "$RUNTIME/$name.in"
     mkfifo "$RUNTIME/$name.in"
     mkdir -p "$RUNTIME/$name.data"
@@ -117,9 +117,9 @@ docker run -d --rm --name "$ANCHOR" -p "$BROWSER_PORT:$BROWSER_PORT" \
     >/dev/null
 beat 1
 
-start_node atlas  "$ATLAS_PORT"  "translate-ja"
-start_node beacon "$BEACON_PORT" "market-research,summarize"
-start_node cinder "$CINDER_PORT" "hyperion.ask"
+start_node atlas  "translate-ja"
+start_node beacon "market-research,summarize"
+start_node cinder "hyperion.ask"
 exec 3> "$RUNTIME/atlas.in"; exec 4> "$RUNTIME/beacon.in"; exec 5> "$RUNTIME/cinder.in"
 sleep 2
 
@@ -166,7 +166,7 @@ beat 3
 
 say "5 / 5   atlas comes back"
 exec 3>&-
-start_node atlas "$ATLAS_PORT" "translate-ja"
+start_node atlas "translate-ja"
 exec 3> "$RUNTIME/atlas.in"
 sleep 2
 send 3 "/a2a-server $ATLAS_PORT atlas"

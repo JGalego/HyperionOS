@@ -57,6 +57,29 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  scripts:
+    name: scripts
+    runs-on: ubuntu-latest
+    # The boot and demo tooling is shell and Python, so `cargo test` never sees it -- and three
+    # separate bugs hid there this week: a console driver that waited for a greeting nothing
+    # prints, prompt-matching that ANSI colour made impossible, and a CI assertion demanding the
+    # exact opposite of a tested design decision. Each was only reachable through an hour-long
+    # image build. These checks take seconds and run on every push.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint every shell script
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning $(git ls-files '*.sh')
+      - name: Check every Python script parses
+        run: python3 -m compileall -q $(git ls-files '*.py')
+      - name: Test the console driver against a recorded console stream
+        run: boot/scripts/console-drive-test.py
+      # The claims manifest is data the checker reads; a syntax error in it would otherwise only
+      # surface inside the (much slower) claims job.
+      - name: Check the claims manifest parses
+        run: python3 -c "import tomllib; tomllib.load(open('claims.toml','rb'))"
+
   claims:
     name: claims
     runs-on: ubuntu-latest

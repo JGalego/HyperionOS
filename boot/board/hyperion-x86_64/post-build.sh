@@ -5,7 +5,6 @@
 set -u
 set -e
 
-BOARD_DIR="$(dirname "$0")"
 
 if [ -e "${TARGET_DIR}/etc/inittab" ]; then
     grep -qE '^ttyS0::' "${TARGET_DIR}/etc/inittab" || \

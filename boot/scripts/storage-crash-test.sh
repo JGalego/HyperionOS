@@ -42,6 +42,7 @@ LOG2="$(mktemp)"
 trap 'rm -f "$VARS_COPY" "$LOG1" "$LOG2" "$DATA_IMG"' EXIT
 cp "$OVMF_VARS_TEMPLATE" "$VARS_COPY"
 
+# shellcheck disable=SC2054  # the commas are inside qemu option values, not element separators
 QEMU_ARGS=(
     -M pc -m 2048 -smp 2 -display none
     -no-reboot

@@ -16,6 +16,10 @@ on:
       version:
         description: "Version to stamp into the release manifests and the created tag"
         required: true
+      dry_run:
+        description: "Build, sign and verify everything, but publish nothing"
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -222,7 +226,19 @@ jobs:
             mv "$binary.release.json" \
                "release-assets/${name/hyperion-console-/hyperion-console-$VERSION-}.release.json"
           done
+      # The whole path above -- build both images, build three console binaries, smoke-test them,
+      # sign every asset with the real key and verify each signature -- runs identically on a dry
+      # run. Only this last step is skipped. Without it the release path could only ever be
+      # exercised by a real tag, which is the worst moment to discover it is broken.
+      - name: Dry run -- everything was built, signed and verified; nothing published
+        if: inputs.dry_run
+        run: |
+          echo "Dry run complete. These assets were built, signed and signature-verified:"
+          ls -la release-assets/
+          echo
+          echo "Re-run this workflow with dry_run unchecked, or push a tag, to publish them."
       - name: Publish GitHub Release
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
