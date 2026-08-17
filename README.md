@@ -227,6 +227,19 @@ That drops you into a real session against the built-in mock backend - enough to
 
 Released binaries include real HTTP/TLS, the OpenAI/Anthropic/Gemini backends, and mDNS peer discovery. In-process Candle inference is a source build (`--features candle`) - it needs a downloaded model, so it isn't baked into a release asset.
 
+### Watch several of them talk to each other
+
+Hyperion instances are peers, not clients. `docker/demo.sh` brings up three of them in containers,
+lets them find each other over real mDNS, and has one delegate a goal it can't do itself to a peer
+that can - then kills that peer mid-conversation and brings it back, so you can watch the mesh
+degrade and recover:
+
+```sh
+docker/build.sh && docker/demo.sh
+```
+
+See [docker/README.md](docker/README.md) - including an honest account of what it doesn't prove.
+
 ### Boot the whole thing
 
 Every tagged release also publishes ready-to-flash disk images for both reference platforms:

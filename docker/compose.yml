@@ -1,0 +1,68 @@
+# A three-node Hyperion mesh you drive yourself, rather than watch.
+#
+#   docker/build.sh                        # build the node image once
+#   docker compose -f docker/compose.yml up -d
+#   docker attach hyperion-cinder          # you are now at a real Hyperion prompt
+#
+# At that prompt:
+#   /a2a-server 8602 cinder                        announce yourself to the mesh
+#   /mesh-request 8602 translate-ja Good morning    ask the mesh for something you can't do
+#   /mesh-dashboard 8801                            then open http://localhost:8800
+#   /standby                                        keep the node alive after you detach
+#
+# Detach without killing the node with the standard Docker escape: Ctrl-P Ctrl-Q.
+# (Ctrl-C would stop the container, since it forwards to the console process.)
+#
+# For the guided version that runs all of this for you and narrates it, use docker/demo.sh.
+
+services:
+  # Owns the network namespace the three nodes share, and forwards one port so a browser on your
+  # machine can reach the dashboard. Hyperion's servers bind 127.0.0.1 deliberately -- they answer
+  # without authentication, so loopback is the access control -- and Docker publishes to a
+  # container's external interface rather than its loopback, so the bridge has to be explicit.
+  # docker/README.md explains why the nodes share a namespace instead of having their own IPs.
+  mesh-net:
+    image: alpine/socat
+    container_name: hyperion-mesh-net
+    command: ["TCP-LISTEN:8800,fork,reuseaddr", "TCP:127.0.0.1:8801"]
+    ports:
+      - "8800:8800"
+
+  atlas: &node
+    image: ${HYPERION_IMAGE:-hyperion-node:dev}
+    container_name: hyperion-atlas
+    depends_on: [mesh-net]
+    network_mode: "service:mesh-net"
+    # The console reads a real stdin like any other terminal program; without this it sees
+    # end-of-input immediately and exits, and the container looks like it crashed.
+    stdin_open: true
+    tty: true
+    environment:
+      HYPERION_CONSOLE_CAPABILITIES: "translate-ja"
+    volumes:
+      - atlas-data:/var/lib/hyperion
+
+  beacon:
+    <<: *node
+    container_name: hyperion-beacon
+    environment:
+      HYPERION_CONSOLE_CAPABILITIES: "market-research,summarize"
+    volumes:
+      - beacon-data:/var/lib/hyperion
+
+  cinder:
+    <<: *node
+    container_name: hyperion-cinder
+    # Deliberately unremarkable: cinder can only ask. Everything interesting it does, it does by
+    # finding a peer -- which is the point of the mesh.
+    environment:
+      HYPERION_CONSOLE_CAPABILITIES: "hyperion.ask"
+    volumes:
+      - cinder-data:/var/lib/hyperion
+
+# Named volumes, so a node that restarts still remembers which peers it has already verified --
+# peer_trust.json lives here, and losing it would mean re-trusting an unknown peer on every boot.
+volumes:
+  atlas-data:
+  beacon-data:
+  cinder-data:
