@@ -106,6 +106,21 @@ jobs:
       - run: boot/scripts/boot-test.sh
         env:
           BOOT_TEST_TIMEOUT: "300"
+      # The supervised-service path, now that the image actually contains the two services. Until
+      # this commit every boot logged `skipping "observability"` -- the mechanism was proven under
+      # `cargo test`, but the booted system never ran it. These also exercise the trust boundary's
+      # fail-closed rule on real hardware: `spawn_sandboxed` refuses to start a service the kernel
+      # did not really confine, so `started <name>` appearing at all means Landlock and seccomp
+      # were genuinely applied. (It proves the service started under confinement, not yet that it
+      # finished its work -- reading back its state file is a separate, larger step.)
+      - run: boot/scripts/boot-test.sh
+        env:
+          BOOT_TEST_TIMEOUT: "300"
+          BOOT_TEST_EXPECT: "[hyperion-init] started observability"
+      - run: boot/scripts/boot-test.sh
+        env:
+          BOOT_TEST_TIMEOUT: "300"
+          BOOT_TEST_EXPECT: "[hyperion-init] started explainability"
       # docs/998-roadmap.md M6: re-validates hyperion-storage's crash-consistency-by-replay
       # guarantee against a real power-loss simulation (a real, dedicated block device, hard-
       # killed mid-write), not just the existing host-tempfile fault-injection tests.
@@ -168,3 +183,8 @@ jobs:
       - run: boot/scripts/boot-test-aarch64.sh
         env:
           BOOT_TEST_TIMEOUT: "300"
+      # See the x86_64 job: proves the supervised services really start under real confinement.
+      - run: boot/scripts/boot-test-aarch64.sh
+        env:
+          BOOT_TEST_TIMEOUT: "300"
+          BOOT_TEST_EXPECT: "[hyperion-init] started observability"

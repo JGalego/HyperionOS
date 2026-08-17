@@ -25,10 +25,14 @@ BOOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/fetch-buildroot.sh"
 
 REPO_ROOT="$(cd "$BOOT_DIR/.." && pwd)"
-echo "Cross-compiling hyperion-init and hyperion-console (static, x86_64-unknown-linux-musl)..."
-( cd "$REPO_ROOT" && cargo build -p hyperion-init -p hyperion-console --release --target x86_64-unknown-linux-musl )
-HYPERION_INIT_BIN="$REPO_ROOT/target/x86_64-unknown-linux-musl/release/hyperion-init"
-HYPERION_CONSOLE_BIN="$REPO_ROOT/target/x86_64-unknown-linux-musl/release/hyperion-console"
+echo "Cross-compiling hyperion-init, hyperion-console and the supervised services (static, x86_64-unknown-linux-musl)..."
+( cd "$REPO_ROOT" && cargo build --release --target x86_64-unknown-linux-musl \
+    -p hyperion-init -p hyperion-console \
+    -p hyperion-observability --bin hyperion-observability-service \
+    -p hyperion-explainability --bin hyperion-explainability-service )
+MUSL_RELEASE="$REPO_ROOT/target/x86_64-unknown-linux-musl/release"
+HYPERION_INIT_BIN="$MUSL_RELEASE/hyperion-init"
+HYPERION_CONSOLE_BIN="$MUSL_RELEASE/hyperion-console"
 
 echo "Overlaying board/hyperion-x86_64 and the Hyperion defconfig onto Buildroot..."
 rsync -a --delete "$BOOT_DIR/board/hyperion-x86_64/" "$BUILDROOT_DIR/board/hyperion-x86_64/"
@@ -43,6 +47,19 @@ cp "$HYPERION_INIT_BIN" "$OVERLAY_DIR/hyperion-init"
 chmod 755 "$OVERLAY_DIR/hyperion-init"
 cp "$HYPERION_CONSOLE_BIN" "$OVERLAY_DIR/usr/bin/hyperion-console"
 chmod 755 "$OVERLAY_DIR/usr/bin/hyperion-console"
+
+# The two representative Phase 2-10 supervised services (M4/M5). `hyperion-init` already looks for
+# these at /usr/lib/hyperion/services and skips any that are absent with a clear warning -- which
+# is exactly what every boot did until now, logging `skipping "observability"` and
+# `skipping "explainability"` on an image that contained neither. The mechanism was proven in
+# tests; the booted system never exercised it. Copying them in is the "purely mechanical follow-on"
+# `phase_2_10_service_specs`'s own doc comment describes, and it makes the boot test real evidence
+# that supervision works on the real image rather than only under `cargo test`.
+mkdir -p "$OVERLAY_DIR/usr/lib/hyperion/services"
+for service in hyperion-observability-service hyperion-explainability-service; do
+    cp "$MUSL_RELEASE/$service" "$OVERLAY_DIR/usr/lib/hyperion/services/$service"
+    chmod 755 "$OVERLAY_DIR/usr/lib/hyperion/services/$service"
+done
 
 cd "$BUILDROOT_DIR"
 make hyperion_x86_64_efi_defconfig

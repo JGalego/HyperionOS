@@ -46,9 +46,13 @@ echo "Cross-compiling hyperion-init and hyperion-console (static, aarch64-unknow
 ( cd "$REPO_ROOT" && \
   PATH="$BOOT_DIR/.tools/aarch64-cross-root/usr/bin:$PATH" \
   LD_LIBRARY_PATH="$BOOT_DIR/.tools/aarch64-cross-root/usr/lib/x86_64-linux-gnu" \
-  cargo build -p hyperion-init -p hyperion-console --release --target aarch64-unknown-linux-musl )
-HYPERION_INIT_BIN="$REPO_ROOT/target/aarch64-unknown-linux-musl/release/hyperion-init"
-HYPERION_CONSOLE_BIN="$REPO_ROOT/target/aarch64-unknown-linux-musl/release/hyperion-console"
+  cargo build --release --target aarch64-unknown-linux-musl \
+    -p hyperion-init -p hyperion-console \
+    -p hyperion-observability --bin hyperion-observability-service \
+    -p hyperion-explainability --bin hyperion-explainability-service )
+MUSL_RELEASE="$REPO_ROOT/target/aarch64-unknown-linux-musl/release"
+HYPERION_INIT_BIN="$MUSL_RELEASE/hyperion-init"
+HYPERION_CONSOLE_BIN="$MUSL_RELEASE/hyperion-console"
 
 echo "Overlaying board/hyperion-aarch64 and the Hyperion defconfig onto Buildroot..."
 rsync -a --delete "$BOOT_DIR/board/hyperion-aarch64/" "$BUILDROOT_DIR/board/hyperion-aarch64/"
@@ -62,6 +66,14 @@ cp "$HYPERION_INIT_BIN" "$OVERLAY_DIR/hyperion-init"
 chmod 755 "$OVERLAY_DIR/hyperion-init"
 cp "$HYPERION_CONSOLE_BIN" "$OVERLAY_DIR/usr/bin/hyperion-console"
 chmod 755 "$OVERLAY_DIR/usr/bin/hyperion-console"
+
+# The two representative Phase 2-10 supervised services -- see build-image.sh's own comment on why
+# an image that omitted them made every boot log a skip for a mechanism the tests had proven.
+mkdir -p "$OVERLAY_DIR/usr/lib/hyperion/services"
+for service in hyperion-observability-service hyperion-explainability-service; do
+    cp "$MUSL_RELEASE/$service" "$OVERLAY_DIR/usr/lib/hyperion/services/$service"
+    chmod 755 "$OVERLAY_DIR/usr/lib/hyperion/services/$service"
+done
 
 OUTPUT_DIR="$BUILDROOT_DIR/output-aarch64"
 cd "$BUILDROOT_DIR"
