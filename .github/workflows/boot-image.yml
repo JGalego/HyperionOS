@@ -119,7 +119,16 @@ jobs:
       - run: boot/scripts/console-test.sh "" "I need to launch my startup" "market_research"
         env:
           CONSOLE_TEST_TIMEOUT: "300"
-      - run: boot/scripts/console-test.sh "" "what is the weather like today" "generic_goal"
+      # The undecomposed path is asserted on the agent's own echoed result, not on the internal
+      # "generic_goal" sentinel this step used to expect. The console deliberately suppresses that
+      # sentinel -- it names no task a user would recognize, and
+      # `hyperion-console/tests/console_session.rs` asserts it must never leak into rendered text.
+      # So this step demanded the exact opposite of a tested design decision, and could only ever
+      # have failed. Grepping the model's own "echo: " output (rather than the bare utterance)
+      # keeps the terminal's echo of the typed line from satisfying the assertion on its own.
+      - run: >-
+          boot/scripts/console-test.sh "" "what is the weather like today"
+          "echo: what is the weather like today"
         env:
           CONSOLE_TEST_TIMEOUT: "300"
 
