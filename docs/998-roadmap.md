@@ -40,6 +40,59 @@ moving.
 
 ### 0. Decision Record — read this before anything else
 
+#### Decision 2 (made 2026-08-24, by the project owner): Hyperion is multi-user
+
+Not single-user-with-a-passphrase. More than one real person uses one Hyperion, and the system has
+to keep them apart.
+
+**This lands earlier than it looks.** It was raised as a question about T4 (an app with a human
+surface needs to authenticate somebody), but authentication is the *last* thing it affects. The
+first is **T2** — the first tier with durable data, and durable data needs an owner. Identity is
+therefore a prerequisite for T2, not T4, and the App Builder sequence below is reordered
+accordingly.
+
+**Identity and authentication are separable, and the order matters.** *Identity* is "there is a
+principal, and this action is attributable to it." *Authentication* is "prove you are that
+principal." Multi-user data separation needs only the first. A device whose users are separated
+but not yet challenged for credentials is a coherent, useful intermediate state; a device that
+authenticates people into one shared memory is not. Build principals first; the login flow arrives
+with T4's broker.
+
+**What this makes wrong, not merely missing.** Three things in the workspace today are correct only
+because one person is assumed, and become defects the moment two are:
+
+- `hyperion-console`'s `session_id` is the hardcoded string `"console"`. Working memory, context
+  bundles and docs/06's Adaptive Complexity expertise estimates are all keyed by it, so every
+  person at one device shares one memory and one expertise profile. Under Decision 2 that is
+  Alice's working memory being recalled into Bob's turn — a data-separation bug, not a gap.
+- `hyperion_crypto::SecretStore` is keyed by provider alone (`"openai"`), encrypted under the
+  *device* key. Bob's turn can spend Alice's API credit. `Keystore::derive_key(context)` already
+  takes a context string, which is the seam a per-principal key belongs on.
+- Explanation Records and the audit trail carry no actor. `hyperion-console`'s own `a2a` module
+  already states this plainly: it "never authenticates its caller, so honestly recording *who*
+  isn't possible here." Under one user that is a cosmetic absence; under many it means the audit
+  trail cannot answer the question audits exist for.
+
+**How a principal should be represented.** `CapabilityToken` carries `token_id`, `object_id`,
+`rights`, `generation`, `origin: TrustBoundaryId`, `expiry` — no subject. Rather than adding one,
+give **each user their own Trust Boundary** and let `origin` be the principal. This is not a
+workaround; it is what the existing model already means. `cap_derive`'s attenuation-only guarantee
+then separates users by construction, and `cap_revoke`'s cascade already expresses "revoke
+everything this person's session could do" as one graph walk. A new subject field would add a
+second notion of authority alongside the one that already works.
+
+**What stays shared, and what does not.** Apps themselves are device-wide with a recorded owner,
+not per-user: the Resourceful pillar exists so a capability is reused rather than regenerated, and
+per-user app namespaces would have Alice rebuilding what Bob already has. An app's *data* (T2) is
+per-principal, always. Removal is the owner's or an administrator's, never any user's.
+
+**Not yet decided, and deliberately left open:** how a principal is established in the first place
+(local accounts, an existing directory, device-bound keys), whether there is an administrator role
+distinct from a first user, and what a guest is. Those are T4-era questions; none of them block
+the principal work above.
+
+#### Decision 1 (made 2026-07-11, by the project owner): a Linux-hosted MVP
+
 **Decision (made 2026-07-11, by the project owner):** target a **Linux-hosted MVP**, not the
 from-scratch hybrid microkernel [docs/03-kernel-architecture.md](03-kernel-architecture.md)
 specifies. A real Linux kernel does the address-space management, thread scheduling, driver I/O,
@@ -2101,9 +2154,10 @@ than any text scan, and it is the honest reason script-backed apps are acceptabl
   and the review gate already exist for exactly this.
 - **Resource budgets.** T3+ runs indefinitely. `ResourceVector` and `hyperion-cgroups` exist; a
   resident app with no budget is a fork bomb waiting for one bad generation.
-- **Identity, plural.** Authentication implies *which* user. Decide before T4 whether it is
-  single-user-with-a-passphrase or genuinely multi-user — it changes the data model of every
-  stateful app.
+- **Identity, plural — decided (§0, Decision 2): multi-user.** Which moves it out of T4 and in
+  front of T2: durable data needs an owner, so principals come before the first tier that stores
+  anything. Identity (an action is attributable to a principal) is separable from authentication
+  (prove you are that principal), and only the former is needed for T2 to be correct.
 - **Regeneration is an update.** When the goal changes the app is rebuilt, which needs versioning
   and rollback. `hyperion-update`'s A/B slot plus anti-rollback counter is the existing pattern;
   reuse it rather than overwriting in place.
@@ -2116,12 +2170,17 @@ than any text scan, and it is the honest reason script-backed apps are acceptabl
 - **M1 — T0/T1, script-backed, with a real typed input contract.** `/apps`, `/app`, `/build`,
   `/run`, `/app-remove` over the existing `ExecutionEngine` → `publish` → `install` → sandboxed
   `invoke` path. No new execution mechanism, no new trust surface.
-- **M2 — T2.** A durable per-app data directory, and erasure on removal that docs/16 can stand
-  behind.
+- **M1a — principals.** Reordered in front of T2 by §0's Decision 2. A `UserId` bound to its own
+  `TrustBoundaryId`, threaded through the three places that assume one person today: the console's
+  hardcoded `session_id`, `SecretStore`'s provider-only keying, and the actor-less audit trail. No
+  login flow — identity, not authentication. Without this, T2 stores one person's data where
+  another can read it, and doing it afterwards means migrating whatever T2 already wrote.
+- **M2 — T2.** A durable *per-principal* data directory, and erasure on removal that docs/16 can
+  stand behind.
 - **M3 — T3.** Residency via `hyperion-supervisor`, with a real cgroup budget and
   regeneration-on-repeated-failure.
-- **M4 — T4.** The broker, the identity subsystem, and the accessible surface contract. Three
-  subsystems that do not exist yet; deserves its own design pass rather than being folded in here.
+- **M4 — T4.** The broker, the authentication flow on top of M1a's principals, and the accessible
+  surface contract. Still deserves its own design pass; M1a removes the largest unknown from it.
 
 **M1 status: landed (2026-08-24).** `hyperion-app` is a real crate: a versioned typed input
 contract that rides inside `SemanticContract.inputs` (so it is covered by the manifest's own real

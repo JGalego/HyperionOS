@@ -63,6 +63,21 @@ version numbers track release sequence, not API stability.
 
 ### Added
 
+**Decided: Hyperion is multi-user** (docs/998-roadmap.md §0, Decision 2)
+- Recorded as a project-owner decision, with its consequences worked through.
+  It lands earlier than it was raised: identity is a prerequisite for T2 (the
+  first tier with durable data), not T4. Identity and authentication are
+  separable, and only identity is needed for data separation to be correct.
+- Names three things that are correct only under a single-user assumption and
+  become defects under this one: the console's hardcoded `session_id` (so
+  working memory and expertise estimates are shared by everyone at a device),
+  `SecretStore`'s provider-only keying (so one person's turn can spend
+  another's API credit), and an audit trail with no actor.
+- A principal should be a Trust Boundary rather than a new subject field on
+  `CapabilityToken`: `cap_derive`'s attenuation and `cap_revoke`'s cascade
+  already express per-user separation and revocation without a second notion of
+  authority.
+
 **Apps Hyperion builds for you** (docs/998-roadmap.md's new App Builder section,
 M1 -- the ladder's first two rungs, T0 "answer" and T1 "tool")
 - New `hyperion-app` crate. A goal plus a script becomes a real, signed,
