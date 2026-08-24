@@ -26,10 +26,11 @@ use hyperion_ai_runtime::{
     sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
 };
 use hyperion_app::{AppError, AppPaths, AppRegistry, InputKind, InstalledApp};
-use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
+use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_coordination::{CoordinationSession, TaskNode};
 use hyperion_crypto::{Keystore, SecretStore};
 use hyperion_explainability::ExplanationStore;
+use hyperion_identity::{Principal, PrincipalRegistry};
 use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::{render_capability_result, GraphError, KnowledgeGraph, NodeId};
 use hyperion_memory::{MemoryEngine, MemoryTier};
@@ -167,6 +168,15 @@ pub struct ConsoleSession {
     /// so an app is a real installed Capability like any other, listed by decoding what is really
     /// installed rather than from any record this session keeps of its own.
     apps: AppRegistry,
+    /// Who this session belongs to (docs/998-roadmap.md §0, Decision 2). Taken on trust -- nothing
+    /// authenticates it, because there are no credentials yet -- so it separates people rather
+    /// than protecting them from each other. Its `boundary` is this session's own capability
+    /// origin, which is what makes the audit trail attributable; its `scope()` is what keeps
+    /// memory and secrets apart.
+    principal: Principal,
+    /// The people this device knows, so `/user` can resolve one without re-reading the register
+    /// on every switch.
+    principals: PrincipalRegistry,
     /// This session's own real, persistent data directory -- retained past construction only so
     /// [`Self::switch_backend`] can persist the user's real choice to `model_selection.json`
     /// (see [`Self::save_model_selection`]) each time it changes, without threading the path
@@ -413,11 +423,29 @@ impl EngineKind {
     }
 }
 
+/// Who a session belongs to when nobody said.
+///
+/// Not a special or privileged identity -- an ordinary principal like any other, named so that a
+/// single-person device needs no ceremony and every existing caller of
+/// [`ConsoleSession::open`] keeps working unchanged. When authentication lands, this is the name
+/// that stops being assignable without proving it.
+pub const DEFAULT_USER: &str = "default";
+
 impl ConsoleSession {
     /// `data_dir` is where the real, WAL-backed Knowledge Graph this session's Intent Engine
     /// grounds against lives -- on the real booted image, M6's own dedicated persistent
     /// partition; in a test, any tempdir.
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, GraphError> {
+        Self::open_as(data_dir, DEFAULT_USER)
+    }
+
+    /// Opens a session belonging to one named person (docs/998-roadmap.md §0, Decision 2).
+    ///
+    /// `user` is taken on trust: nothing here checks a credential, because there are no
+    /// credentials yet. This separates people -- their memory, their secrets, their audit trail --
+    /// it does not protect them from one another. See [`hyperion_identity`]'s own doc comment for
+    /// exactly how far that goes and what has to become true when authentication lands.
+    pub fn open_as(data_dir: impl AsRef<Path>, user: &str) -> Result<Self, GraphError> {
         let data_dir = data_dir.as_ref();
         // A genuinely fresh install (or a caller-supplied path that doesn't exist yet) used to
         // crash here with a raw "No such file or directory" WAL error -- this crate's own real
@@ -429,7 +457,21 @@ impl ConsoleSession {
         let _ = std::fs::create_dir_all(data_dir);
         let kg_path = PathBuf::from(data_dir).join("console_knowledge_graph.jsonl");
         let mut monitor = CapabilityMonitor::new();
-        let token = monitor.mint_root(RightsMask::all(), TrustBoundaryId(1), None);
+        // Every person gets their own Trust Boundary, and that boundary *is* their identity
+        // (docs/998-roadmap.md §0, Decision 2). Minting this session's root token there rather
+        // than at the hardcoded `TrustBoundaryId(1)` every caller used to share is what makes the
+        // audit trail per-person for free: `ExplanationStore` already seeds every record with the
+        // calling boundary and already filters every read by it.
+        //
+        // A registry that can't be read is a hard failure rather than a fresh start: quietly
+        // re-minting boundaries would orphan every record and grant scoped to the old ones, which
+        // is indistinguishable from everyone's history vanishing.
+        let mut principals = PrincipalRegistry::open_or_create(data_dir.join("users.json"))
+            .expect("open or create the register of who uses this device");
+        let principal = principals
+            .principal_for(user)
+            .expect("resolve this session's own principal");
+        let token = monitor.mint_root(RightsMask::all(), principal.boundary, None);
 
         let keystore = Keystore::open_or_create(&data_dir.join("device.key"))
             .expect("open or create this session's real device signing key");
@@ -499,9 +541,15 @@ impl ConsoleSession {
         // connecting doesn't also demand an immediate, redundant re-confirmation), but a fresh
         // boot's first real cloud dispatch genuinely re-asks -- once per boot, not once per
         // message, and never silently bypassed.
-        let secret_store =
-            SecretStore::open_or_create(&data_dir.join("cloud_secrets.enc"), &keystore)
-                .expect("open or create this session's real encrypted cloud-secret store");
+        // Per principal, in both dimensions that matter: a distinct path so two people cannot
+        // overwrite each other, and a distinct derived key so neither can read the other's. One
+        // shared store meant one person's turn could spend another's API credit.
+        let secret_store = SecretStore::open_or_create_scoped(
+            &data_dir.join(format!("cloud_secrets.{}.enc", principal.user)),
+            &keystore,
+            Some(&principal.scope()),
+        )
+        .expect("open or create this session's real encrypted cloud-secret store");
 
         // A real, permissive domain-egress grant for this session's own root token, minted once
         // here rather than per-call: a real interactive assistant can't pre-enumerate every real
@@ -538,13 +586,19 @@ impl ConsoleSession {
             pending_consent: None,
             graph_explorer,
             workspace: WorkspaceCompiler::new(),
-            session_id: "console".to_string(),
+            // Per principal, not the literal "console" every person at a device used to share.
+            // Working memory, context bundles and docs/06's Adaptive Complexity expertise
+            // estimates are all keyed by this, so one string meant one person's working memory
+            // being recalled into another's turn.
+            session_id: format!("console.{}", principal.user),
             last_plan_session_id: None,
             keystore,
             pending_think_root: None,
             memory,
             last_utterance: None,
             apps: AppRegistry::new(Arc::clone(&plugins), AppPaths::new(data_dir.join("apps"))),
+            principal,
+            principals,
             plugins,
             data_dir: data_dir.to_path_buf(),
         };
@@ -1011,6 +1065,18 @@ impl ConsoleSession {
         //
         // Ordered before the shorter prefixes below because `/app-engine`/`/app-remove` would
         // otherwise be swallowed by `/app`'s own `starts_with`.
+        if lower == "/whoami" {
+            return Some(self.describe_principal());
+        }
+
+        if lower.starts_with("/user") {
+            let name = trimmed["/user".len()..].trim();
+            if name.is_empty() {
+                return Some(self.describe_principal());
+            }
+            return Some(self.switch_user(name));
+        }
+
         if lower.starts_with("/app-engine") {
             let rest = trimmed["/app-engine".len()..].trim();
             let mut parts = rest.splitn(2, char::is_whitespace);
@@ -1160,7 +1226,14 @@ impl ConsoleSession {
                     &self.token,
                     MemoryTier::Episodic,
                     serde_json::json!({
-                        "entity_key": "reflection",
+                        // Per principal. `hyperion-memory` has no per-boundary access control of
+                        // its own -- unlike `hyperion-explainability`, which filters every read by
+                        // the calling boundary -- so a fixed key would put every person's
+                        // reflections in one shared pile. Scoping the key is the honest fix
+                        // available from here; teaching that crate the same boundary filter
+                        // `hyperion-explainability` already has is the real one, and is named as
+                        // still-open work in the roadmap.
+                        "entity_key": format!("reflection.{}", self.principal.scope()),
                         "goal": goal,
                         "meaningful": meaningful,
                     }),
@@ -1468,6 +1541,13 @@ impl ConsoleSession {
              -- statically linked, and self-sufficient (a shell won't do), e.g. \"/app-engine \
              python3 /opt/python-static\""
                 .to_string(),
+            "  /whoami                                     who Hyperion currently thinks you are, \
+             and what that does and doesn't mean"
+                .to_string(),
+            "  /user <name>                                keep someone else's notes, keys and \
+             history apart from yours, e.g. \"/user alice\" (this isn't a login -- nothing checks \
+             it)"
+            .to_string(),
             "  /help                                        show this message".to_string(),
         ]
     }
@@ -1861,6 +1941,117 @@ impl ConsoleSession {
     /// command rather than a discovered manifest file, since this console has no plugin
     /// marketplace to discover one from yet. Self-signed with this session's own device identity
     /// (`self.keystore`), the same trust a locally-typed command already implicitly carries.
+    /// Who this session belongs to, and -- said plainly, every time -- what that does and does not
+    /// mean.
+    ///
+    /// The caveat is repeated rather than mentioned once at startup on purpose. Someone reading
+    /// "you are alice" naturally assumes it was checked, and here it wasn't; a person deciding
+    /// whether to type a password into this console deserves to know that at the moment they ask
+    /// who they are, not to have read it earlier.
+    fn describe_principal(&self) -> Vec<String> {
+        let mut lines = vec![format!("You're \"{}\" here.", self.principal.user)];
+        let others: Vec<String> = self
+            .principals
+            .known_users()
+            .into_iter()
+            .filter(|user| *user != self.principal.user)
+            .map(|user| user.to_string())
+            .collect();
+        if !others.is_empty() {
+            lines.push(format!("This device also knows: {}.", others.join(", ")));
+        }
+        lines.push(
+            "Your notes, your saved keys and your history are kept apart from anyone else's -- \
+             but nothing checks that you are who you say, so \"/user <name>\" will make you \
+             anyone. Treat it as tidiness, not a lock."
+                .to_string(),
+        );
+        lines
+    }
+
+    /// `/user <name>` -- become someone else for the rest of this session.
+    ///
+    /// Everything that is scoped to a person is rebuilt rather than carried over: a fresh root
+    /// token at the new principal's own boundary, that principal's own encrypted secret store, and
+    /// their own session scope for memory and expertise. The assistant Agent instance is respawned
+    /// too, which is the load-bearing part -- a live instance holds granted capabilities
+    /// (a confirmed cloud-provider consent among them), and carrying those across a switch would
+    /// hand one person consent another gave.
+    fn switch_user(&mut self, name: &str) -> Vec<String> {
+        let principal = match self.principals.principal_for(name) {
+            Ok(principal) => principal,
+            Err(e) => return vec![format!("{e}.")],
+        };
+        if principal == self.principal {
+            return self.describe_principal();
+        }
+
+        let secret_store = match SecretStore::open_or_create_scoped(
+            &self
+                .data_dir
+                .join(format!("cloud_secrets.{}.enc", principal.user)),
+            &self.keystore,
+            Some(&principal.scope()),
+        ) {
+            Ok(store) => store,
+            Err(e) => {
+                return vec![format!(
+                    "I couldn't open {}'s saved keys, so I haven't switched: {e}",
+                    principal.user
+                )]
+            }
+        };
+
+        let assistant_manifest = hyperion_coordination::default_manifests()
+            .into_iter()
+            .find(|m| m.specialization == "assistant")
+            .expect("default_manifests always includes the assistant specialization");
+        let token = self
+            .monitor
+            .mint_root(RightsMask::all(), principal.boundary, None);
+        let assistant_instance_id =
+            match self
+                .agent_runtime
+                .spawn(&self.monitor, &token, assistant_manifest, None)
+            {
+                Ok(instance_id) => instance_id,
+                Err(e) => {
+                    return vec![format!(
+                        "I couldn't start a fresh session for {}, so I haven't switched: {e}",
+                        principal.user
+                    )]
+                }
+            };
+
+        // Nothing is mutated until every fallible step above has succeeded, so a failed switch
+        // leaves the previous person exactly where they were rather than half-swapped.
+        let previous = std::mem::replace(&mut self.principal, principal);
+        self.token = token;
+        self.secret_store = secret_store;
+        self.assistant_instance_id = assistant_instance_id;
+        self.session_id = format!("console.{}", self.principal.user);
+        self.pending_connect = None;
+        self.pending_consent = None;
+        self.pending_think_root = None;
+        self.last_utterance = None;
+
+        let mut lines = vec![format!(
+            "You're \"{}\" now, not \"{}\".",
+            self.principal.user, previous.user
+        )];
+        lines.push(
+            "Fresh start: their notes, saved keys and history aren't yours, and any account you'd \
+             already confirmed needs confirming again."
+                .to_string(),
+        );
+        lines.push(
+            "Nothing checked that you are who you say -- this keeps people's things apart, it \
+             doesn't keep anyone out."
+                .to_string(),
+        );
+        lines
+    }
+
     /// Registers a real `Contribution::ExecutionEngine`: the program that actually runs an app's
     /// script.
     ///

@@ -2972,6 +2972,7 @@ dependencies = [
  "hyperion-coordination",
  "hyperion-crypto",
  "hyperion-explainability",
+ "hyperion-identity",
  "hyperion-intent",
  "hyperion-knowledge-graph",
  "hyperion-memory",
@@ -3098,6 +3099,17 @@ dependencies = [
  "hyperion-observability",
  "hyperion-scheduler",
  "hyperion-storage",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "hyperion-identity"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-explainability",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",

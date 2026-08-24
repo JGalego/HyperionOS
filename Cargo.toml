@@ -18,6 +18,7 @@ members = [
     "crates/hyperion-federation",
     "crates/hyperion-init",
     "crates/hyperion-intent",
+    "crates/hyperion-identity",
     "crates/hyperion-ipc",
     "crates/hyperion-knowledge-graph",
     "crates/hyperion-memory",
@@ -67,6 +68,7 @@ hyperion-explainability = { path = "crates/hyperion-explainability" }
 hyperion-federation = { path = "crates/hyperion-federation" }
 hyperion-init = { path = "crates/hyperion-init" }
 hyperion-intent = { path = "crates/hyperion-intent" }
+hyperion-identity = { path = "crates/hyperion-identity" }
 hyperion-ipc = { path = "crates/hyperion-ipc" }
 hyperion-knowledge-graph = { path = "crates/hyperion-knowledge-graph" }
 hyperion-memory = { path = "crates/hyperion-memory" }

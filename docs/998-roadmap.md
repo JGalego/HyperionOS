@@ -2170,11 +2170,39 @@ than any text scan, and it is the honest reason script-backed apps are acceptabl
 - **M1 — T0/T1, script-backed, with a real typed input contract.** `/apps`, `/app`, `/build`,
   `/run`, `/app-remove` over the existing `ExecutionEngine` → `publish` → `install` → sandboxed
   `invoke` path. No new execution mechanism, no new trust surface.
-- **M1a — principals.** Reordered in front of T2 by §0's Decision 2. A `UserId` bound to its own
-  `TrustBoundaryId`, threaded through the three places that assume one person today: the console's
-  hardcoded `session_id`, `SecretStore`'s provider-only keying, and the actor-less audit trail. No
-  login flow — identity, not authentication. Without this, T2 stores one person's data where
-  another can read it, and doing it afterwards means migrating whatever T2 already wrote.
+- **M1a — principals. Landed (2026-08-24).** New `hyperion-identity` crate: a validated `UserId`
+  bound to its own `TrustBoundaryId`, allocated once and persisted so the same person is the same
+  authority across a restart, and never colliding with the low ids callers across this workspace
+  mint by hand. Threaded through the three places that assumed one person: the console's
+  `session_id` (was the literal `"console"`, so working memory and expertise were shared by
+  everyone at a device), `SecretStore` (now per-principal in both dimensions — a distinct path so
+  two people cannot overwrite each other, and a distinct derived key so neither can read the
+  other's), and the session's root capability token. `/whoami` and `/user <name>` are the console
+  surface; a switch rebuilds everything person-scoped, respawning the assistant Agent instance so
+  one person never inherits a cloud consent another gave.
+
+  **The audit half needed no code at all**, which is the clearest evidence the boundary-as-principal
+  choice was right. `ExplanationStore::begin` already seeded every record's `trust_boundary_span`
+  with the calling boundary, and `trace_intent`/`get_by_action`/`resolve_why` already *filtered* by
+  it — that crate was built to tell two callers apart and had simply never been given two. Proven
+  against it unmodified: Alice's record carries Alice's boundary, and Bob's token reads none of it.
+
+  **A claim corrected while building it.** An earlier draft of this entry said `cap_derive`'s
+  attenuation gave separation "by construction". It does not. `cap_derive` takes the child's
+  `new_origin` as a parameter — it attenuates *rights*, not *origin* — so any holder of a live token
+  can mint a child attributed to any boundary it names. That is deliberate and load-bearing:
+  re-origining is exactly how `PluginRegistry::install` confines a plugin into a fresh boundary, so
+  making origin inherit would break plugin isolation. A boundary is therefore an **attribution and
+  confinement label**, not proof of who acted — consistent with identity-without-authentication,
+  and pinned by a test so it is recorded rather than assumed away. What must become true when
+  authentication lands is narrower and checkable: only whatever authenticated a person may mint a
+  *root* token at their boundary.
+
+  **Named, still open:** `hyperion-memory` has no per-boundary access control of its own, unlike
+  `hyperion-explainability`. The console scopes its own `/meaningful` reflection key per principal,
+  which is the honest fix available from the caller; teaching that crate the same boundary filter
+  `hyperion-explainability` already has is the real one, and belongs with T2's per-principal
+  storage.
 - **M2 — T2.** A durable *per-principal* data directory, and erasure on removal that docs/16 can
   stand behind.
 - **M3 — T3.** Residency via `hyperion-supervisor`, with a real cgroup budget and

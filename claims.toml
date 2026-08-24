@@ -266,3 +266,45 @@ id = "plugin.script-is-never-a-symlink"
 claim = "A capability's script cannot be a symlink, so the sandbox can never be made to grant read access to a file other than the one the manifest names."
 crate = "hyperion-plugin-framework"
 test = "a_script_that_is_a_symlink_is_refused_even_when_its_target_is_a_real_file"
+
+[[claim]]
+id = "identity.audit-trail-is-per-person"
+claim = "One person's audit trail cannot be read through another person's token, and every record names the boundary that acted."
+crate = "hyperion-identity"
+test = "one_persons_audit_trail_is_unreadable_from_anothers_token"
+
+[[claim]]
+id = "identity.revocation-is-per-person"
+claim = "Revoking one person's authority leaves every other person's untouched."
+crate = "hyperion-identity"
+test = "revoking_one_person_leaves_the_other_untouched"
+
+[[claim]]
+id = "identity.boundary-is-attribution-not-proof"
+claim = "A trust boundary records who an action was attributed to; it is not proof of who acted, because deriving a token may name any boundary."
+crate = "hyperion-identity"
+test = "a_boundary_is_an_attribution_label_and_not_an_unforgeable_identity"
+
+[[claim]]
+id = "identity.a-person-keeps-their-own-boundary"
+claim = "The same person resolves to the same authority across a restart, so nothing scoped to them is orphaned."
+crate = "hyperion-identity"
+test = "the_same_person_is_the_same_authority_across_a_restart"
+
+[[claim]]
+id = "crypto.secrets-are-separated-per-scope"
+claim = "A secret store written for one scope cannot be decrypted under another, so one person's saved API key is unreadable by another."
+crate = "hyperion-crypto"
+test = "two_scopes_cannot_read_each_others_secrets"
+
+[[claim]]
+id = "console.people-do-not-share-working-memory"
+claim = "One person's working memory is never recalled into another person's turn on the same device."
+crate = "hyperion-console"
+test = "two_people_on_one_device_do_not_share_working_memory"
+
+[[claim]]
+id = "console.people-do-not-share-saved-keys"
+claim = "One person's saved API key is not usable from another person's session on the same device."
+crate = "hyperion-console"
+test = "one_persons_saved_api_key_is_not_another_persons"

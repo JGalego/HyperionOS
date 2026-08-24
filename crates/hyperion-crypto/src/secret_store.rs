@@ -65,7 +65,35 @@ impl SecretStore {
     /// [`SecretStoreError::DecryptionFailed`] -- ChaCha20-Poly1305's real authentication tag
     /// check rejects it, never silently returning wrong or garbage secrets.
     pub fn open_or_create(path: &Path, device_key: &Keystore) -> Result<Self, SecretStoreError> {
-        let key_bytes = device_key.derive_key(KEY_DERIVATION_CONTEXT);
+        Self::open_or_create_scoped(path, device_key, None)
+    }
+
+    /// As [`Self::open_or_create`], but with the store's key derived for one named scope.
+    ///
+    /// docs/998-roadmap.md §0's Decision 2 (Hyperion is multi-user) is what needs this: with one
+    /// device key and one fixed context, every person on a device shares one encrypted store, so
+    /// one person's turn can spend another's API credit. A caller passing a per-principal `scope`
+    /// gets a genuinely distinct key, because BLAKE3's key-derivation contract is that distinct
+    /// context strings never produce colliding output.
+    ///
+    /// This crate deliberately learns nothing about principals -- `scope` is an opaque string, and
+    /// choosing it belongs to whoever knows what a principal is (`hyperion-identity`'s
+    /// `Principal::scope`). Separate paths are still the caller's job too: a distinct key protects
+    /// one person's secrets from being *read* by another, while a distinct path is what stops them
+    /// overwriting each other.
+    ///
+    /// `None` reproduces [`Self::open_or_create`] exactly, so every existing store stays readable
+    /// with the key it was written under.
+    pub fn open_or_create_scoped(
+        path: &Path,
+        device_key: &Keystore,
+        scope: Option<&str>,
+    ) -> Result<Self, SecretStoreError> {
+        let context = match scope {
+            Some(scope) => format!("{KEY_DERIVATION_CONTEXT}.{scope}"),
+            None => KEY_DERIVATION_CONTEXT.to_string(),
+        };
+        let key_bytes = device_key.derive_key(&context);
         let cipher = ChaCha20Poly1305::new(Key::from_slice(&key_bytes));
 
         let secrets = if path.exists() {

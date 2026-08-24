@@ -78,6 +78,33 @@ version numbers track release sequence, not API stability.
   already express per-user separation and revocation without a second notion of
   authority.
 
+**Principals — one Hyperion, more than one person** (docs/998-roadmap.md's
+App Builder M1a, implementing §0 Decision 2)
+- New `hyperion-identity` crate. A validated `UserId` bound to its own
+  `TrustBoundaryId`, allocated once and persisted, so the same person is the
+  same authority across a restart and nothing scoped to them is orphaned.
+- Fixes three things that were correct only under a single-user assumption. The
+  console's `session_id` was the literal string `"console"`, so working memory,
+  context bundles and Adaptive Complexity expertise were shared by everyone at a
+  device -- one person's working memory really was recalled into another's turn.
+  `SecretStore` is now per-principal in both dimensions that matter: a distinct
+  path so two people cannot overwrite each other, and a distinct derived key
+  (`open_or_create_scoped`) so neither can read the other's saved API key.
+- The audit trail needed no code. `ExplanationStore` already seeded each record
+  with the calling boundary and already filtered every read by it; it was built
+  to tell two callers apart and had never been given two. Binding a user to a
+  boundary makes every record attributable and one person's trail unreadable
+  through another's token, proven against that crate unmodified.
+- `/whoami` and `/user <name>`. A switch rebuilds everything person-scoped and
+  respawns the assistant instance, so nobody inherits a cloud consent someone
+  else gave. Both commands say plainly that nothing checks who you are: this
+  separates people, it does not protect them from each other.
+- Records a real limit rather than overstating the guarantee: `cap_derive` takes
+  the child's origin as a parameter and does not inherit it, so a boundary is an
+  attribution and confinement label, not proof of who acted. Re-origining is
+  load-bearing -- it is how `PluginRegistry::install` confines a plugin -- so the
+  fix is to state the limit, not change the model.
+
 **Apps Hyperion builds for you** (docs/998-roadmap.md's new App Builder section,
 M1 -- the ladder's first two rungs, T0 "answer" and T1 "tool")
 - New `hyperion-app` crate. A goal plus a script becomes a real, signed,
