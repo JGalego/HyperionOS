@@ -129,3 +129,24 @@ fn help_lists_the_app_commands() {
         assert!(reply.contains(command), "help should mention {command}");
     }
 }
+
+#[test]
+fn a_meta_command_never_gets_an_app_suggestion_appended() {
+    // Suggestions ride on real goal utterances only. `/apps` returning "you also built an app for
+    // this" about itself would be noise, and meta-commands return before that path is reached.
+    let (_dir, mut session) = open_session();
+    let reply = session.handle_utterance("/apps").join("\n");
+    assert!(!reply.contains("You built"), "got: {reply}");
+}
+
+#[test]
+fn a_goal_utterance_with_nothing_installed_gets_no_suggestion() {
+    let (_dir, mut session) = open_session();
+    let reply = session
+        .handle_utterance("count the words in this text")
+        .join("\n");
+    // Nothing is installed, so there is nothing to suggest -- and the goal still gets its real
+    // answer through the normal path rather than being intercepted.
+    assert!(!reply.contains("You built"), "got: {reply}");
+    assert!(!reply.is_empty());
+}

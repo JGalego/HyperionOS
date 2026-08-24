@@ -2142,8 +2142,14 @@ existing end-to-end test never caught it because its companion binary only *echo
 and never reads it. Fixed properly rather than worked around: `NativeBinaryDescriptor` gained a
 `script: Option<PathBuf>`, set only by `resolve_via_engine`, validated at install time the same
 honest way `program` already is, and passed through a new `SpawnGrant::read_only_paths` as a real
-Landlock `ReadFile` rule on exactly that one file. Not a widening of the model — a manifest already
-names a program it gets `ReadFile | Execute` on, and this is strictly weaker.
+Landlock `ReadFile` rule on exactly that one file. A later security pass corrected an overstatement
+here: `program` and `script` are *not* quite symmetric. `program` must be executable, so it can
+never name an ordinary sensitive file; a `script` is only ever read, and has no such requirement.
+Validation therefore refuses a symlink (`symlink_metadata`, not `metadata`) — a link would otherwise
+pass `is_file()` and have Landlock grant `ReadFile` on whatever it really pointed at. Installing any
+manifest at all still requires a real signature and a `GRANT`-rights token, authority that can
+simply name an executable `program` instead, so this is a narrow gap rather than an escalation
+path — worth stating precisely rather than waving at.
 
 **What a real model actually produces, measured rather than assumed.** M1's `/build` was driven
 end to end against the real OpenAI API (`gpt-4o-mini` and `gpt-4o`), and three real defects came
@@ -2176,6 +2182,21 @@ nothing for a dynamic loader or its shared libraries, so **an `ExecutionEngine` 
 statically linked**, and the Buildroot defconfigs under `boot/` do not currently build one (no
 `BR2_STATIC_LIBS`, so the image's own busybox `sh` is dynamic). Registering a usable script engine
 on a real image is therefore real, named, still-open work — not something M1 quietly assumes away.
+
+**One step toward the philosophy M1 argued for but did not implement.** The `/app*` commands are
+the expert surface by design, but on their own they were also the *only* surface — which leaves
+docs/01's actual claim (say what you want; the right capability is chosen for you) unbuilt. A real
+goal utterance now gets a line naming the installed app it looks like it was about.
+
+It suggests rather than runs, and that is a decision rather than timidity: an app is generated
+code and the match is word overlap, so auto-running the best guess means a wrong one silently
+executes a program nobody asked for. docs/01 is explicit that Hyperion assists rather than
+controls. Appended to an answer that already happened, never substituted for it, so a question
+that merely shares vocabulary with an app still gets answered. A tie between two equally-matching
+apps deliberately says nothing — that is the case where guessing is least defensible. Grounding
+the match in a real Intent Engine template or a semantic index, rather than word overlap, is what
+would let this stop asking and start doing; `IntentEngine::new_with_plugins` is the seam, and the
+console now constructs the `PluginRegistry` that its own roadmap entry named as missing.
 
 T2-T4 remain exactly as scoped above — named, not silently half-built.
 

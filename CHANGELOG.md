@@ -20,8 +20,12 @@ version numbers track release sequence, not API stability.
   echoes the script path and never reads it. `NativeBinaryDescriptor` now
   carries a `script`, validated at install time the same honest way `program`
   already is, granted through a new `SpawnGrant::read_only_paths` as a Landlock
-  `ReadFile` rule on exactly that one file. Not a widening: a manifest already
-  names a program it gets `ReadFile | Execute` on.
+  `ReadFile` rule on exactly that one file. `program` and `script` are not quite
+  symmetric, and the asymmetry is the load-bearing part: `program` must be
+  executable, so it can never name an ordinary sensitive file, while a `script`
+  is only ever read. Validation therefore uses `symlink_metadata`, not
+  `metadata` -- a link would otherwise pass `is_file()` and have Landlock grant
+  `ReadFile` on whatever it really pointed at.
 - A Trust Boundary is now refused rather than reported as sandboxed when the
   kernel applied no Landlock restrictions at all. `CompatLevel::BestEffort`
   returns `Ok` from `restrict_self()` on a kernel without Landlock, and nothing
@@ -87,6 +91,11 @@ M1 -- the ladder's first two rungs, T0 "answer" and T1 "tool")
   whose entire authority is the one app being run. `/run` also understands
   quoted values -- `text="hello there world"` is the most ordinary thing anyone
   would type, and it failed.
+- A real goal utterance now gets a line naming the installed app it looks like
+  it was about. It suggests rather than runs: an app is generated code and the
+  match is word overlap, so auto-running a wrong guess would execute a program
+  nobody asked for. Appended to an answer that already happened, never
+  substituted for it; a tie between two equally-matching apps says nothing.
 - Recorded, because only running it could establish it: a shell is a poor
   execution engine here. Landlock grants `Execute` on the launcher alone, so a
   script cannot run another program -- which is what a shell is for. Asked for

@@ -1638,7 +1638,38 @@ impl ConsoleSession {
             self.run_decomposed_plan(&ticket, on_progress)
         };
 
-        self.render_workspace(root, &self.session_id, &predicate, &outcomes)
+        let mut reply = self.render_workspace(root, &self.session_id, &predicate, &outcomes);
+        reply.extend(self.app_suggestion(utterance));
+        reply
+    }
+
+    /// A line mentioning the installed app this goal looks like it was about, if there clearly is
+    /// one.
+    ///
+    /// Appended to a reply that already happened, never substituted for it. An app is generated
+    /// code and the match is word overlap, so a wrong guess that *ran* would execute a program
+    /// nobody asked for -- docs/01 is explicit that Hyperion assists rather than controls. Additive
+    /// means a wrong guess costs one line, and a question that merely shares vocabulary with an
+    /// app still gets its real answer.
+    ///
+    /// This is the smallest honest step toward docs/01's actual claim -- that a person says what
+    /// they want and the right capability is chosen for them, rather than learning `/run`. It is
+    /// not that claim yet: grounding the match in a real Intent Engine template or a semantic index
+    /// is what would let this stop asking and start doing.
+    fn app_suggestion(&self, utterance: &str) -> Vec<String> {
+        let apps = self.apps.list();
+        let Some(app) = hyperion_app::best_match(&apps, utterance) else {
+            return Vec::new();
+        };
+        let invocation = if app.inputs.is_empty() {
+            app.name.clone()
+        } else {
+            Self::example_invocation(app)
+        };
+        vec![format!(
+            "(You built \"{}\" for something like this -- \"/run {invocation}\" to use it.)",
+            app.name
+        )]
     }
 
     /// `true` while a "connect my `<provider>`" flow is awaiting its follow-up API-key line --

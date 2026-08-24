@@ -26,9 +26,18 @@ pub struct NativeBinaryDescriptor {
     /// handed a script path it cannot open: `apply_landlock` grants access to the program's own
     /// path and to `fs_scope` (a per-invocation temp directory), and a script is neither.
     ///
-    /// Validated at install time exactly like `program` is -- it must really exist and really be a
-    /// regular file -- rather than trusted. It grants `ReadFile` and nothing else, which is
-    /// strictly weaker than the `ReadFile | Execute` a manifest already gets to name via `program`.
+    /// Validated at install time rather than trusted: it must really exist and really be a regular
+    /// file, checked without following symlinks (see `validate_native_binary` for why that
+    /// distinction is the load-bearing one here).
+    ///
+    /// It grants `ReadFile` and nothing else. That is *nearly*, but not exactly, weaker than the
+    /// `ReadFile | Execute` a manifest already names via `program`: `program` must additionally be
+    /// executable, so it can never name an ordinary sensitive file, and this has no such
+    /// requirement. Installing any manifest at all already requires a real Ed25519 signature and a
+    /// `GRANT`-rights token -- authority that can simply name an executable `program` instead --
+    /// so this is a narrow gap rather than an escalation path. Worth stating precisely rather than
+    /// waving at, and worth revisiting if a `script` ever becomes installable under weaker
+    /// authority than a `program`.
     pub script: Option<PathBuf>,
 }
 

@@ -873,12 +873,19 @@ impl PluginRegistry {
     /// against has a different question, and the only way to answer it without this was to guess
     /// from a hardcoded list of ids it hoped were the right ones.
     pub fn execution_engine_ids(&self) -> Vec<String> {
+        // `quarantined_plugins` first, then the contribution map -- the same order every sibling
+        // accessor here uses, and the reason this isn't written as a filter closure that locks
+        // per element. This registry is built for concurrent dispatch (`invoke_native_binary`
+        // takes `&self`), so taking these two in the opposite order to `execution_engine` would
+        // be a real lock-order inversion: one thread holding `quarantined_plugins` and wanting
+        // `execution_engines` against another holding the reverse deadlocks both.
+        let quarantined = self.quarantined_plugins.lock().unwrap();
         let mut ids: Vec<String> = self
             .execution_engines
             .lock()
             .unwrap()
             .iter()
-            .filter(|(plugin_id, _)| !self.quarantined_plugins.lock().unwrap().contains(plugin_id))
+            .filter(|(plugin_id, _)| !quarantined.contains(plugin_id))
             .flat_map(|(_, engines)| engines.iter().map(|e| e.engine_id.clone()))
             .collect();
         ids.sort();
@@ -1095,7 +1102,12 @@ fn validate_native_binary(
     // The same honest check for the script an interpreter will be handed: a manifest that only
     // *claims* its script exists must not install as if the sandbox could really open it.
     if let Some(script) = &descriptor.script {
-        let script_metadata = std::fs::metadata(script).map_err(|e| {
+        // `symlink_metadata`, deliberately not `metadata`: the latter follows symlinks, so a
+        // manifest could name a link that passes this check and then have Landlock grant
+        // `ReadFile` on whatever it really points at. Unlike `program` -- which must be
+        // executable, and so can never name an ordinary sensitive file -- a script has no such
+        // requirement, which makes it the weaker of the two checks and the one worth tightening.
+        let script_metadata = std::fs::symlink_metadata(script).map_err(|e| {
             PluginError::InvalidNativeBinary(format!(
                 "{script:?} doesn't exist or isn't readable: {e}"
             ))

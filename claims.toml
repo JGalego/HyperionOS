@@ -260,3 +260,9 @@ id = "app.engine-script-is-readable-in-the-sandbox"
 claim = "A capability published through an execution engine names its script as a file the sandbox grants read access to, so the launcher can really open what it was told to run."
 crate = "hyperion-app"
 test = "the_installed_implementation_really_names_the_script_the_sandbox_must_read"
+
+[[claim]]
+id = "plugin.script-is-never-a-symlink"
+claim = "A capability's script cannot be a symlink, so the sandbox can never be made to grant read access to a file other than the one the manifest names."
+crate = "hyperion-plugin-framework"
+test = "a_script_that_is_a_symlink_is_refused_even_when_its_target_is_a_real_file"
