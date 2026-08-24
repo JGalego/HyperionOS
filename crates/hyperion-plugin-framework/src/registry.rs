@@ -866,6 +866,52 @@ impl PluginRegistry {
             .cloned()
     }
 
+    /// Every currently-installed, non-quarantined `Contribution::ExecutionEngine` id, sorted.
+    ///
+    /// [`Self::execution_engine`] answers "is *this* engine installed", which is all
+    /// `hyperion_sdk::resolve_via_engine` ever needed. A caller deciding *which* engine to publish
+    /// against has a different question, and the only way to answer it without this was to guess
+    /// from a hardcoded list of ids it hoped were the right ones.
+    pub fn execution_engine_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .execution_engines
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(plugin_id, _)| !self.quarantined_plugins.lock().unwrap().contains(plugin_id))
+            .flat_map(|(_, engines)| engines.iter().map(|e| e.engine_id.clone()))
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
+    /// Every currently-installed, non-quarantined capability entry, in a stable
+    /// `capability_id` order.
+    ///
+    /// [`Self::query`] answers "is *this* capability installed"; nothing here could answer "what
+    /// is installed at all", so any caller wanting to *list* capabilities had no choice but to
+    /// keep its own parallel record of what it had installed -- a second source of truth that can
+    /// drift from this one, and that an uninstall elsewhere would silently invalidate.
+    /// `hyperion-app`'s `/apps` is the first real caller: it lists apps by decoding the signed
+    /// contracts found here, so a removed app disappears from the listing because it really is
+    /// gone from the registry, not because a side file was also remembered to be updated.
+    ///
+    /// Sorted rather than returned in `HashMap` order: a listing a person reads should not
+    /// reshuffle itself between two invocations that installed nothing.
+    pub fn capability_entries(&self) -> Vec<RegistryEntry> {
+        let mut entries: Vec<RegistryEntry> = self
+            .registry
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|e| e.install_state != InstallState::Quarantined)
+            .cloned()
+            .collect();
+        entries.sort_by(|a, b| a.capability_id.cmp(&b.capability_id));
+        entries
+    }
+
     pub fn boundary_of(&self, plugin_id: PluginId) -> Option<TrustBoundaryId> {
         self.boundaries.lock().unwrap().get(&plugin_id).copied()
     }
@@ -948,6 +994,10 @@ impl PluginRegistry {
             token,
             depth: real_trust_depth(policy_depth),
             fs_scope: tempdir.path().to_path_buf(),
+            // Exactly the script this implementation declared, if any -- read-only, and never a
+            // directory. See `NativeBinaryDescriptor::script` for why an interpreter cannot
+            // otherwise open the very file it was told to run.
+            read_only_paths: native.script.iter().cloned().collect(),
             // A one-shot NativeBinary invocation communicates via input.json/output.json in its
             // own real fs_scope -- it has no rendezvous socket to bind, so no IPC rights at all.
             ipc_rendezvous: None,
@@ -1040,6 +1090,21 @@ fn validate_native_binary(
     #[cfg(not(unix))]
     {
         let _ = metadata;
+    }
+
+    // The same honest check for the script an interpreter will be handed: a manifest that only
+    // *claims* its script exists must not install as if the sandbox could really open it.
+    if let Some(script) = &descriptor.script {
+        let script_metadata = std::fs::metadata(script).map_err(|e| {
+            PluginError::InvalidNativeBinary(format!(
+                "{script:?} doesn't exist or isn't readable: {e}"
+            ))
+        })?;
+        if !script_metadata.is_file() {
+            return Err(PluginError::InvalidNativeBinary(format!(
+                "{script:?} exists but isn't a regular file"
+            )));
+        }
     }
     Ok(())
 }

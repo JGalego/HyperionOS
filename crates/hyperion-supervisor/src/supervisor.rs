@@ -202,6 +202,10 @@ impl Supervisor {
             depth: spec.depth,
             fs_scope: spec.fs_scope.clone(),
             ipc_rendezvous: Some(self.socket_path_for(&spec.name)),
+            // A supervised service is a self-contained program that runs its own code, not an
+            // interpreter handed someone else's -- so it needs no extra readable file beyond its
+            // own `fs_scope`.
+            read_only_paths: Vec::new(),
         };
 
         let mut command = Command::new(&spec.program);

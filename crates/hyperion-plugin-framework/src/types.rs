@@ -15,6 +15,21 @@ pub type CapabilityId = String;
 pub struct NativeBinaryDescriptor {
     pub program: PathBuf,
     pub args: Vec<String>,
+    /// The one script file `program` must be able to *read* to do its job, when `program` is an
+    /// interpreter rather than the work itself. `None` for a self-contained binary, which is
+    /// every hand-installed capability.
+    ///
+    /// Set by `hyperion_sdk::resolve_via_engine` and nothing else: a capability published "via" an
+    /// `ExecutionEngine` names its script here so
+    /// [`crate::registry::PluginRegistry::invoke_native_binary`] can pass it as a real
+    /// `hyperion_trust_boundary::SpawnGrant::read_only_paths` entry. Without it the launcher is
+    /// handed a script path it cannot open: `apply_landlock` grants access to the program's own
+    /// path and to `fs_scope` (a per-invocation temp directory), and a script is neither.
+    ///
+    /// Validated at install time exactly like `program` is -- it must really exist and really be a
+    /// regular file -- rather than trusted. It grants `ReadFile` and nothing else, which is
+    /// strictly weaker than the `ReadFile | Execute` a manifest already gets to name via `program`.
+    pub script: Option<PathBuf>,
 }
 
 /// docs/24 §Sandboxing's depth spectrum, reused as a **policy label** this

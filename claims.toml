@@ -230,3 +230,33 @@ id = "console.local-servers-refuse-rebound-dns"
 claim = "A request addressed to a non-loopback name is refused, closing the DNS-rebinding path to a loopback service."
 crate = "hyperion-console"
 test = "http_server::tests::a_rebound_dns_name_is_refused_even_though_it_resolves_to_loopback"
+
+[[claim]]
+id = "app.contract-is-signed-not-alongside"
+claim = "An app's declared inputs travel inside the signed manifest, so a listing reads the same bytes the signature covers."
+crate = "hyperion-app"
+test = "a_built_app_is_really_installed_and_reads_back_from_the_signed_registry"
+
+[[claim]]
+id = "app.bad-arguments-never-reach-a-sandbox"
+claim = "An argument an app never declared, or of the wrong type, is refused before any process is spawned."
+crate = "hyperion-app"
+test = "arguments_are_checked_against_the_signed_contract_before_anything_runs"
+
+[[claim]]
+id = "app.path-arguments-cannot-escape"
+claim = "A path an app is given can never point outside the one directory its sandbox grants."
+crate = "hyperion-app"
+test = "a_path_argument_can_never_reach_outside_the_apps_own_folder"
+
+[[claim]]
+id = "app.removal-really-revokes"
+claim = "Removing an app revokes the capability tokens it held, not merely the record that it existed."
+crate = "hyperion-app"
+test = "removing_an_app_really_revokes_its_tokens_and_really_deletes_its_script"
+
+[[claim]]
+id = "app.engine-script-is-readable-in-the-sandbox"
+claim = "A capability published through an execution engine names its script as a file the sandbox grants read access to, so the launcher can really open what it was told to run."
+crate = "hyperion-app"
+test = "the_installed_implementation_really_names_the_script_the_sandbox_must_read"

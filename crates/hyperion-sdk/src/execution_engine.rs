@@ -36,5 +36,9 @@ pub fn resolve_via_engine(
     Ok(NativeBinaryDescriptor {
         program: engine.launcher.program,
         args,
+        // The launcher is about to be told to run this file, so the sandbox has to let it read
+        // one. Passing the path as an argument was never enough on its own: Landlock grants the
+        // program's own path and the per-invocation temp directory, and a script is neither.
+        script: Some(script),
     })
 }

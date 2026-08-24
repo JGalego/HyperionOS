@@ -177,6 +177,17 @@ fn canonical_submission_bytes(contract: &Contract, implementation: &Implementati
                 bytes.extend_from_slice(arg.as_bytes());
                 bytes.push(0);
             }
+            // Part of what this submission *is*: two otherwise-identical implementations that run
+            // different scripts through the same launcher are genuinely different content, and a
+            // fingerprint that couldn't tell them apart would be a fingerprint of the launcher.
+            match &native_binary.script {
+                Some(script) => {
+                    bytes.push(1);
+                    bytes.extend_from_slice(script.to_string_lossy().as_bytes());
+                    bytes.push(0);
+                }
+                None => bytes.push(0),
+            }
         }
         None => bytes.push(0),
     }

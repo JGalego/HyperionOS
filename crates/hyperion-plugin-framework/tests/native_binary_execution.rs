@@ -87,6 +87,7 @@ fn manifest_with_native_binary(keystore: &Keystore, program: std::path::PathBuf)
             native_binary: Some(NativeBinaryDescriptor {
                 program,
                 args: vec![],
+                script: None,
             }),
             privacy_tier: PrivacyTier::Local,
             resource_profile: None,

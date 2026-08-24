@@ -25,6 +25,7 @@ use hyperion_agent_runtime::{AgentRuntime, InvokeOutcome};
 use hyperion_ai_runtime::{
     sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
 };
+use hyperion_app::{AppError, AppPaths, AppRegistry, InputKind, InstalledApp};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask, TrustBoundaryId};
 use hyperion_coordination::{CoordinationSession, TaskNode};
 use hyperion_crypto::{Keystore, SecretStore};
@@ -33,8 +34,8 @@ use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::{render_capability_result, GraphError, KnowledgeGraph, NodeId};
 use hyperion_memory::{MemoryEngine, MemoryTier};
 use hyperion_plugin_framework::{
-    CapabilityGrantRequest, CapabilityManifest, Contribution, ImplementationKind,
-    NativeBinaryDescriptor, Operation, PluginManifest, PluginRegistry,
+    CapabilityGrantRequest, CapabilityManifest, Contribution, ExecutionEngineContribution,
+    ImplementationKind, NativeBinaryDescriptor, Operation, PluginManifest, PluginRegistry,
     PrivacyTier as PluginPrivacyTier, SemanticContract, SideEffect, TrustDepth,
 };
 
@@ -161,6 +162,11 @@ pub struct ConsoleSession {
     /// caller constructed `AgentRuntime` with `plugins: None` -- is actually reachable from this
     /// session. See the `/install-binary` meta-command.
     plugins: Arc<PluginRegistry>,
+    /// The apps this device has built (docs/998-roadmap.md's App Builder, M1) -- backs `/apps`,
+    /// `/app`, `/build`, `/run` and `/app-remove`. Shares the exact same `plugins` registry above,
+    /// so an app is a real installed Capability like any other, listed by decoding what is really
+    /// installed rather than from any record this session keeps of its own.
+    apps: AppRegistry,
     /// This session's own real, persistent data directory -- retained past construction only so
     /// [`Self::switch_backend`] can persist the user's real choice to `model_selection.json`
     /// (see [`Self::save_model_selection`]) each time it changes, without threading the path
@@ -538,6 +544,7 @@ impl ConsoleSession {
             pending_think_root: None,
             memory,
             last_utterance: None,
+            apps: AppRegistry::new(Arc::clone(&plugins), AppPaths::new(data_dir.join("apps"))),
             plugins,
             data_dir: data_dir.to_path_buf(),
         };
@@ -995,6 +1002,83 @@ impl ConsoleSession {
             return Some(self.install_binary(capability_id, program));
         }
 
+        // docs/998-roadmap.md's App Builder (M1). These are deliberately the *expert* surface,
+        // not the way a person is meant to reach an app: docs/01's whole argument is that
+        // "application" is the unit users should stop thinking in, so the intended path stays
+        // intent -- say what you want, and the matching Capability is chosen for you. These exist
+        // for the same reason `/install-binary` does: sometimes you want to say exactly which
+        // thing, and Progressive Complexity means never taking that away from someone who does.
+        //
+        // Ordered before the shorter prefixes below because `/app-engine`/`/app-remove` would
+        // otherwise be swallowed by `/app`'s own `starts_with`.
+        if lower.starts_with("/app-engine") {
+            let rest = trimmed["/app-engine".len()..].trim();
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let engine_id = parts.next().unwrap_or("").trim();
+            let launcher = parts.next().unwrap_or("").trim();
+            if engine_id.is_empty() || launcher.is_empty() {
+                return Some(vec![
+                    "\"/app-engine\" needs a name and the program that runs those scripts, e.g. \
+                     \"/app-engine sh /bin/busybox-static\"."
+                        .to_string(),
+                ]);
+            }
+            return Some(self.install_app_engine(engine_id, launcher));
+        }
+
+        if lower.starts_with("/app-remove") {
+            let name = trimmed["/app-remove".len()..].trim();
+            if name.is_empty() {
+                return Some(vec![
+                    "\"/app-remove\" needs the name of an app, e.g. \"/app-remove invoice-tally\"."
+                        .to_string(),
+                ]);
+            }
+            return Some(self.remove_app(name));
+        }
+
+        if lower == "/apps" {
+            return Some(self.list_apps());
+        }
+
+        if lower.starts_with("/app") {
+            let name = trimmed["/app".len()..].trim();
+            if name.is_empty() {
+                return Some(vec![
+                    "\"/app\" needs the name of an app, e.g. \"/app invoice-tally\". Try \"/apps\" \
+                     to see what's there."
+                        .to_string(),
+                ]);
+            }
+            return Some(self.describe_app(name));
+        }
+
+        if lower.starts_with("/build") {
+            let goal = trimmed["/build".len()..].trim();
+            if goal.is_empty() {
+                return Some(vec![
+                    "\"/build\" needs to know what you want, e.g. \"/build something to add up \
+                     my invoices\"."
+                        .to_string(),
+                ]);
+            }
+            return Some(self.build_app(goal));
+        }
+
+        if lower.starts_with("/run") {
+            let rest = trimmed["/run".len()..].trim();
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let name = parts.next().unwrap_or("").trim();
+            let args = parts.next().unwrap_or("").trim();
+            if name.is_empty() {
+                return Some(vec![
+                    "\"/run\" needs the name of an app, e.g. \"/run invoice-tally month=may\"."
+                        .to_string(),
+                ]);
+            }
+            return Some(self.run_app(name, args));
+        }
+
         // docs/998-roadmap.md's Backlog "Protect the Human" item: an opt-in, per-session pause
         // before Hyperion decomposes a goal -- "a moment for the human's own reasoning to run
         // first," never a default. `/think`/`/think on`/`/think off` toggle it;
@@ -1366,6 +1450,23 @@ impl ConsoleSession {
              capability backed by a native program, e.g. \"/install-binary local.word_count \
              /usr/bin/wc\""
                 .to_string(),
+            "  /build <what you need>                      make something that does it, e.g. \
+             \"/build something to add up my invoices\""
+                .to_string(),
+            "  /apps                                       everything I've built for you so far"
+                .to_string(),
+            "  /app <name>                                 what one of them does and what it \
+             needs from you"
+                .to_string(),
+            "  /run <name> [name=value ...]                use one, e.g. \"/run invoice-tally \
+             month=may\""
+                .to_string(),
+            "  /app-remove <name>                          delete it and revoke everything it \
+             could do"
+                .to_string(),
+            "  /app-engine <name> <program>                teach me to run a kind of script \
+             (statically linked only), e.g. \"/app-engine sh /bin/busybox-static\""
+                .to_string(),
             "  /help                                        show this message".to_string(),
         ]
     }
@@ -1728,6 +1829,348 @@ impl ConsoleSession {
     /// command rather than a discovered manifest file, since this console has no plugin
     /// marketplace to discover one from yet. Self-signed with this session's own device identity
     /// (`self.keystore`), the same trust a locally-typed command already implicitly carries.
+    /// Registers a real `Contribution::ExecutionEngine`: the program that actually runs an app's
+    /// script.
+    ///
+    /// Asked for explicitly rather than guessed at, because the guess would be wrong on every
+    /// system this could run on today. `hyperion_trust_boundary::apply_landlock` grants a
+    /// sandboxed process access to its own program and to one per-invocation temp directory, and
+    /// nothing else -- so a dynamically linked interpreter cannot even reach its own loader or
+    /// libc, and a stock `/bin/sh` would install fine here and then fail at the moment of use.
+    /// A launcher has to be statically linked, and only whoever set this system up knows which one
+    /// is.
+    fn install_app_engine(&mut self, engine_id: &str, launcher: &str) -> Vec<String> {
+        let mut manifest = PluginManifest {
+            plugin_id: now(),
+            publisher: "console-local".to_string(),
+            signature: None,
+            sdk_version: 1,
+            contributions: vec![Contribution::ExecutionEngine(ExecutionEngineContribution {
+                engine_id: engine_id.to_string(),
+                launcher: NativeBinaryDescriptor {
+                    program: PathBuf::from(launcher),
+                    args: Vec::new(),
+                    // The launcher itself is the program; the script it runs is named later, per
+                    // app, by `hyperion_sdk::resolve_via_engine`.
+                    script: None,
+                },
+            })],
+            requested_permissions: vec![CapabilityGrantRequest {
+                operation: Operation::Execute,
+                scope: engine_id.to_string(),
+                justification: format!("user-registered script engine via /app-engine: {launcher}"),
+            }],
+            min_trust_depth: TrustDepth::D2,
+        };
+        manifest.signature = Some(hyperion_plugin_framework::sign(&manifest, &self.keystore));
+        let verifying_key = self.keystore.verifying_key();
+        match self.plugins.install(
+            &mut self.monitor,
+            &self.token,
+            manifest,
+            TrustDepth::D2,
+            true,
+            now(),
+            &verifying_key,
+        ) {
+            Ok(_) => vec![
+                format!("Hyperion can build \"{engine_id}\" apps now -- they'll run through {launcher}."),
+                "One caveat worth knowing: that program has to be statically linked, or it won't \
+                 start inside the sandbox."
+                    .to_string(),
+            ],
+            Err(e) => vec![format!("I couldn't set that up: {e}")],
+        }
+    }
+
+    fn list_apps(&self) -> Vec<String> {
+        let apps = self.apps.list();
+        if apps.is_empty() {
+            return vec![
+                "You haven't built anything yet. Tell me what you need and I'll make it -- \
+                 \"/build something to add up my invoices\"."
+                    .to_string(),
+            ];
+        }
+        let mut lines = vec![format!(
+            "{} thing{} I can do for you:",
+            apps.len(),
+            if apps.len() == 1 { "" } else { "s" }
+        )];
+        for app in &apps {
+            lines.push(format!("  {} -- {}", app.name, app.goal));
+        }
+        lines.push("\"/app <name>\" for what one needs, \"/run <name>\" to use it.".to_string());
+        lines
+    }
+
+    fn describe_app(&self, name: &str) -> Vec<String> {
+        let Some(app) = self.apps.describe(name) else {
+            return vec![Self::no_such_app(name)];
+        };
+        let mut lines = vec![format!("{} -- {}", app.name, app.goal)];
+        if app.inputs.is_empty() {
+            lines.push(
+                "It needs nothing from you: \"/run {}\" and it runs.".replace("{}", &app.name),
+            );
+        } else {
+            lines.push("What it needs from you:".to_string());
+            for input in &app.inputs {
+                lines.push(format!(
+                    "  {}{} -- {} ({})",
+                    input.name,
+                    if input.required { "" } else { " (optional)" },
+                    input.description,
+                    input.kind.describe(),
+                ));
+            }
+            lines.push(format!(
+                "  e.g. \"/run {}\"",
+                Self::example_invocation(&app)
+            ));
+        }
+        // Where it came from and what it may touch -- docs/18's "why, and on what evidence",
+        // answered from the signed manifest rather than from anything this session remembers.
+        lines.push(format!(
+            "It runs as {}, sandboxed: no network, and nothing on disk but its own scratch folder. \
+             \"/app-remove {}\" undoes it completely.",
+            app.capability_id, app.name
+        ));
+        lines
+    }
+
+    /// A real example the person can edit, built from the app's own declared inputs -- far more
+    /// use than a generic "name=value" placeholder when the point is to show what this app wants.
+    fn example_invocation(app: &InstalledApp) -> String {
+        let mut parts = vec![app.name.clone()];
+        for input in app.inputs.iter().filter(|i| i.required) {
+            let sample = match &input.kind {
+                InputKind::Text => "…".to_string(),
+                InputKind::Integer => "1".to_string(),
+                InputKind::Number => "1.5".to_string(),
+                InputKind::Boolean => "yes".to_string(),
+                InputKind::Path => "file.csv".to_string(),
+                InputKind::Choice(options) => options.first().cloned().unwrap_or_default(),
+            };
+            parts.push(format!("{}={}", input.name, sample));
+        }
+        parts.join(" ")
+    }
+
+    fn no_such_app(name: &str) -> String {
+        format!("I don't have anything called \"{name}\" -- \"/apps\" shows what's there.")
+    }
+
+    /// `/build <goal>`: asks the active backend for a plan, then really builds what comes back.
+    ///
+    /// The generation is a normal Capability dispatch through `AgentRuntime::invoke`, exactly like
+    /// every other model call this session makes -- so it is subject to the same real consent gate
+    /// and produces the same real Explanation Record. Nothing here is a second, privileged path to
+    /// a model.
+    fn build_app(&mut self, goal: &str) -> Vec<String> {
+        let Some(engine_id) = self.build_engine() else {
+            return vec![
+                "I can't build anything runnable yet -- nothing has told me how to run a script \
+                 here."
+                    .to_string(),
+                "Point me at a statically linked interpreter first, e.g. \"/app-engine sh \
+                 /bin/busybox-static\"."
+                    .to_string(),
+            ];
+        };
+
+        let prompt = format!(
+            "Design a small program for this goal: {goal}\n\n{}",
+            hyperion_app::APP_PLAN_INSTRUCTIONS
+        );
+        let answer = match self.ask_backend(&prompt) {
+            Ok(answer) => answer,
+            Err(reason) => return vec![format!("I couldn't work out what to build: {reason}")],
+        };
+
+        let definition = match hyperion_app::from_model_answer(&answer, &engine_id) {
+            Ok(definition) => definition,
+            Err(e) => {
+                return vec![
+                    format!("{e}."),
+                    "Try saying what you want a little differently, and I'll have another go."
+                        .to_string(),
+                ]
+            }
+        };
+
+        let name = definition.name.clone();
+        match self.apps.build(
+            &mut self.monitor,
+            &self.token,
+            &self.keystore,
+            &definition,
+            now(),
+        ) {
+            Ok(app) => {
+                let mut lines = vec![format!("Built \"{}\" -- {}.", app.name, app.goal)];
+                if app.inputs.is_empty() {
+                    lines.push(format!("Try it: \"/run {}\".", app.name));
+                } else {
+                    lines.push(format!(
+                        "Try it: \"/run {}\".",
+                        Self::example_invocation(&app)
+                    ));
+                }
+                lines.push(format!(
+                    "\"/app {}\" for what it needs, \"/app-remove {}\" if it isn't right.",
+                    app.name, app.name
+                ));
+                // Only worth saying when there was actually a choice -- with one engine
+                // registered this is not a decision anyone made.
+                if self.plugins.execution_engine_ids().len() > 1 {
+                    lines.push(format!("(I wrote it as a \"{engine_id}\" script.)"));
+                }
+                lines
+            }
+            Err(AppError::AlreadyExists(_)) => vec![format!(
+                "There's already an app called \"{name}\" -- \"/app {name}\" shows what it does, \
+                 and \"/app-remove {name}\" clears the way for a new one."
+            )],
+            Err(e) => vec![format!("{e}.")],
+        }
+    }
+
+    /// `/run <name> [key=value ...]`.
+    ///
+    /// Arguments arrive as text because a person typing at a console has nothing else to give;
+    /// the app's own signed contract is what turns them into typed values, and what refuses them
+    /// in plain words when they don't fit -- before anything is spawned.
+    fn run_app(&mut self, name: &str, raw_args: &str) -> Vec<String> {
+        if self.apps.describe(name).is_none() {
+            return vec![Self::no_such_app(name)];
+        }
+        let (args, unparsed) = Self::parse_run_args(raw_args);
+        if let Some(unparsed) = unparsed {
+            return vec![format!(
+                "I couldn't tell what \"{unparsed}\" is meant to set -- give it as name=value, \
+                 e.g. \"/run {name} month=may\"."
+            )];
+        }
+
+        let prepared = match self.apps.prepare_args(name, &args) {
+            Ok(prepared) => prepared,
+            Err(e) => return vec![format!("{e}.")],
+        };
+
+        // Through the Agent Runtime, never straight to the registry: this is what gives an app run
+        // the same real consent gate and the same automatic Explanation Record every other
+        // Capability dispatch in this session gets.
+        let capability_ref = AppRegistry::capability_id_for(name);
+        let _ = self.agent_runtime.grant_capability(
+            &self.monitor,
+            &self.token,
+            self.assistant_instance_id,
+            &capability_ref,
+        );
+        match self.agent_runtime.invoke(
+            &self.monitor,
+            &self.token,
+            self.assistant_instance_id,
+            &capability_ref,
+            prepared,
+        ) {
+            Ok(InvokeOutcome::Result(value)) => vec![Self::render_app_result(&value)],
+            Ok(InvokeOutcome::Denied) => {
+                vec![format!("\"{name}\" isn't allowed to run right now.")]
+            }
+            Ok(InvokeOutcome::PendingConsent) => {
+                vec![format!(
+                    "\"{name}\" is waiting on your say-so before it can run."
+                )]
+            }
+            Ok(InvokeOutcome::QuotaExceeded) => {
+                vec![format!(
+                    "\"{name}\" is over its budget right now -- try again shortly."
+                )]
+            }
+            Ok(InvokeOutcome::Failed(reason)) => {
+                vec![format!("\"{name}\" couldn't finish: {reason}")]
+            }
+            Err(e) => vec![format!("\"{name}\" couldn't finish: {e}")],
+        }
+    }
+
+    /// Splits `key=value key=value` into a JSON object, or names the first thing that wasn't a
+    /// pair. Values stay strings deliberately -- the app's typed contract is the one place that
+    /// decides what they mean.
+    fn parse_run_args(raw: &str) -> (serde_json::Value, Option<String>) {
+        let mut object = serde_json::Map::new();
+        for token in raw.split_whitespace() {
+            match token.split_once('=') {
+                Some((key, value)) if !key.is_empty() => {
+                    object.insert(
+                        key.to_string(),
+                        serde_json::Value::String(value.to_string()),
+                    );
+                }
+                _ => return (serde_json::Value::Object(object), Some(token.to_string())),
+            }
+        }
+        (serde_json::Value::Object(object), None)
+    }
+
+    /// An app writes a JSON object; a person reads a sentence. Prefers the `result` key the plan
+    /// instructions ask for, and falls back to the whole document rather than showing nothing when
+    /// an app answered in its own shape.
+    fn render_app_result(value: &serde_json::Value) -> String {
+        match value.get("result") {
+            Some(serde_json::Value::String(text)) => text.clone(),
+            Some(other) => other.to_string(),
+            None => value.to_string(),
+        }
+    }
+
+    fn remove_app(&mut self, name: &str) -> Vec<String> {
+        match self.apps.remove(&mut self.monitor, &self.token, name) {
+            Ok(()) => vec![format!(
+                "Removed \"{name}\" -- its script is deleted and everything it was allowed to do \
+                 is revoked."
+            )],
+            Err(AppError::NoSuchApp(_)) => vec![Self::no_such_app(name)],
+            Err(e) => vec![format!("{e}.")],
+        }
+    }
+
+    /// The engine `/build` publishes against: the first installed one, in a stable sorted order.
+    ///
+    /// With more than one registered this really is a choice being made on the person's behalf,
+    /// so `/build` says which one it used rather than making it silently -- the language the
+    /// script gets written in follows from it, and being told is what makes it correctable.
+    fn build_engine(&self) -> Option<String> {
+        self.plugins.execution_engine_ids().into_iter().next()
+    }
+
+    /// One real model call through the normal dispatch path, returning just its text.
+    fn ask_backend(&mut self, prompt: &str) -> Result<String, String> {
+        let capability_ref = self.current_backend.capability_ref();
+        match self.agent_runtime.invoke(
+            &self.monitor,
+            &self.token,
+            self.assistant_instance_id,
+            capability_ref,
+            serde_json::json!({ "prompt": prompt }),
+        ) {
+            Ok(InvokeOutcome::Result(value)) => Ok(value
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string()),
+            Ok(InvokeOutcome::Denied) => Err("that isn't allowed right now".to_string()),
+            Ok(InvokeOutcome::PendingConsent) => {
+                Err("it needs your say-so to use that model first".to_string())
+            }
+            Ok(InvokeOutcome::QuotaExceeded) => Err("we're over quota right now".to_string()),
+            Ok(InvokeOutcome::Failed(reason)) => Err(reason),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     fn install_binary(&mut self, capability_id: &str, program: &str) -> Vec<String> {
         let mut manifest = PluginManifest {
             plugin_id: now(),
@@ -1747,6 +2190,9 @@ impl ConsoleSession {
                 native_binary: Some(NativeBinaryDescriptor {
                     program: PathBuf::from(program),
                     args: Vec::new(),
+                    // `/install-binary` names a self-contained program that does the work itself
+                    // -- there is no separate script for it to read.
+                    script: None,
                 }),
                 privacy_tier: PluginPrivacyTier::Local,
                 resource_profile: None,

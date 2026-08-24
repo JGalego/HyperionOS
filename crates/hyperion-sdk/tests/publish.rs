@@ -237,6 +237,7 @@ fn a_native_binary_submission_installs_as_a_real_runnable_capability() {
         native_binary: Some(NativeBinaryDescriptor {
             program: uppercase_tool_bin(),
             args: vec![],
+            script: None,
         }),
         resource_profile: None,
     };

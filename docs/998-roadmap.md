@@ -1996,6 +1996,167 @@ mean here):
   deliberately not a distinct variant — see `hyperion-plugin-framework`'s own doc comment on why
   it was never a real ninth gap).
 
+#### App Builder — build whatever the goal needs
+
+The Resourceful pillar above ends at *tools*: a capability that takes `input.json`, runs once
+inside a sandbox, and writes `output.json`. That is genuinely useful and genuinely finished. It is
+not yet "Hyperion can build the application this person needs," because most goals a person
+actually has ("keep track of my invoices," "watch this folder and tell me when something changes,"
+"give me a page I can open on my phone") need something a one-shot tool structurally cannot be:
+durable state, a lifetime longer than one call, or a surface a human can look at.
+
+**The naming caution, first.** docs/01's whole argument is that "application" is the unit users
+should *stop* thinking in. Nothing here re-introduces it as the user's mental model: the primary
+path stays intent — a person says what they want and the Intent Engine matches an already-installed
+capability, exactly as `hyperion_intent::templates::match_template_with_plugins` already does for
+plugin-contributed workflow templates. The `/app*` meta-commands below are the **expert escape
+hatch** (docs/01's Progressive Complexity), the same way `/install-binary` already is. "App" is a
+tier label for what Hyperion builds, not a noun the user is required to learn.
+
+##### The tiers
+
+Two independent axes, not one — **lifetime** (one-shot vs. resident) and **surface** (none / typed
+arguments / interactive). Collapsing them is what makes "simple script … then web app" look like
+two steps when it is really five, with all the risk concentrated in the gaps.
+
+| Tier | What it is | The one new privilege it needs | Substrate |
+|---|---|---|---|
+| **T0** Answer | Runs, prints, exits. No input beyond the goal. | none | real today |
+| **T1** Tool | Typed, validated inputs | an input contract | real today |
+| **T2** Stateful tool | T1 plus a durable private data directory | persistent `fs_scope` | needs a storage grant |
+| **T3** Resident service | Long-running, event- or schedule-driven, no UI | supervision + a resource budget, no timeout | needs the supervisor path |
+| **T4** Interactive app | T3 plus a human surface (the "web app") | a brokered port + real authentication | needs three subsystems |
+| **T5** Composite | Orchestrates other capabilities, and peer Hyperions | delegation | needs coordination wiring |
+
+**T5 is where "any application" actually lands, and it is not a binary at all** — it is a plan over
+capabilities that already exist. A builder whose reflex is "generate a web app" has rebuilt Electron
+with a model attached, which docs/01 exists to reject. Generate a bespoke surface only when
+composition genuinely cannot express the goal.
+
+**T0/T1 must not compile Rust.** `hyperion_sdk::codegen::review_and_build` shells out to a real
+`cargo build --release --offline` plus a real `cargo clippy -D warnings`. Those gates are worth
+having — but they cost seconds to minutes, against docs/01's own perceived-responsiveness rule, and
+`--offline` means a generated program may use nothing outside `std`. So T0/T1 default to a *script*
+through an already-installed `Contribution::ExecutionEngine`, which
+`hyperion_sdk::resolve_via_engine` already turns into the same `NativeBinaryDescriptor`, installed
+through the same `publish` → `PluginRegistry::install` path, and run inside the same real
+Landlock/seccomp sandbox. Promotion to compiled Rust is a later, separate decision for an app that
+proves durable or hot — never the default, and never a second execution path.
+
+**Why a script needs no compiler gate, honestly stated.** `review_and_build`'s three gates are real
+static review of Rust. There is no equivalent static review of a shell or Python script, and
+inventing one that text-scans for scary substrings would be security theatre. What actually contains
+a T0/T1 script is the same thing that contains a hand-installed native binary: a real user
+namespace, a real Landlock filesystem scope of exactly one temp directory, and a real seccomp
+allowlist with no network syscalls in it at all. That is a stronger and more checkable guarantee
+than any text scan, and it is the honest reason script-backed apps are acceptable here.
+
+##### Three things that block the obvious design
+
+1. **A sandboxed app cannot open a TCP port, by construction.**
+   `hyperion_trust_boundary::baseline_allowed_syscalls` contains no socket syscalls whatsoever, and
+   `ipc_allowed_syscalls` adds exactly four — `socket`, `bind`, `sendto`, `recvfrom` — with
+   `connect`/`listen`/`accept` deliberately absent (see that function's own doc comment). AF_UNIX
+   datagram, nothing else.
+
+   This is correct, and it settles T4's design rather than obstructing it: **the app never binds the
+   port.** Hyperion owns one TCP listener, terminates the connection, authenticates the human, and
+   forwards the request to the app over the IPC rendezvous socket `hyperion-supervisor` already
+   mints per service (`HYPERION_IPC_SOCK`). One audited authentication chokepoint instead of N; zero
+   new holes in the seccomp filter; and it works against today's filter unmodified. Letting each app
+   listen for itself would hand every generated program a socket *and* require getting
+   authentication right once per app.
+
+2. **`PluginRegistry::invoke_native_binary` structurally cannot host a resident app.** It is
+   one-shot by design: a `tempfile::tempdir()` that is gone the moment the call returns (so no state
+   can survive), a hard `NATIVE_BINARY_TIMEOUT` kill at 120 seconds, and `ipc_rendezvous: None` with
+   a comment saying a one-shot invocation has no socket to bind. T3 is not this path with a longer
+   timeout — it belongs to `hyperion-supervisor`, which already does capability-scoped spawn, crash
+   detection, fresh-grant respawn, and cgroup v2 placement.
+
+3. **Nothing in this workspace authenticates a user.** `hyperion-console`'s `http_server` says so in
+   its own module doc: everything it serves is unauthenticated, and the only access control is that
+   it binds loopback. `reject_reason` is anti-DNS-rebinding (`Host`/`Origin`), not authentication.
+   `hyperion-crypto` has the primitives — `Keystore`, `derive_key`, `secret_store`, `sealed_stream` —
+   but there is no notion of *a user* to authenticate; that crate is scoped to a single device
+   identity. T4 needs a real identity subsystem built, not wired.
+
+##### What else this has to get right
+
+- **Typed inputs.** `SemanticContract.inputs` is a bare `Vec<String>`. Nothing can prompt for a
+  missing argument, validate one, or let the Context Engine *fill* one from what it already knows —
+  which is docs/06's entire point. T1 needs a real typed contract, and it must live inside the
+  signed manifest, or it is metadata that can drift from the capability it describes.
+- **Accessibility is a gate this workspace already owns.** `hyperion-workspace` has
+  `CapabilityUiContract` and a linter enforcing docs/14's 4.5:1 contrast, keyboard operations,
+  alt-text hooks, and reduced-motion alternatives. A T4 app must emit a contract and pass that lint,
+  or Hyperion has invented a class of app that is inaccessible by construction. Corollary: an app's
+  surface is a *contract that renders* — to a browser, a console, or a screen reader — never HTML
+  that only a browser can consume.
+- **Undo.** docs/01's Definition of Done requires it. A T2 app that writes user data needs a
+  journal; `hyperion-storage`'s WAL and `hyperion-recovery`'s microreboot are the right pieces.
+- **Egress.** The sandbox forbids network entirely. An app that needs the internet goes through a
+  brokered, domain-scoped fetch capability (the shape `web.research` already has), never a raw
+  socket — so egress becomes a declared, consented, per-app permission. `SideEffect::NetworkEgress`
+  and the review gate already exist for exactly this.
+- **Resource budgets.** T3+ runs indefinitely. `ResourceVector` and `hyperion-cgroups` exist; a
+  resident app with no budget is a fork bomb waiting for one bad generation.
+- **Identity, plural.** Authentication implies *which* user. Decide before T4 whether it is
+  single-user-with-a-passphrase or genuinely multi-user — it changes the data model of every
+  stateful app.
+- **Regeneration is an update.** When the goal changes the app is rebuilt, which needs versioning
+  and rollback. `hyperion-update`'s A/B slot plus anti-rollback counter is the existing pattern;
+  reuse it rather than overwriting in place.
+- **Failure is a signal.** Self-Sustaining: an app that crashes repeatedly should be *regenerated*
+  with its own failure as input, not merely restarted. Cheap to add once T3 exists, and it is the
+  behavior that distinguishes this from a package manager.
+
+##### Sequence
+
+- **M1 — T0/T1, script-backed, with a real typed input contract.** `/apps`, `/app`, `/build`,
+  `/run`, `/app-remove` over the existing `ExecutionEngine` → `publish` → `install` → sandboxed
+  `invoke` path. No new execution mechanism, no new trust surface.
+- **M2 — T2.** A durable per-app data directory, and erasure on removal that docs/16 can stand
+  behind.
+- **M3 — T3.** Residency via `hyperion-supervisor`, with a real cgroup budget and
+  regeneration-on-repeated-failure.
+- **M4 — T4.** The broker, the identity subsystem, and the accessible surface contract. Three
+  subsystems that do not exist yet; deserves its own design pass rather than being folded in here.
+
+**M1 status: landed (2026-08-24).** `hyperion-app` is a real crate: a versioned typed input
+contract that rides inside `SemanticContract.inputs` (so it is covered by the manifest's own real
+Ed25519 signature, and `/apps`/`/app` read from the signed registry with no side file to drift),
+real argument validation, and real build/list/describe/remove over the existing registry. Proven
+for real: a real `hyperion_sdk::publish` really installs a real signed manifest whose typed
+contract really decodes back out of the registry; a missing, unknown, wrong-typed, or
+directory-escaping argument is really rejected before anything is spawned; removal really revokes
+the minted capability tokens (checked against the real `CapabilityMonitor`, not merely absent from
+a map) and really deletes the script.
+
+**A real bug this slice found, and fixed.** `Contribution::ExecutionEngine` could never actually
+have worked for a real interpreter. `hyperion_sdk::resolve_via_engine` hands the launcher a script
+path as an argument, but `hyperion_trust_boundary::apply_landlock` grants access to exactly two
+things — the program's own path, and `fs_scope` (a per-invocation temp directory) — and a script is
+neither, so the launcher would have been told to run a file it was structurally unable to open. The
+existing end-to-end test never caught it because its companion binary only *echoes* the script path
+and never reads it. Fixed properly rather than worked around: `NativeBinaryDescriptor` gained a
+`script: Option<PathBuf>`, set only by `resolve_via_engine`, validated at install time the same
+honest way `program` already is, and passed through a new `SpawnGrant::read_only_paths` as a real
+Landlock `ReadFile` rule on exactly that one file. Not a widening of the model — a manifest already
+names a program it gets `ReadFile | Execute` on, and this is strictly weaker.
+
+**Two things this slice could not verify, stated plainly.** The kernel this was written on has no
+Landlock at all (`hyperion-plugin-framework`'s own pre-existing `native_binary_execution` test
+fails here for the same reason), so **no sandboxed run of a built app has been executed end to
+end** — the lifecycle test asserts the closest honest substitute, that the installed implementation
+really names the script the sandbox must read. Second, and separately: `apply_landlock` grants
+nothing for a dynamic loader or its shared libraries, so **an `ExecutionEngine` launcher has to be
+statically linked**, and the Buildroot defconfigs under `boot/` do not currently build one (no
+`BR2_STATIC_LIBS`, so the image's own busybox `sh` is dynamic). Registering a usable script engine
+on a real image is therefore real, named, still-open work — not something M1 quietly assumes away.
+
+T2-T4 remain exactly as scoped above — named, not silently half-built.
+
 ### Social — connect with other Hyperion instances
 
 **Real today:**

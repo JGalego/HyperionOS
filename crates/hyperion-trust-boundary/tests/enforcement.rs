@@ -90,6 +90,7 @@ fn sandbox_enforces_scoped_filesystem_and_denies_unlisted_syscalls() {
         depth: TrustDepth::Process,
         fs_scope: allowed.path().to_path_buf(),
         ipc_rendezvous: None,
+        read_only_paths: Vec::new(),
     };
 
     let mut command = Command::new(probe_bin());
@@ -135,6 +136,7 @@ fn a_grant_with_ipc_rendezvous_can_really_bind_and_round_trip_a_real_unix_socket
         depth: TrustDepth::Process,
         fs_scope: allowed.path().to_path_buf(),
         ipc_rendezvous: Some(rendezvous.clone()),
+        read_only_paths: Vec::new(),
     };
 
     let mut command = Command::new(probe_bin());
@@ -182,6 +184,7 @@ fn a_grant_with_no_ipc_rendezvous_cannot_bind_a_real_unix_socket_at_all() {
         depth: TrustDepth::Process,
         fs_scope: allowed.path().to_path_buf(),
         ipc_rendezvous: None,
+        read_only_paths: Vec::new(),
     };
 
     let mut command = Command::new(probe_bin());
@@ -215,6 +218,7 @@ fn revoking_a_token_kills_the_real_process() {
         depth: TrustDepth::Process,
         fs_scope: allowed.path().to_path_buf(),
         ipc_rendezvous: None,
+        read_only_paths: Vec::new(),
     };
 
     let mut command = Command::new(probe_bin());

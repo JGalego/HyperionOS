@@ -1473,6 +1473,7 @@ fn invoke_capability_dispatches_to_a_real_installed_native_binary_plugin() {
             native_binary: Some(NativeBinaryDescriptor {
                 program: uppercase_tool_bin(),
                 args: vec![],
+                script: None,
             }),
             privacy_tier: PrivacyTier::Local,
             resource_profile: None,

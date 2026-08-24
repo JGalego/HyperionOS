@@ -11,6 +11,11 @@ path = "src/main.rs"
 
 [dependencies]
 hyperion-agent-runtime = { workspace = true }
+# Real app building (docs/998-roadmap.md's App Builder, M1) -- the `/apps`, `/app`, `/build`,
+# `/run` and `/app-remove` meta-commands in `src/session.rs`. Shares this session's own existing
+# `PluginRegistry`, so a built app is a real installed Capability dispatched through the exact
+# same sandboxed `NativeBinary` path `/install-binary` already uses, never a second mechanism.
+hyperion-app = { workspace = true }
 hyperion-ai-runtime = { workspace = true }
 hyperion-capability = { workspace = true }
 hyperion-context = { workspace = true }

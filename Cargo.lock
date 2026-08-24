@@ -2911,6 +2911,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperion-app"
+version = "0.1.0"
+dependencies = [
+ "hyperion-capability",
+ "hyperion-crypto",
+ "hyperion-plugin-framework",
+ "hyperion-sdk",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "hyperion-capability"
 version = "0.3.0"
 dependencies = [
@@ -2953,6 +2966,7 @@ version = "0.3.0"
 dependencies = [
  "hyperion-agent-runtime",
  "hyperion-ai-runtime",
+ "hyperion-app",
  "hyperion-capability",
  "hyperion-context",
  "hyperion-coordination",

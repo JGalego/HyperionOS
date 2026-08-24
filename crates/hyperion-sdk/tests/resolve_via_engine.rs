@@ -106,6 +106,7 @@ fn a_capability_resolved_via_an_engine_really_runs_and_receives_the_real_script_
         NativeBinaryDescriptor {
             program: engine_launcher_bin(),
             args: vec![],
+            script: None,
         },
     );
 

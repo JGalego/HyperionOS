@@ -101,5 +101,8 @@ pub fn review_and_build(
             .join("release")
             .join(&generated.package_name),
         args: Vec::new(),
+        // Generated source becomes a real compiled binary here; the source file it came from is
+        // never read again at run time, so the sandbox needs no access to it.
+        script: None,
     })
 }

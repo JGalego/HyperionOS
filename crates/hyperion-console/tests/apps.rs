@@ -1,0 +1,131 @@
+//! docs/998-roadmap.md's App Builder (M1) meta-commands, against a real `ConsoleSession`.
+//!
+//! `/build` itself needs a real script engine registered *and* a Landlock-capable kernel to be
+//! worth much; what these tests pin is everything around it that is real regardless -- that the
+//! commands dispatch, that they say something a person can act on when they can't proceed, and
+//! that `/apps`/`/app`/`/run`/`/app-remove` really read and write the session's own registry.
+
+use hyperion_console::ConsoleSession;
+
+fn open_session() -> (tempfile::TempDir, ConsoleSession) {
+    let dir = tempfile::tempdir().expect("create a real tempdir for this test's Knowledge Graph");
+    let session = ConsoleSession::open(dir.path()).expect("open a real ConsoleSession");
+    (dir, session)
+}
+
+#[test]
+fn apps_on_a_fresh_session_offers_the_next_step_rather_than_an_empty_list() {
+    let (_dir, mut session) = open_session();
+    let reply = session.handle_utterance("/apps").join("\n");
+    assert!(reply.contains("/build"), "got: {reply}");
+}
+
+#[test]
+fn each_app_command_says_what_it_needs_when_given_nothing() {
+    let (_dir, mut session) = open_session();
+    for (command, expected) in [
+        ("/app", "needs the name of an app"),
+        ("/run", "needs the name of an app"),
+        ("/app-remove", "needs the name of an app"),
+        ("/build", "needs to know what you want"),
+        ("/app-engine", "needs a name and the program"),
+    ] {
+        let reply = session.handle_utterance(command).join("\n");
+        assert!(
+            reply.contains(expected),
+            "{command} should say what it needs, got: {reply}"
+        );
+    }
+}
+
+#[test]
+fn asking_about_an_app_that_does_not_exist_points_at_the_listing() {
+    let (_dir, mut session) = open_session();
+    for command in ["/app nope", "/run nope", "/app-remove nope"] {
+        let reply = session.handle_utterance(command).join("\n");
+        assert!(
+            reply.contains("don't have anything called") && reply.contains("/apps"),
+            "{command} got: {reply}"
+        );
+    }
+}
+
+#[test]
+fn building_without_a_script_engine_explains_what_is_missing_instead_of_failing_obscurely() {
+    let (_dir, mut session) = open_session();
+    // A fresh session has no `ExecutionEngine` registered, and no engine can be guessed: the
+    // sandbox grants a process no access to a dynamic loader, so a stock `/bin/sh` would install
+    // and then fail at the moment of use.
+    let reply = session
+        .handle_utterance("/build something to add up my invoices")
+        .join("\n");
+    assert!(reply.contains("/app-engine"), "got: {reply}");
+    assert!(reply.contains("statically linked"), "got: {reply}");
+}
+
+#[test]
+fn registering_a_script_engine_that_does_not_exist_is_really_refused() {
+    let (_dir, mut session) = open_session();
+    let reply = session
+        .handle_utterance("/app-engine sh /definitely/not/here")
+        .join("\n");
+    assert!(reply.contains("couldn't set that up"), "got: {reply}");
+
+    // And it really did not install -- `/build` still reports the same missing engine.
+    let reply = session.handle_utterance("/build anything").join("\n");
+    assert!(reply.contains("/app-engine"), "got: {reply}");
+}
+
+#[test]
+fn a_real_engine_really_registers_and_is_named_in_the_confirmation() {
+    let (_dir, mut session) = open_session();
+    // A real, already-existing, already-executable file -- the same honest stand-in for "an
+    // interpreter" the plugin framework's own engine tests use.
+    let launcher = std::env::current_exe().unwrap();
+    let reply = session
+        .handle_utterance(&format!("/app-engine sh {}", launcher.display()))
+        .join("\n");
+    assert!(reply.contains("\"sh\" apps"), "got: {reply}");
+    // The caveat that decides whether it will actually work is said at registration time, not
+    // discovered later from a failed run.
+    assert!(reply.contains("statically linked"), "got: {reply}");
+
+    // With an engine present, `/build` gets past the engine check and reaches real generation --
+    // which, on the default MockBackend, cannot produce a usable plan. It must say so in words.
+    let reply = session
+        .handle_utterance("/build something to add up my invoices")
+        .join("\n");
+    assert!(!reply.contains("/app-engine"), "got: {reply}");
+    assert!(
+        reply.contains("couldn't tell what to build") || reply.contains("couldn't read the plan"),
+        "got: {reply}"
+    );
+}
+
+#[test]
+fn run_rejects_an_argument_that_is_not_a_name_value_pair() {
+    let (_dir, mut session) = open_session();
+    let launcher = std::env::current_exe().unwrap();
+    session.handle_utterance(&format!("/app-engine sh {}", launcher.display()));
+
+    // The app does not exist, so this stops at the same "no such app" answer -- the point being
+    // that `/run` never treats a bare word as a value for whatever argument came first.
+    let reply = session.handle_utterance("/run nope may").join("\n");
+    assert!(reply.contains("don't have anything called"), "got: {reply}");
+}
+
+#[test]
+fn help_lists_the_app_commands() {
+    let (_dir, mut session) = open_session();
+    let reply = session.handle_utterance("/help").join("\n");
+    for command in [
+        "/build",
+        "/apps",
+        "/app ",
+        "/run ",
+        "/app-remove",
+        "/app-engine",
+    ] {
+        assert!(reply.contains(command), "help should mention {command}");
+    }
+}

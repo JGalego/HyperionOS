@@ -26,6 +26,7 @@ fn real_launcher() -> NativeBinaryDescriptor {
     NativeBinaryDescriptor {
         program: std::env::current_exe().unwrap(),
         args: vec!["--engine-mode".to_string()],
+        script: None,
     }
 }
 
@@ -90,6 +91,7 @@ fn installing_an_engine_with_a_nonexistent_launcher_is_rejected() {
     let broken_launcher = NativeBinaryDescriptor {
         program: "/definitely/not/a/real/path".into(),
         args: vec![],
+        script: None,
     };
     let result = registry.install(
         &mut monitor,

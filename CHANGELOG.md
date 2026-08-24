@@ -11,6 +11,17 @@ version numbers track release sequence, not API stability.
 ### Fixed
 
 **Enforcement and durability**
+- `Contribution::ExecutionEngine` could never have worked for a real
+  interpreter. `resolve_via_engine` hands a launcher a script path as an
+  argument, but `apply_landlock` grants a sandboxed process exactly two things
+  -- its own program path, and `fs_scope` (a per-invocation temp directory) --
+  and a script is neither, so the launcher was told to run a file it could not
+  open. The existing end-to-end test missed it because its companion binary only
+  echoes the script path and never reads it. `NativeBinaryDescriptor` now
+  carries a `script`, validated at install time the same honest way `program`
+  already is, granted through a new `SpawnGrant::read_only_paths` as a Landlock
+  `ReadFile` rule on exactly that one file. Not a widening: a manifest already
+  names a program it gets `ReadFile | Execute` on.
 - A Trust Boundary is now refused rather than reported as sandboxed when the
   kernel applied no Landlock restrictions at all. `CompatLevel::BestEffort`
   returns `Ok` from `restrict_self()` on a kernel without Landlock, and nothing
@@ -47,6 +58,29 @@ version numbers track release sequence, not API stability.
 - 58 dead intra-doc links repaired across the workspace.
 
 ### Added
+
+**Apps Hyperion builds for you** (docs/998-roadmap.md's new App Builder section,
+M1 -- the ladder's first two rungs, T0 "answer" and T1 "tool")
+- New `hyperion-app` crate. A goal plus a script becomes a real, signed,
+  installed Capability, dispatched through the same real Landlock/seccomp
+  sandbox a hand-installed native binary already runs in -- `hyperion_sdk::
+  publish` -> `PluginRegistry::install` -> `invoke_native_binary`, no second
+  execution mechanism.
+- A real typed input contract. An app's declared inputs -- name, type, whether
+  required, and a plain-language description -- are encoded *inside* the
+  manifest that gets signed, so they cannot drift from the implementation they
+  describe and `/apps` has no side file to read. A missing, unknown,
+  wrong-typed, or directory-escaping argument is refused in a sentence a person
+  can act on, before anything is spawned. `SemanticContract.inputs` was a bare
+  `Vec<String>`, which could not be prompted for, validated, or filled from
+  context.
+- Console meta-commands: `/build`, `/apps`, `/app`, `/run`, `/app-remove`, and
+  `/app-engine`. Deliberately the expert surface, not the intended way to reach
+  an app -- the primary path stays intent, per docs/01.
+- `PluginRegistry::capability_entries` and `execution_engine_ids`. The registry
+  could answer "is *this* installed" but never "what is installed", so any
+  caller wanting to list things had to keep a parallel record that an uninstall
+  elsewhere would silently invalidate.
 
 **CI**
 - The boot-image jobs now actually run. Their `if:` condition

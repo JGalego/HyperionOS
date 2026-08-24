@@ -4,7 +4,7 @@
 //! makes them usable unprivileged), so there is no way to apply them to another process from
 //! the outside.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use hyperion_capability::RightsMask;
 use landlock::{
@@ -104,6 +104,7 @@ pub fn apply_landlock(
     rights: RightsMask,
     program_path: &Path,
     ipc_rendezvous: Option<&Path>,
+    read_only_paths: &[PathBuf],
 ) -> Result<(), EnforcementError> {
     let fs_scope_access = fs_access_for_rights(rights);
     let program_access = AccessFs::ReadFile | AccessFs::Execute;
@@ -121,6 +122,16 @@ pub fn apply_landlock(
 
     if !fs_scope_access.is_empty() {
         created = created.add_rule(PathBeneath::new(PathFd::new(fs_scope)?, fs_scope_access))?;
+    }
+
+    // Read-only, per exact file: `PathBeneath` on a regular file grants that file alone, never a
+    // directory it happens to sit in. `AccessFs::ReadFile` and nothing more -- a script an engine
+    // runs never needs to be written, executed directly, or listed alongside its neighbours.
+    for path in read_only_paths {
+        created = created.add_rule(PathBeneath::new(
+            PathFd::new(path)?,
+            BitFlags::<AccessFs>::from(AccessFs::ReadFile),
+        ))?;
     }
 
     if let Some(rendezvous) = ipc_rendezvous {

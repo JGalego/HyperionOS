@@ -88,6 +88,7 @@ fn a_different_native_binary_descriptor_produces_a_different_hash() {
     with_binary.native_binary = Some(hyperion_plugin_framework::NativeBinaryDescriptor {
         program: "/usr/bin/true".into(),
         args: vec![],
+        script: None,
     });
     let a = prepare_submission(contract(), with_binary.clone(), 0.5, vec![]).unwrap();
 
@@ -95,6 +96,7 @@ fn a_different_native_binary_descriptor_produces_a_different_hash() {
     different_binary.native_binary = Some(hyperion_plugin_framework::NativeBinaryDescriptor {
         program: "/usr/bin/false".into(),
         args: vec![],
+        script: None,
     });
     let b = prepare_submission(contract(), different_binary, 0.5, vec![]).unwrap();
 

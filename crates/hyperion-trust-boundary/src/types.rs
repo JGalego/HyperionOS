@@ -51,4 +51,17 @@ pub struct SpawnGrant {
     /// create arbitrary sockets there, and vice versa), so a boundary can hold real filesystem
     /// rights, real IPC rights, both, or neither, independently.
     pub ipc_rendezvous: Option<PathBuf>,
+    /// Extra individual files this boundary may **read**, beyond `fs_scope` -- and nothing else:
+    /// no write, no execute, no directory traversal implied.
+    ///
+    /// Exists because a program that runs *other* code needs to read that code, and nothing here
+    /// could express it. `apply_landlock` grants `ReadFile | Execute` on the program's own path
+    /// and whatever `RightsMask` allows beneath `fs_scope`; a script passed to an interpreter is
+    /// neither, so an `ExecutionEngine` launcher could be handed a script path it was structurally
+    /// unable to open. Every existing caller passes an empty vec and is unchanged.
+    ///
+    /// This is not a widening of what a boundary can be granted. A manifest already names the
+    /// program the boundary will `Execute`; naming one additional file it may only `ReadFile` is
+    /// strictly weaker than the power it already had.
+    pub read_only_paths: Vec<PathBuf>,
 }
