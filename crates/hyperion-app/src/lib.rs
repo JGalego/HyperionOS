@@ -59,6 +59,6 @@ pub use contract::{
     validate_app_name, validate_args, validate_contract, AppContract, ArgError, ContractError,
     APP_CAPABILITY_PREFIX, CONTRACT_VERSION,
 };
-pub use plan::{from_model_answer, PlanError, APP_PLAN_INSTRUCTIONS};
+pub use plan::{app_plan_instructions, from_model_answer, PlanError};
 pub use registry::{AppError, AppRegistry, APP_PUBLISHER};
 pub use types::{AppDefinition, AppPaths, AppTier, InputField, InputKind, InstalledApp};

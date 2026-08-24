@@ -2145,6 +2145,28 @@ honest way `program` already is, and passed through a new `SpawnGrant::read_only
 Landlock `ReadFile` rule on exactly that one file. Not a widening of the model — a manifest already
 names a program it gets `ReadFile | Execute` on, and this is strictly weaker.
 
+**What a real model actually produces, measured rather than assumed.** M1's `/build` was driven
+end to end against the real OpenAI API (`gpt-4o-mini` and `gpt-4o`), and three real defects came
+out of it that no amount of local testing would have surfaced. The prompt did not name the
+registered engine, so a model asked to build against `sh` wrote Python. It did not state that the
+input and output files arrive as `argv[1]`/`argv[2]`, so the script opened `input.json` by bare
+relative name — a file that really exists, at a path the script was really given, and really
+unopenable the way it tried. And `/run` returned a real `InvokeOutcome::Denied`, because
+`broker::resolve_grant` denies any capability that is neither baseline nor requestable on the
+instance's own manifest, and the console's assistant manifest is fixed when the session opens — an
+app built minutes later can never be on it. All three are fixed; the last one by giving each app
+run its own dedicated instance whose entire authority is the one app being run, which is a better
+answer than widening the assistant's.
+
+**And one design conclusion that only running it could establish: a shell is a bad execution
+engine here.** Landlock grants `Execute` on the launcher's own path and nothing else, so a script
+cannot run any other program — and running other programs is what a shell is *for*. Asked for
+`sh`, both models reached for `jq` and `wc` even after the prompt explicitly forbade it; asked for
+`python3`, both wrote correct, self-contained scripts that honoured the argv contract exactly, on
+the first try. An engine whose language can do the work by itself is the one that works. This also
+softens the missing-static-`sh` gap below: the engine worth building into a real image is a static
+self-sufficient interpreter, not a shell.
+
 **Two things this slice could not verify, stated plainly.** The kernel this was written on has no
 Landlock at all (`hyperion-plugin-framework`'s own pre-existing `native_binary_execution` test
 fails here for the same reason), so **no sandboxed run of a built app has been executed end to

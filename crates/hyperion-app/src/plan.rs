@@ -8,24 +8,53 @@
 
 use crate::types::{AppDefinition, InputField, InputKind};
 
-/// What to ask a model for. Kept next to the parser that reads the answer, so the two can never
-/// drift into describing different shapes.
-pub const APP_PLAN_INSTRUCTIONS: &str = "\
+/// What to ask a model for, for a specific engine.
+///
+/// Kept next to the parser that reads the answer, so the two can never drift into describing
+/// different shapes -- and parameterised by `engine_id` because the two things a generated script
+/// gets wrong without being told are exactly the two things only the caller knows: which language
+/// the installed interpreter actually runs, and that its input and output files arrive as
+/// command-line arguments rather than in a working directory. Both were found by a real
+/// `gpt-4o-mini` build against a real registered engine: asked without them, it wrote Python for
+/// an engine registered as `sh`, and opened `input.json` by bare relative name -- a file that is
+/// really there, under a path the script was really given, and really unopenable the way it tried.
+///
+/// The third constraint stated here was found the same way, one build later: told to write `sh`,
+/// it reached for `jq`. Landlock grants `Execute` on the launcher's own path and nothing else, so
+/// a script that shells out to anything cannot work -- and a model has no way to know that unless
+/// it is told.
+pub fn app_plan_instructions(engine_id: &str) -> String {
+    format!(
+        "\
 Reply with one JSON object and nothing else -- no prose, no markdown fence. Shape:
-{
+{{
   \"name\": short-lowercase-identifier (letters, digits, dashes, underscores),
   \"goal\": one sentence, in the person's own words, saying what this is for,
-  \"inputs\": [ { \"name\": lowercase_identifier,
+  \"inputs\": [ {{ \"name\": lowercase_identifier,
                  \"kind\": one of text|integer|number|boolean|path|choice,
                  \"choices\": [..] (only when kind is choice),
                  \"required\": true|false,
-                 \"description\": plain language, shown when asking a person for this } ],
+                 \"description\": plain language, shown when asking a person for this }} ],
   \"script\": the complete script source
+}}
+
+The script will be run by \"{engine_id}\". Write it in the language that interpreter runs, and in
+no other language.
+
+It is invoked as: {engine_id} <script> <input path> <output path>
+
+Those two paths arrive as the script's first and second command-line arguments. Read the input
+file at the first path -- a JSON object whose keys are exactly the input names declared above --
+and write a JSON object to the file at the second path, with a \"result\" key holding what a
+person should see. Use the argument paths exactly as given: do not assume a working directory, do
+not open \"input.json\" or \"output.json\" by relative name, and do not read or write any other
+file.
+
+Your script may not run any other program. The sandbox lets it execute the interpreter and
+nothing else, so a script that shells out to jq, curl, awk, python or any other command will fail
+-- use only what the interpreter itself provides. It also has no network access at all."
+    )
 }
-The script is run as: <interpreter> <script> <input.json> <output.json>.
-Read the named inputs from the JSON object in input.json. Write a JSON object to output.json with
-a \"result\" key holding what a person should see. It runs with no network access and may only
-touch the directory those two files are in.";
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlanError {

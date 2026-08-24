@@ -77,6 +77,21 @@ M1 -- the ladder's first two rungs, T0 "answer" and T1 "tool")
 - Console meta-commands: `/build`, `/apps`, `/app`, `/run`, `/app-remove`, and
   `/app-engine`. Deliberately the expert surface, not the intended way to reach
   an app -- the primary path stays intent, per docs/01.
+- Driving `/build` end to end against the real OpenAI API found three defects
+  nothing local would have: the prompt never named the registered engine (a
+  model asked for `sh` wrote Python), never said the input and output files
+  arrive as `argv[1]`/`argv[2]` (so scripts opened `input.json` by relative
+  name), and `/run` was denied outright, because `broker::resolve_grant` refuses
+  any capability not on the instance's own manifest and the console's assistant
+  manifest is fixed at session open. Each app run now gets a dedicated instance
+  whose entire authority is the one app being run. `/run` also understands
+  quoted values -- `text="hello there world"` is the most ordinary thing anyone
+  would type, and it failed.
+- Recorded, because only running it could establish it: a shell is a poor
+  execution engine here. Landlock grants `Execute` on the launcher alone, so a
+  script cannot run another program -- which is what a shell is for. Asked for
+  `sh`, models reached for `jq` and `wc` even when forbidden; asked for
+  `python3`, the same models wrote correct self-contained scripts first time.
 - `PluginRegistry::capability_entries` and `execution_engine_ids`. The registry
   could answer "is *this* installed" but never "what is installed", so any
   caller wanting to list things had to keep a parallel record that an uninstall

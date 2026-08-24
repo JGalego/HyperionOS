@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use hyperion_agent_runtime::{AgentRuntime, InvokeOutcome};
+use hyperion_agent_runtime::{AgentManifest, AgentRuntime, InvokeOutcome, TrustTier};
 use hyperion_ai_runtime::{
     sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
 };
@@ -1019,7 +1019,7 @@ impl ConsoleSession {
             if engine_id.is_empty() || launcher.is_empty() {
                 return Some(vec![
                     "\"/app-engine\" needs a name and the program that runs those scripts, e.g. \
-                     \"/app-engine sh /bin/busybox-static\"."
+                     \"/app-engine python3 /opt/python-static\"."
                         .to_string(),
                 ]);
             }
@@ -1465,7 +1465,8 @@ impl ConsoleSession {
              could do"
                 .to_string(),
             "  /app-engine <name> <program>                teach me to run a kind of script \
-             (statically linked only), e.g. \"/app-engine sh /bin/busybox-static\""
+             -- statically linked, and self-sufficient (a shell won't do), e.g. \"/app-engine \
+             python3 /opt/python-static\""
                 .to_string(),
             "  /help                                        show this message".to_string(),
         ]
@@ -1839,6 +1840,14 @@ impl ConsoleSession {
     /// libc, and a stock `/bin/sh` would install fine here and then fail at the moment of use.
     /// A launcher has to be statically linked, and only whoever set this system up knows which one
     /// is.
+    ///
+    /// The same Landlock rule makes a **shell a poor engine** for a second, less obvious reason,
+    /// established by really building apps against real models rather than reasoned about: with
+    /// `Execute` granted on the launcher alone, a script cannot run any other program, and a
+    /// shell's entire purpose is running other programs. Asked for `sh`, both models tried reached
+    /// for `jq` and `wc` even when the prompt forbade it; asked for `python3`, the same models
+    /// wrote correct, self-contained scripts first time. An engine whose language can do the work
+    /// by itself is the one that works here.
     fn install_app_engine(&mut self, engine_id: &str, launcher: &str) -> Vec<String> {
         let mut manifest = PluginManifest {
             plugin_id: now(),
@@ -1874,9 +1883,12 @@ impl ConsoleSession {
             &verifying_key,
         ) {
             Ok(_) => vec![
-                format!("Hyperion can build \"{engine_id}\" apps now -- they'll run through {launcher}."),
-                "One caveat worth knowing: that program has to be statically linked, or it won't \
-                 start inside the sandbox."
+                format!(
+                    "Hyperion can build \"{engine_id}\" apps now -- they'll run through {launcher}."
+                ),
+                "Two things worth knowing: that program has to be statically linked, or it won't \
+                 start inside the sandbox -- and whatever it runs has to be able to do the work by \
+                 itself, since nothing it starts is allowed to run any other program."
                     .to_string(),
             ],
             Err(e) => vec![format!("I couldn't set that up: {e}")],
@@ -1973,15 +1985,15 @@ impl ConsoleSession {
                 "I can't build anything runnable yet -- nothing has told me how to run a script \
                  here."
                     .to_string(),
-                "Point me at a statically linked interpreter first, e.g. \"/app-engine sh \
-                 /bin/busybox-static\"."
+                "Point me at a statically linked, self-sufficient interpreter first, e.g. \
+                 \"/app-engine python3 /opt/python-static\"."
                     .to_string(),
             ];
         };
 
         let prompt = format!(
             "Design a small program for this goal: {goal}\n\n{}",
-            hyperion_app::APP_PLAN_INSTRUCTIONS
+            hyperion_app::app_plan_instructions(&engine_id)
         );
         let answer = match self.ask_backend(&prompt) {
             Ok(answer) => answer,
@@ -2059,19 +2071,36 @@ impl ConsoleSession {
         };
 
         // Through the Agent Runtime, never straight to the registry: this is what gives an app run
-        // the same real consent gate and the same automatic Explanation Record every other
-        // Capability dispatch in this session gets.
+        // the same real Broker/quota/circuit-breaker checks and the same automatic Explanation
+        // Record every other Capability dispatch in this session gets.
+        //
+        // On its own dedicated instance, not this session's long-lived assistant. Two reasons, and
+        // the first is not a preference: `broker::resolve_grant` denies any capability that is
+        // neither baseline nor requestable on the instance's own *manifest*, and the assistant's
+        // manifest is fixed when the session opens -- an app built minutes later can never be on
+        // it, so `grant_capability` alone would have had nothing to attach to (a real
+        // `InvokeOutcome::Denied`, found by really running one). The second reason is why this is
+        // the right fix rather than a way around that check: an app run gets an instance whose
+        // entire authority is the one app being run, and nothing else in the session's own
+        // authority comes with it.
         let capability_ref = AppRegistry::capability_id_for(name);
-        let _ = self.agent_runtime.grant_capability(
-            &self.monitor,
-            &self.token,
-            self.assistant_instance_id,
-            &capability_ref,
-        );
+        let manifest = AgentManifest {
+            specialization: format!("app:{name}"),
+            baseline_capabilities: vec![capability_ref.clone()],
+            requestable_capabilities: Vec::new(),
+            trust_tier: TrustTier::Community,
+        };
+        let instance_id = match self
+            .agent_runtime
+            .spawn(&self.monitor, &self.token, manifest, None)
+        {
+            Ok(instance_id) => instance_id,
+            Err(e) => return vec![format!("\"{name}\" couldn't start: {e}")],
+        };
         match self.agent_runtime.invoke(
             &self.monitor,
             &self.token,
-            self.assistant_instance_id,
+            instance_id,
             &capability_ref,
             prepared,
         ) {
@@ -2089,30 +2118,84 @@ impl ConsoleSession {
                     "\"{name}\" is over its budget right now -- try again shortly."
                 )]
             }
-            Ok(InvokeOutcome::Failed(reason)) => {
-                vec![format!("\"{name}\" couldn't finish: {reason}")]
-            }
-            Err(e) => vec![format!("\"{name}\" couldn't finish: {e}")],
+            // docs/01: never show a person a raw technical error -- but a developer still needs
+            // the real one, so it is kept and labelled rather than swallowed.
+            Ok(InvokeOutcome::Failed(reason)) => vec![
+                format!("\"{name}\" started, but didn't get to an answer."),
+                format!("Technical detail, if it's useful: {reason}"),
+            ],
+            Err(e) => vec![
+                format!("\"{name}\" couldn't be started."),
+                format!("Technical detail, if it's useful: {e}"),
+            ],
         }
     }
 
-    /// Splits `key=value key=value` into a JSON object, or names the first thing that wasn't a
-    /// pair. Values stay strings deliberately -- the app's typed contract is the one place that
-    /// decides what they mean.
+    /// Splits `key=value key="value with spaces"` into a JSON object, or names the first thing
+    /// that wasn't a pair.
+    ///
+    /// Quoting is not a nicety here: the most ordinary input an app declares is a piece of text,
+    /// and `text=hello world` without it fails on the most natural thing anyone would type. Values
+    /// stay strings deliberately -- the app's own typed contract is the one place that decides
+    /// what they mean.
     fn parse_run_args(raw: &str) -> (serde_json::Value, Option<String>) {
         let mut object = serde_json::Map::new();
-        for token in raw.split_whitespace() {
-            match token.split_once('=') {
-                Some((key, value)) if !key.is_empty() => {
-                    object.insert(
-                        key.to_string(),
-                        serde_json::Value::String(value.to_string()),
-                    );
-                }
-                _ => return (serde_json::Value::Object(object), Some(token.to_string())),
+        let mut chars = raw.chars().peekable();
+        loop {
+            while chars.peek().is_some_and(|c| c.is_whitespace()) {
+                chars.next();
             }
+            if chars.peek().is_none() {
+                return (serde_json::Value::Object(object), None);
+            }
+
+            let mut key = String::new();
+            while let Some(&c) = chars.peek() {
+                if c == '=' || c.is_whitespace() {
+                    break;
+                }
+                key.push(c);
+                chars.next();
+            }
+            // A bare word with no `=` is the one thing this cannot interpret -- report it rather
+            // than guessing which argument it was meant for.
+            if key.is_empty() || chars.peek() != Some(&'=') {
+                while chars.peek().is_some_and(|c| !c.is_whitespace()) {
+                    key.push(chars.next().unwrap());
+                }
+                return (serde_json::Value::Object(object), Some(key));
+            }
+            chars.next();
+
+            let mut value = String::new();
+            match chars.peek() {
+                Some(&quote @ ('"' | '\'')) => {
+                    chars.next();
+                    let mut closed = false;
+                    for c in chars.by_ref() {
+                        if c == quote {
+                            closed = true;
+                            break;
+                        }
+                        value.push(c);
+                    }
+                    // An unclosed quote is a typo, not an empty value: say so rather than
+                    // silently passing along everything after it.
+                    if !closed {
+                        return (
+                            serde_json::Value::Object(object),
+                            Some(format!("{key}={quote}{value}")),
+                        );
+                    }
+                }
+                _ => {
+                    while chars.peek().is_some_and(|c| !c.is_whitespace()) {
+                        value.push(chars.next().unwrap());
+                    }
+                }
+            }
+            object.insert(key, serde_json::Value::String(value));
         }
-        (serde_json::Value::Object(object), None)
     }
 
     /// An app writes a JSON object; a person reads a sentence. Prefers the `result` key the plan
@@ -2567,4 +2650,65 @@ fn extract_url(utterance: &str) -> Option<&str> {
     utterance
         .split_whitespace()
         .find(|word| word.starts_with("http://") || word.starts_with("https://"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed(raw: &str) -> serde_json::Value {
+        let (args, unparsed) = ConsoleSession::parse_run_args(raw);
+        assert_eq!(unparsed, None, "{raw:?} should parse cleanly");
+        args
+    }
+
+    #[test]
+    fn plain_pairs_parse() {
+        assert_eq!(
+            parsed("month=may year=2026"),
+            serde_json::json!({"month": "may", "year": "2026"})
+        );
+        assert_eq!(parsed("   "), serde_json::json!({}));
+    }
+
+    #[test]
+    fn a_quoted_value_keeps_its_spaces() {
+        // The most ordinary input an app declares is a piece of text, so this is the case that
+        // decides whether `/run` is usable at all -- found by really running a real built app.
+        assert_eq!(
+            parsed(r#"text="hello there world" mode=fast"#),
+            serde_json::json!({"text": "hello there world", "mode": "fast"})
+        );
+        assert_eq!(
+            parsed("text='hello there world'"),
+            serde_json::json!({"text": "hello there world"})
+        );
+    }
+
+    #[test]
+    fn a_quote_inside_an_unquoted_value_is_left_alone() {
+        assert_eq!(
+            parsed(r#"pattern=it's"#),
+            serde_json::json!({"pattern": "it's"})
+        );
+    }
+
+    #[test]
+    fn an_empty_quoted_value_is_a_real_empty_string() {
+        assert_eq!(parsed(r#"note="""#), serde_json::json!({"note": ""}));
+    }
+
+    #[test]
+    fn a_bare_word_is_reported_rather_than_guessed_at() {
+        let (args, unparsed) = ConsoleSession::parse_run_args("month=may nonsense");
+        assert_eq!(unparsed.as_deref(), Some("nonsense"));
+        // What did parse is still returned, so the caller can say what it understood.
+        assert_eq!(args, serde_json::json!({"month": "may"}));
+    }
+
+    #[test]
+    fn an_unclosed_quote_is_reported_rather_than_swallowing_the_rest() {
+        let (_, unparsed) = ConsoleSession::parse_run_args(r#"text="hello there"#);
+        assert_eq!(unparsed.as_deref(), Some(r#"text="hello there"#));
+    }
 }

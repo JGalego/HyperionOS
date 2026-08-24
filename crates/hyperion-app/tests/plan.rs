@@ -121,3 +121,21 @@ fn truncated_json_is_refused_rather_than_half_read() {
         PlanError::NoJsonObject
     );
 }
+
+#[test]
+fn the_instructions_name_the_engine_and_the_argv_contract() {
+    // All three of these were found by really building an app against a real model, and each one
+    // produced a script that could not have worked: an engine it was never told about, input and
+    // output files it opened by relative name, and a helper program it was never allowed to run.
+    let instructions = hyperion_app::app_plan_instructions("python3");
+    assert!(instructions.contains("python3"), "{instructions}");
+    assert!(
+        instructions.contains("first and second command-line arguments"),
+        "{instructions}"
+    );
+    assert!(
+        instructions.contains("may not run any other program"),
+        "{instructions}"
+    );
+    assert!(instructions.contains("no network access"), "{instructions}");
+}
