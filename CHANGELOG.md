@@ -78,6 +78,23 @@ version numbers track release sequence, not API stability.
   already express per-user separation and revocation without a second notion of
   authority.
 
+**Memories belong to whoever wrote them**
+- `hyperion-memory` had no per-boundary access control, unlike
+  `hyperion-explainability` -- every read handed back everything regardless of
+  who asked. `MemoryRecord` now carries the `origin_boundary` that wrote it,
+  taken from the writing token rather than a parameter, and `query`/`recall`/
+  `export` filter on it.
+- Every by-id operation (`edit`, `erase`, `pin`/`unpin`, `explain`) now goes
+  through one ownership check that refuses another person's record as
+  `NotFound`, so a caller who may not see a record does not learn from the error
+  that it exists. Without this the read filters would have been decorative.
+- Two things this turned up. `erase(cascade: true)` walks `query` for
+  dependents, so erasing your own record could soft-delete someone else's that
+  merely named yours as provenance. And a record written before this field
+  existed deserializes to boundary `0`, which no real caller holds -- so it
+  belongs to nobody rather than everybody, because hiding an old development
+  record is recoverable and showing one person another's memories is not.
+
 **Principals — one Hyperion, more than one person** (docs/998-roadmap.md's
 App Builder M1a, implementing §0 Decision 2)
 - New `hyperion-identity` crate. A validated `UserId` bound to its own

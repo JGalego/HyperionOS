@@ -308,3 +308,21 @@ id = "console.people-do-not-share-saved-keys"
 claim = "One person's saved API key is not usable from another person's session on the same device."
 crate = "hyperion-console"
 test = "one_persons_saved_api_key_is_not_another_persons"
+
+[[claim]]
+id = "memory.records-are-per-person"
+claim = "One person's memories are never returned to another person's query or export on the same device."
+crate = "hyperion-memory"
+test = "one_persons_memories_are_not_in_anothers_results"
+
+[[claim]]
+id = "memory.records-cannot-be-reached-by-id"
+claim = "A memory belonging to someone else cannot be read, edited, pinned or erased by guessing its id."
+crate = "hyperion-memory"
+test = "a_record_cannot_be_reached_by_guessing_its_id"
+
+[[claim]]
+id = "memory.erasure-never-crosses-people"
+claim = "A cascading erase follows only the erasing person's own records, never another person's that reference them."
+crate = "hyperion-memory"
+test = "erasing_with_cascade_never_reaches_across_to_another_person"

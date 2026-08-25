@@ -1226,14 +1226,12 @@ impl ConsoleSession {
                     &self.token,
                     MemoryTier::Episodic,
                     serde_json::json!({
-                        // Per principal. `hyperion-memory` has no per-boundary access control of
-                        // its own -- unlike `hyperion-explainability`, which filters every read by
-                        // the calling boundary -- so a fixed key would put every person's
-                        // reflections in one shared pile. Scoping the key is the honest fix
-                        // available from here; teaching that crate the same boundary filter
-                        // `hyperion-explainability` already has is the real one, and is named as
-                        // still-open work in the roadmap.
-                        "entity_key": format!("reflection.{}", self.principal.scope()),
+                        // A plain key again: `hyperion-memory` now stamps the writing boundary on
+                        // every record and filters every read by it, the same rule
+                        // `hyperion-explainability` already applied. Scoping this key by hand was
+                        // the workaround for that gap, and keeping it would imply the separation
+                        // lives here rather than where it actually is.
+                        "entity_key": "reflection",
                         "goal": goal,
                         "meaningful": meaningful,
                     }),

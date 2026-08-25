@@ -2198,11 +2198,23 @@ than any text scan, and it is the honest reason script-backed apps are acceptabl
   authentication lands is narrower and checkable: only whatever authenticated a person may mint a
   *root* token at their boundary.
 
-  **Named, still open:** `hyperion-memory` has no per-boundary access control of its own, unlike
-  `hyperion-explainability`. The console scopes its own `/meaningful` reflection key per principal,
-  which is the honest fix available from the caller; teaching that crate the same boundary filter
-  `hyperion-explainability` already has is the real one, and belongs with T2's per-principal
-  storage.
+  **The one gap this named is now closed (2026-08-25).** `hyperion-memory` had no per-boundary
+  access control of its own, so every read handed back everything regardless of who asked.
+  `MemoryRecord` now carries the `origin_boundary` that wrote it — taken from the writing token, not
+  a parameter, so a caller cannot write into someone else's memory by asking to — and every read
+  (`query`, `recall`, and `export` through it) filters on it. Every by-id operation (`edit`,
+  `erase`, `pin`/`unpin`, `explain`) goes through one `load_owned` helper that refuses a record
+  belonging to anyone else as `NotFound` rather than a distinct "forbidden", so a caller who may not
+  see a record does not learn from the error that it exists. Without that, the read filters would
+  have been decorative — anything reachable by guessing an id would still have been readable.
+
+  Two things this turned up that reasoning alone had not. `erase(cascade: true)` walks `query` for
+  dependents, so before the filter, erasing your own record could soft-delete someone else's that
+  merely named yours as provenance — proven, and now proven not to. And a record written before
+  `origin_boundary` existed deserializes to `0`, which no real caller holds (principals start at
+  1000, hand-minted roots at 1), so it belongs to nobody rather than to everybody: hiding an old
+  development record is recoverable, showing one person another's memories is not. The console's own
+  per-principal reflection key, which was the caller-side workaround for this gap, is gone.
 - **M2 — T2.** A durable *per-principal* data directory, and erasure on removal that docs/16 can
   stand behind.
 - **M3 — T3.** Residency via `hyperion-supervisor`, with a real cgroup budget and

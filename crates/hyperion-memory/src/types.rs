@@ -52,6 +52,21 @@ pub struct MemoryRecord {
     /// through JSON.
     #[serde(skip, default = "zero_node_id")]
     pub id: NodeId,
+    /// Which Trust Boundary wrote this record — the principal it belongs to, per
+    /// docs/998-roadmap.md §0's Decision 2 (Hyperion is multi-user).
+    ///
+    /// The same shape `hyperion_explainability::ExplanationRecord::trust_boundary_span` already
+    /// used, and for the same reason: with one device and more than one person, a store that
+    /// cannot say who wrote a record cannot avoid handing it to someone else. Every read path
+    /// filters on it, and every by-id mutation checks it.
+    ///
+    /// `#[serde(default)]` so records written before this existed still deserialize. They land on
+    /// `0`, which no real caller holds (`hyperion-identity` allocates principals from 1000, and
+    /// hand-minted roots across this workspace start at 1), so such a record is readable by nobody
+    /// rather than by everybody. That direction is deliberate: silently hiding an old development
+    /// record is recoverable, and silently showing one person another's memories is not.
+    #[serde(default)]
+    pub origin_boundary: u64,
     pub tier: MemoryTier,
     pub content: serde_json::Value,
     pub embedding: Option<Vec<f32>>,

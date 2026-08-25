@@ -13,6 +13,7 @@ fn base_record(
     last_accessed_at: u64,
 ) -> MemoryRecord {
     MemoryRecord {
+        origin_boundary: 0,
         id: hyperion_storage::ObjectId(0),
         tier,
         content: serde_json::json!({}),

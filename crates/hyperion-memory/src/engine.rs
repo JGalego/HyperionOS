@@ -140,6 +140,42 @@ impl MemoryEngine {
         Some(record)
     }
 
+    /// Whether `token`'s holder may see `record` at all (docs/998-roadmap.md §0, Decision 2).
+    ///
+    /// Deliberately the same rule `hyperion_explainability::ExplanationStore` already applies to
+    /// its own records: one comparison against the calling boundary, applied at every read rather
+    /// than left to each caller to remember. A memory belongs to whoever wrote it.
+    ///
+    /// This separates people; it does not withstand an adversary. A boundary is an attribution
+    /// label, not proof of who acted — see `hyperion-identity`'s own doc comment for exactly how
+    /// far that goes and what authentication has to add.
+    fn readable_by(record: &MemoryRecord, token: &CapabilityToken) -> bool {
+        record.origin_boundary == token.origin().0
+    }
+
+    /// Loads one record by id, refusing it to anyone it does not belong to.
+    ///
+    /// Every by-id operation goes through this rather than `graph.get` directly, because a record
+    /// reachable by guessing an id would make the read filters above decorative.
+    ///
+    /// A record belonging to someone else is [`MemoryError::NotFound`], not a distinct "forbidden":
+    /// a caller who may not see a record should not learn from the error that it exists.
+    fn load_owned(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        id: NodeId,
+    ) -> Result<MemoryRecord, MemoryError> {
+        let node = self.graph.get(monitor, token, id)?;
+        let mut record: MemoryRecord =
+            serde_json::from_value(node.metadata).map_err(|_| MemoryError::NotFound)?;
+        record.id = id;
+        if !Self::readable_by(&record, token) {
+            return Err(MemoryError::NotFound);
+        }
+        Ok(record)
+    }
+
     /// `memory.remember` — docs/08 §6. `pin=true` bypasses decay entirely
     /// (§5.2: "if r.pinned: score := 1.0").
     #[allow(clippy::too_many_arguments)]
@@ -158,6 +194,9 @@ impl MemoryEngine {
         let record = MemoryRecord {
             id: hyperion_storage::ObjectId(0), // placeholder; never serialized, see MemoryRecord::id
 
+            // Whose memory this is. Taken from the writing token rather than a parameter, so a
+            // caller cannot write a record into somebody else's memory by asking to.
+            origin_boundary: token.origin().0,
             tier,
             content,
             embedding: embedding.clone(),
@@ -351,6 +390,7 @@ impl MemoryEngine {
         Ok(hits
             .into_iter()
             .filter_map(|h| Self::to_record(h.node_id, h.node))
+            .filter(|r| Self::readable_by(r, token))
             .filter(|r| !r.erased || filter.include_erased)
             .filter(|r| !r.dormant || filter.include_dormant)
             .filter(|r| !filter.pinned_only || r.pinned)
@@ -384,6 +424,7 @@ impl MemoryEngine {
         let mut records: Vec<MemoryRecord> = hits
             .into_iter()
             .filter_map(|h| Self::to_record(h.node_id, h.node))
+            .filter(|r| Self::readable_by(r, token))
             .filter(|r| !r.erased && !r.dormant)
             .collect();
         records.truncate(k);
@@ -409,6 +450,8 @@ impl MemoryEngine {
         token: &CapabilityToken,
         id: NodeId,
     ) -> Result<hyperion_knowledge_graph::ProvenanceChain, MemoryError> {
+        // Where a record came from is as much the owner's business as the record itself.
+        self.load_owned(monitor, token, id)?;
         Ok(self.graph.explain(
             monitor,
             token,
@@ -427,10 +470,7 @@ impl MemoryEngine {
         id: NodeId,
         patch: serde_json::Value,
     ) -> Result<MemoryRecord, MemoryError> {
-        let node = self.graph.get(monitor, token, id)?;
-        let mut record: MemoryRecord =
-            serde_json::from_value(node.metadata).map_err(|_| MemoryError::NotFound)?;
-        record.id = id;
+        let mut record = self.load_owned(monitor, token, id)?;
         merge_json(&mut record.content, &patch);
         self.rewrite(monitor, token, &record)?;
         Ok(record)
@@ -479,10 +519,7 @@ impl MemoryEngine {
         id: NodeId,
         pinned: bool,
     ) -> Result<(), MemoryError> {
-        let node = self.graph.get(monitor, token, id)?;
-        let mut record: MemoryRecord =
-            serde_json::from_value(node.metadata).map_err(|_| MemoryError::NotFound)?;
-        record.id = id;
+        let mut record = self.load_owned(monitor, token, id)?;
         record.pinned = pinned;
         self.rewrite(monitor, token, &record)
     }
@@ -497,10 +534,7 @@ impl MemoryEngine {
         id: NodeId,
         cascade: bool,
     ) -> Result<ErasureReceipt, MemoryError> {
-        let node = self.graph.get(monitor, token, id)?;
-        let mut record: MemoryRecord =
-            serde_json::from_value(node.metadata).map_err(|_| MemoryError::NotFound)?;
-        record.id = id;
+        let mut record = self.load_owned(monitor, token, id)?;
         record.erased = true;
         self.rewrite(monitor, token, &record)?;
 
