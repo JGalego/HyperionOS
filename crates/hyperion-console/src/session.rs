@@ -115,6 +115,9 @@ pub struct ConsoleSession {
     /// Set while a live `InvokeOutcome::PendingConsent` is awaiting its yes/no confirmation --
     /// the *next* utterance is captured as that answer rather than parsed normally.
     pending_consent: Option<PendingCloudConsent>,
+    /// Set while an app run is waiting for an input the person hasn't given yet -- the *next*
+    /// utterance is that value. See [`PendingAppInput`].
+    pending_app_input: Option<PendingAppInput>,
     /// Backs the `/recall`/`/why`/`/related` meta-commands -- see
     /// [`crate::graph_explorer::GraphExplorer`] for why this is its own small module rather than
     /// more direct `KnowledgeGraph` calls scattered through this file.
@@ -192,6 +195,21 @@ pub struct ConsoleSession {
 struct PendingCloudConsent {
     capability_ref: String,
     prompt: String,
+}
+
+/// An app run paused because it still needs something from the person.
+///
+/// The typed input contract exists so Hyperion can *ask* for a missing value in plain words
+/// instead of failing (docs/06: don't make people repeat themselves, and docs/01: never expose a
+/// technical error). Without this the contract could only ever reject: it knew a value was
+/// missing, what it was called, what type it was, and how to describe it -- and then said no.
+struct PendingAppInput {
+    app: String,
+    /// What has been supplied so far, raw. Values stay strings until the app's own contract
+    /// coerces them, so this never has to know what type anything is.
+    supplied: serde_json::Map<String, serde_json::Value>,
+    /// The input being asked for right now.
+    awaiting: String,
 }
 
 /// Which real [`hyperion_ai_runtime::InferenceBackend`] is currently answering
@@ -590,6 +608,7 @@ impl ConsoleSession {
             secret_store,
             pending_connect: None,
             pending_consent: None,
+            pending_app_input: None,
             graph_explorer,
             workspace: WorkspaceCompiler::new(),
             // Per principal, not the literal "console" every person at a device used to share.
@@ -1701,6 +1720,15 @@ impl ConsoleSession {
         if let Some(pending) = self.pending_consent.take() {
             return self.finish_consent(pending, utterance);
         }
+        // Checked before meta-commands, but it hands a `/...` line straight back to them: a person
+        // who changes their mind mid-question must never be trapped answering it.
+        if self.pending_app_input.is_some() && !utterance.trim().starts_with('/') {
+            let pending = self
+                .pending_app_input
+                .take()
+                .expect("just checked it is present");
+            return self.supply_app_input(pending, utterance);
+        }
         let trimmed = utterance.trim();
         if trimmed.to_ascii_lowercase().starts_with("/redo") {
             let rest = trimmed["/redo".len()..].trim();
@@ -2070,6 +2098,7 @@ impl ConsoleSession {
         self.session_id = format!("console.{}", self.principal.user);
         self.pending_connect = None;
         self.pending_consent = None;
+        self.pending_app_input = None;
         self.pending_think_root = None;
         self.last_utterance = None;
 
@@ -2475,8 +2504,38 @@ impl ConsoleSession {
             )];
         }
 
+        self.run_app_with(name, args)
+    }
+
+    /// Runs an app with `args`, or asks for the first thing still missing.
+    ///
+    /// Split from [`Self::run_app`] so both the typed `/run` form and an answer to a question
+    /// Hyperion asked land in the same place -- otherwise supplying the last missing value would
+    /// take a different path from supplying all of them at once, and only one of them would stay
+    /// correct.
+    fn run_app_with(&mut self, name: &str, args: serde_json::Value) -> Vec<String> {
         let prepared = match self.apps.prepare_args(name, &args) {
             Ok(prepared) => prepared,
+            // The contract knows what is missing, what it is called and how to describe it. Asking
+            // is what that knowledge was for; refusing was only ever what it could do without a
+            // way to hold the question open.
+            Err(AppError::Args(hyperion_app::ArgError::Missing {
+                field, description, ..
+            })) => {
+                let supplied = match args {
+                    serde_json::Value::Object(map) => map,
+                    _ => serde_json::Map::new(),
+                };
+                self.pending_app_input = Some(PendingAppInput {
+                    app: name.to_string(),
+                    supplied,
+                    awaiting: field.clone(),
+                });
+                return vec![
+                    format!("{description}"),
+                    format!("(Say it, or \"/run {name}\" again with {field}=… -- anything starting with / drops the question.)"),
+                ];
+            }
             Err(e) => return vec![format!("{e}.")],
         };
 
@@ -2539,6 +2598,22 @@ impl ConsoleSession {
                 format!("Technical detail, if it's useful: {e}"),
             ],
         }
+    }
+
+    /// The other half of a paused app run: `answer` is the raw line the person typed in response
+    /// to the question [`Self::run_app_with`] asked.
+    ///
+    /// Taken whole, not parsed. Someone asked "what text?" answers with their text, and splitting
+    /// it on `=` or whitespace would mangle exactly the ordinary answers this exists to accept.
+    /// The app's own contract still coerces and checks it, so a number that had to be a number is
+    /// still really a number.
+    fn supply_app_input(&mut self, pending: PendingAppInput, answer: &str) -> Vec<String> {
+        let mut supplied = pending.supplied;
+        supplied.insert(
+            pending.awaiting,
+            serde_json::Value::String(answer.trim().to_string()),
+        );
+        self.run_app_with(&pending.app, serde_json::Value::Object(supplied))
     }
 
     /// Splits `key=value key="value with spaces"` into a JSON object, or names the first thing

@@ -189,3 +189,26 @@ fn help_lists_the_newer_app_commands() {
         assert!(reply.contains(command), "help should mention {command}");
     }
 }
+
+#[test]
+fn nothing_is_left_pending_by_a_run_that_never_found_an_app() {
+    // The missing-input question is checked before meta-commands, so a stray pending state would
+    // swallow the *next* thing typed. A run that found no app must leave nothing behind.
+    let (_dir, mut session) = open_session();
+    session.handle_utterance("/run nope");
+
+    // The next line is handled normally, not captured as an answer to anything.
+    let reply = session.handle_utterance("/apps").join("\n");
+    assert!(reply.contains("/build"), "got: {reply}");
+}
+
+#[test]
+fn ordinary_turns_are_unaffected_by_the_missing_input_check() {
+    // Regression guard for the check inserted ahead of meta-command dispatch: with nothing
+    // pending it must be entirely invisible.
+    let (_dir, mut session) = open_session();
+    let reply = session.handle_utterance("/whoami").join("\n");
+    assert!(reply.contains("default"), "got: {reply}");
+    let reply = session.handle_utterance("hello there").join("\n");
+    assert!(!reply.is_empty());
+}

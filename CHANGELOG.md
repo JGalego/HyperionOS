@@ -78,6 +78,18 @@ version numbers track release sequence, not API stability.
   already express per-user separation and revocation without a second notion of
   authority.
 
+**Hyperion asks for what an app needs instead of refusing**
+- A `/run` missing a required input now asks for it, in the words the app's own
+  contract uses, and the next line typed is that value. The typed contract knew
+  what was missing, what it was called, what type it was and how to describe
+  it -- and could still only say no, because there was no way to hold a question
+  open. Anything starting with `/` drops the question, so nobody is trapped
+  answering one.
+- The answer is taken whole rather than parsed: someone asked "what text?"
+  answers with their text, and splitting it on `=` or whitespace would mangle
+  exactly the ordinary answers this exists to accept. The app's own contract
+  still coerces and checks it.
+
 **Apps can be changed without being lost, and can say what they've done**
 - `/rebuild <name> [what to change]` replaces what an app does through
   `PluginRegistry::update` rather than a remove-and-build. The difference isn't
