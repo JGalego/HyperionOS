@@ -89,14 +89,20 @@ impl AppRegistry {
         format!("{APP_CAPABILITY_PREFIX}{name}")
     }
 
-    /// A stable plugin id derived from the app's own name, via the same real BLAKE3 hash
+    /// A stable id for the app's *manifest*, derived from its name via the same real BLAKE3 hash
     /// `hyperion-sdk` already fingerprints submissions with.
     ///
-    /// Deliberately deterministic rather than clock-derived: two apps built in the same
-    /// millisecond can never collide on it, and an app rebuilt after removal reclaims its own id
-    /// instead of leaving the previous one stranded. Truncated to this field's `u64` width the
-    /// same way (and for the same reason) `hyperion_sdk::package_hash` truncates its own -- an
-    /// identifier, never treated as a cryptographic commitment.
+    /// **Not the id the registry files it under.** `PluginRegistry::install` mints its own
+    /// `plugin_id` from an internal counter and ignores whatever the manifest declared, so this
+    /// value reaches only the manifest's signed bytes. Anything that needs the real installed id --
+    /// `update`, `uninstall` -- has to read it from the registry entry's own `owning_plugins`, and
+    /// a rebuild that passed this instead fails with a genuinely confusing "no such plugin" (which
+    /// is exactly how this was found).
+    ///
+    /// Deterministic rather than clock-derived so that the same app always signs the same manifest
+    /// bytes. Truncated to this field's `u64` width the same way (and for the same reason)
+    /// `hyperion_sdk::package_hash` truncates its own -- an identifier, never treated as a
+    /// cryptographic commitment.
     fn plugin_id_for(name: &str) -> u64 {
         let hash = hyperion_crypto::hash(format!("hyperion-app/{name}").as_bytes());
         u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap())
@@ -138,6 +144,44 @@ impl AppRegistry {
             return Err(AppError::AlreadyExists(definition.name.clone()));
         }
 
+        let submission = self.prepare(definition, &app_contract, 1)?;
+
+        hyperion_sdk::publish(
+            monitor,
+            admin_token,
+            &self.plugins,
+            submission,
+            Self::plugin_id_for(&definition.name),
+            APP_PUBLISHER,
+            SDK_VERSION,
+            // No human approval is asked for, and none is bypassed: a submission requesting only
+            // `Execute` is `AutoApproved` by the SDK's own review gate, because `Write` and
+            // `NetworkEgress` are the operations it treats as sensitive. An app that requests
+            // either will reach `PendingHumanReview` here and really need a decision.
+            false,
+            TrustDepth::D2,
+            now,
+            keystore,
+        )
+        .map_err(|e| AppError::Install(e.to_string()))?;
+
+        self.describe(&definition.name)
+            .ok_or_else(|| AppError::NoSuchApp(definition.name.clone()))
+    }
+
+    /// Everything an install or an update needs, built once so the two can never describe the same
+    /// app differently.
+    ///
+    /// `version` is the only thing that differs between them: a first install is 1, and a rebuild
+    /// is whatever the installed one was plus one. Duplicating this to add a version bump is
+    /// exactly how a rebuilt app would quietly stop declaring a permission the original did.
+    fn prepare(
+        &self,
+        definition: &AppDefinition,
+        app_contract: &AppContract,
+        version: u32,
+    ) -> Result<hyperion_sdk::PublishSubmission, AppError> {
+        let capability_id = Self::capability_id_for(&definition.name);
         let script_path = self.write_script(&definition.name, &definition.script)?;
 
         let native_binary = hyperion_sdk::resolve_via_engine(
@@ -150,9 +194,9 @@ impl AppRegistry {
 
         let sdk_contract = Contract {
             id: capability_id.clone(),
-            version: 1,
+            version,
             summary: definition.goal.clone(),
-            inputs: contract::encode(&app_contract),
+            inputs: contract::encode(app_contract),
             outputs: vec!["result".to_string()],
             // An M1 app really has no side effects to declare: the sandbox grants it one
             // throwaway directory and a seccomp filter with no network syscalls in it, so it
@@ -175,7 +219,7 @@ impl AppRegistry {
         };
 
         let implementation = Implementation {
-            contract_id: capability_id.clone(),
+            contract_id: capability_id,
             name: definition.name.clone(),
             runtime: Runtime::NativeBinary,
             latency_class: LatencyClass::Interactive,
@@ -187,32 +231,102 @@ impl AppRegistry {
         // `Execute` really is what this implementation does, and it is exactly what the contract
         // declares -- so the SDK's own static over-request check passes honestly rather than by
         // declaring nothing.
-        let submission = hyperion_sdk::prepare_submission(
+        hyperion_sdk::prepare_submission(
             sdk_contract,
             implementation,
             APP_QUALITY_SCORE,
             vec![Operation::Execute],
         )
-        .map_err(|e| AppError::Install(e.to_string()))?;
+        .map_err(|e| AppError::Install(e.to_string()))
+    }
 
-        hyperion_sdk::publish(
-            monitor,
-            admin_token,
-            &self.plugins,
-            submission,
+    /// Replaces an app that already exists with a new version of itself.
+    ///
+    /// A rebuild rather than a remove-and-build, and the difference is not cosmetic: removing
+    /// revokes the app's capability tokens and deletes it from the registry, so anything that had
+    /// come to depend on it breaks, and its identity (and with it its audit history, which is keyed
+    /// by capability) is thrown away. `PluginRegistry::update` keeps the same plugin, reuses every
+    /// token whose grant is unchanged, and returns exactly the grants that are genuinely new -- the
+    /// diff-only consent docs/24 §5 asks for, rather than re-asking about permissions the app
+    /// already had.
+    ///
+    /// Only the owner may rebuild, for the same reason only the owner may remove: replacing what an
+    /// app does is at least as consequential as deleting it.
+    ///
+    /// Takes no timestamp, unlike [`Self::build`]: `PluginRegistry::update` records no install
+    /// time of its own, and a parameter callers must supply but nothing reads would misdescribe
+    /// what this needs.
+    pub fn rebuild(
+        &self,
+        monitor: &mut CapabilityMonitor,
+        admin_token: &CapabilityToken,
+        keystore: &Keystore,
+        definition: &AppDefinition,
+        requested_by: &str,
+    ) -> Result<InstalledApp, AppError> {
+        let existing = self
+            .describe(&definition.name)
+            .ok_or_else(|| AppError::NoSuchApp(definition.name.clone()))?;
+        if existing.owner != requested_by {
+            return Err(AppError::NotYours {
+                app: definition.name.clone(),
+                owner: existing.owner,
+            });
+        }
+
+        // The owner is carried over from what is installed rather than taken from the caller: a
+        // rebuild changes what an app does, never who it belongs to.
+        let app_contract = AppContract {
+            name: definition.name.clone(),
+            owner: existing.owner.clone(),
+            goal: definition.goal.clone(),
+            fields: definition.inputs.clone(),
+        };
+        contract::validate_contract(&app_contract)?;
+
+        if self
+            .plugins
+            .execution_engine(&definition.engine_id)
+            .is_none()
+        {
+            return Err(AppError::UnknownEngine(definition.engine_id.clone()));
+        }
+
+        // The id the registry actually filed this app under, which is not the one its manifest
+        // declares -- see `plugin_id_for`.
+        let installed_plugin_id = *self
+            .plugins
+            .query(&Self::capability_id_for(&definition.name))
+            .and_then(|entry| entry.owning_plugins.first().copied())
+            .as_ref()
+            .ok_or_else(|| AppError::NoSuchApp(definition.name.clone()))?;
+
+        let submission = self.prepare(definition, &app_contract, existing.version + 1)?;
+        let manifest = hyperion_sdk::to_plugin_manifest(
+            &submission.contract,
+            &submission.implementation,
+            submission.quality_score,
             Self::plugin_id_for(&definition.name),
             APP_PUBLISHER,
             SDK_VERSION,
-            // No human approval is asked for, and none is bypassed: a submission requesting only
-            // `Execute` is `AutoApproved` by the SDK's own review gate, because `Write` and
-            // `NetworkEgress` are the operations it treats as sensitive. An app that requests
-            // either will reach `PendingHumanReview` here and really need a decision.
-            false,
-            TrustDepth::D2,
-            now,
             keystore,
-        )
-        .map_err(|e| AppError::Install(e.to_string()))?;
+        );
+
+        self.plugins
+            .update(
+                monitor,
+                admin_token,
+                installed_plugin_id,
+                manifest,
+                TrustDepth::D2,
+                // A rebuilt app asks for exactly the `Execute` its predecessor already had, so
+                // there is never a new grant here to consent to. If a future tier makes an app able
+                // to request more, this is the argument that has to become a real question put to
+                // the person rather than a constant.
+                true,
+                &keystore.verifying_key(),
+            )
+            .map_err(|e| AppError::Install(e.to_string()))?;
 
         self.describe(&definition.name)
             .ok_or_else(|| AppError::NoSuchApp(definition.name.clone()))

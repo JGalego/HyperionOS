@@ -150,3 +150,42 @@ fn a_goal_utterance_with_nothing_installed_gets_no_suggestion() {
     assert!(!reply.contains("You built"), "got: {reply}");
     assert!(!reply.is_empty());
 }
+
+#[test]
+fn app_logs_and_rebuild_say_what_they_need_and_refuse_unknown_apps() {
+    let (_dir, mut session) = open_session();
+    for (command, expected) in [
+        ("/app-logs", "needs the name of an app"),
+        ("/rebuild", "needs the name of an app"),
+    ] {
+        let reply = session.handle_utterance(command).join("\n");
+        assert!(reply.contains(expected), "{command} got: {reply}");
+    }
+    for command in ["/app-logs nope", "/rebuild nope do something else"] {
+        let reply = session.handle_utterance(command).join("\n");
+        assert!(
+            reply.contains("don't have anything called"),
+            "{command} got: {reply}"
+        );
+    }
+}
+
+#[test]
+fn the_longer_app_commands_are_not_swallowed_by_the_shorter_ones() {
+    // `/app-logs` starts with `/app`, and `/rebuild` does not collide -- but `/app-logs nope`
+    // reaching `/app`'s handler would report the wrong thing entirely. Prefix order is load-bearing
+    // here, so it gets a test rather than a comment.
+    let (_dir, mut session) = open_session();
+    let reply = session.handle_utterance("/app-logs nope").join("\n");
+    assert!(reply.contains("don't have anything called"), "got: {reply}");
+    assert!(!reply.contains("needs the name of an app"), "got: {reply}");
+}
+
+#[test]
+fn help_lists_the_newer_app_commands() {
+    let (_dir, mut session) = open_session();
+    let reply = session.handle_utterance("/help").join("\n");
+    for command in ["/app-logs", "/rebuild"] {
+        assert!(reply.contains(command), "help should mention {command}");
+    }
+}

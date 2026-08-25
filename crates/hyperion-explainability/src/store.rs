@@ -535,6 +535,41 @@ impl ExplanationStore {
             .collect())
     }
 
+    /// Every recorded action for one capability, newest last.
+    ///
+    /// [`Self::trace_intent`] answers "what happened under this Intent", which is the right
+    /// question when you have an Intent in hand. A person asking what one of their apps has been
+    /// doing has a capability instead, and nothing here could answer that -- so the records an app
+    /// run already writes were being kept and never read by anything.
+    ///
+    /// Trust-Boundary-filtered exactly like every other read here, which under
+    /// docs/998-roadmap.md §0's Decision 2 means a person sees only their own runs of a shared app,
+    /// never everyone's.
+    pub fn records_for_capability(
+        &self,
+        monitor: &CapabilityMonitor,
+        token: &CapabilityToken,
+        capability_ref: &str,
+    ) -> Result<Vec<ExplanationRecord>, ExplainabilityError> {
+        self.require(monitor, token, RightsMask::READ)?;
+        let caller_boundary = token.origin().0;
+        let mut records: Vec<ExplanationRecord> = self
+            .records
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|r| {
+                r.capability_ref == capability_ref
+                    && r.trust_boundary_span.contains(&caller_boundary)
+            })
+            .cloned()
+            .collect();
+        // Oldest first: a log a person reads is a story, and `records` is a map whose iteration
+        // order says nothing about when anything happened.
+        records.sort_by_key(|r| (r.created_at, r.id));
+        Ok(records)
+    }
+
     /// docs/18 §9's completeness invariant: "no effect survives without a
     /// matching completed record." Surfaces every record whose
     /// `control_state` never reached a terminal state — the fault-

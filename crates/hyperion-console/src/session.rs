@@ -168,6 +168,9 @@ pub struct ConsoleSession {
     /// so an app is a real installed Capability like any other, listed by decoding what is really
     /// installed rather than from any record this session keeps of its own.
     apps: AppRegistry,
+    /// The same real Explanation Record store `agent_runtime` writes to, held so `/app-logs` can
+    /// read it. Every app run already produced records here; nothing could show them.
+    explanations: Arc<ExplanationStore>,
     /// Who this session belongs to (docs/998-roadmap.md §0, Decision 2). Taken on trust -- nothing
     /// authenticates it, because there are no credentials yet -- so it separates people rather
     /// than protecting them from each other. Its `boundary` is this session's own capability
@@ -512,6 +515,9 @@ impl ConsoleSession {
         // production caller, previously unreachable until a real Cargo cycle on
         // `hyperion-explainability`'s own side was resolved (see that method's own doc comment).
         let explainability = Arc::new(ExplanationStore::new());
+        // Kept, not just handed away: every app run already wrote a record here and nothing could
+        // read one back. `/app-logs` is the reader (see `Self::app_logs`).
+        let explanations = Arc::clone(&explainability);
         let agent_runtime = Arc::new(
             AgentRuntime::new_with_netstack_and_plugins(
                 ai_runtime.clone(),
@@ -597,6 +603,7 @@ impl ConsoleSession {
             memory,
             last_utterance: None,
             apps: AppRegistry::new(Arc::clone(&plugins), AppPaths::new(data_dir.join("apps"))),
+            explanations,
             principal,
             principals,
             plugins,
@@ -1077,6 +1084,33 @@ impl ConsoleSession {
             return Some(self.switch_user(name));
         }
 
+        if lower.starts_with("/app-logs") {
+            let name = trimmed["/app-logs".len()..].trim();
+            if name.is_empty() {
+                return Some(vec![
+                    "\"/app-logs\" needs the name of an app, e.g. \"/app-logs invoice-tally\"."
+                        .to_string(),
+                ]);
+            }
+            return Some(self.app_logs(name));
+        }
+
+        if lower.starts_with("/rebuild") {
+            let rest = trimmed["/rebuild".len()..].trim();
+            let (name, guidance) = match rest.split_once(char::is_whitespace) {
+                Some((name, guidance)) => (name.trim(), guidance.trim()),
+                None => (rest, ""),
+            };
+            if name.is_empty() {
+                return Some(vec![
+                    "\"/rebuild\" needs the name of an app, and optionally what to change -- e.g. \
+                     \"/rebuild invoice-tally also handle refunds\"."
+                        .to_string(),
+                ]);
+            }
+            return Some(self.rebuild_app(name, guidance));
+        }
+
         if lower.starts_with("/app-engine") {
             let rest = trimmed["/app-engine".len()..].trim();
             let mut parts = rest.splitn(2, char::is_whitespace);
@@ -1531,6 +1565,12 @@ impl ConsoleSession {
                 .to_string(),
             "  /run <name> [name=value ...]                use one, e.g. \"/run invoice-tally \
              month=may\""
+                .to_string(),
+            "  /app-logs <name>                            what one of them has actually done, \
+             and why"
+                .to_string(),
+            "  /rebuild <name> [what to change]            change what one does without losing \
+             it, e.g. \"/rebuild invoice-tally also handle refunds\""
                 .to_string(),
             "  /app-remove <name>                          delete it and revoke everything it \
              could do"
@@ -2048,6 +2088,138 @@ impl ConsoleSession {
                 .to_string(),
         );
         lines
+    }
+
+    /// `/app-logs <name>` -- what an app has actually done.
+    ///
+    /// Reads the real Explanation Records `AgentRuntime::invoke` already writes for every dispatch.
+    /// They were being kept and never read: `/why` resolves `/recall` results, and nothing else
+    /// could ask "what has this app been doing".
+    ///
+    /// Boundary-filtered by the store itself, so on a shared device this shows a person their own
+    /// runs of an app rather than everyone's -- including for an app somebody else built.
+    fn app_logs(&self, name: &str) -> Vec<String> {
+        let Some(app) = self.apps.describe(name) else {
+            return vec![Self::no_such_app(name)];
+        };
+        let records = match self.explanations.records_for_capability(
+            &self.monitor,
+            &self.token,
+            &app.capability_id,
+        ) {
+            Ok(records) => records,
+            Err(e) => {
+                return vec![format!(
+                    "I couldn't read what \"{name}\" has been doing: {e}"
+                )]
+            }
+        };
+        if records.is_empty() {
+            return vec![format!(
+                "\"{name}\" hasn't been run yet -- at least, not by you."
+            )];
+        }
+
+        let mut lines = vec![format!(
+            "\"{name}\" has run {} time{}:",
+            records.len(),
+            if records.len() == 1 { "" } else { "s" }
+        )];
+        for record in &records {
+            let outcome = format!("{:?}", record.control_state).to_ascii_lowercase();
+            lines.push(format!("  #{} -- {outcome}", record.action_id));
+            // The reasoning chain is what makes this an explanation rather than a timestamp.
+            for step in &record.reasoning_chain {
+                lines.push(format!("      {}", step.description));
+            }
+        }
+        lines
+    }
+
+    /// `/rebuild <name> [what to change]` -- replace what an app does, keeping who it is.
+    ///
+    /// Deliberately a separate command from `/build` rather than `/build` noticing a collision:
+    /// `/build` names the app from the model's own answer, so asking it to update an existing one
+    /// would depend on the model happening to choose the same name twice. Naming it is the whole
+    /// point.
+    ///
+    /// The existing goal and inputs are given to the model as the starting point, so "also handle
+    /// refunds" means what it says instead of throwing the app away and starting over.
+    fn rebuild_app(&mut self, name: &str, guidance: &str) -> Vec<String> {
+        let Some(existing) = self.apps.describe(name) else {
+            return vec![Self::no_such_app(name)];
+        };
+        if existing.owner != self.principal.user.as_str() {
+            return vec![format!(
+                "\"{name}\" is {}'s -- you can use it, but it isn't yours to change.",
+                existing.owner
+            )];
+        }
+        let Some(engine_id) = self.build_engine() else {
+            return vec![
+                "I can't rebuild anything yet -- nothing has told me how to run a script here."
+                    .to_string(),
+            ];
+        };
+
+        let declared = existing
+            .inputs
+            .iter()
+            .map(|input| format!("{} ({})", input.name, input.description))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let changes = if guidance.is_empty() {
+            "Rebuild it, keeping what it does.".to_string()
+        } else {
+            format!("Change it so that: {guidance}")
+        };
+        let prompt = format!(
+            "There is already a program called \"{name}\". Its goal: {}\nIts inputs: {}\n\n{changes}\n\n{}",
+            existing.goal,
+            if declared.is_empty() {
+                "none".to_string()
+            } else {
+                declared
+            },
+            hyperion_app::app_plan_instructions(&engine_id)
+        );
+
+        let answer = match self.ask_backend(&prompt) {
+            Ok(answer) => answer,
+            Err(reason) => return vec![format!("I couldn't work out what to change: {reason}")],
+        };
+        let owner = self.principal.user.to_string();
+        let mut definition = match hyperion_app::from_model_answer(&answer, &engine_id, &owner) {
+            Ok(definition) => definition,
+            Err(e) => return vec![format!("{e}.")],
+        };
+        // The name is the thing being rebuilt, not something the model gets to reconsider.
+        definition.name = existing.name.clone();
+
+        match self.apps.rebuild(
+            &mut self.monitor,
+            &self.token,
+            &self.keystore,
+            &definition,
+            &owner,
+        ) {
+            Ok(app) => {
+                let mut lines = vec![format!(
+                    "Rebuilt \"{}\" (version {}) -- {}.",
+                    app.name, app.version, app.goal
+                )];
+                if app.inputs.is_empty() {
+                    lines.push(format!("Try it: \"/run {}\".", app.name));
+                } else {
+                    lines.push(format!(
+                        "Try it: \"/run {}\".",
+                        Self::example_invocation(&app)
+                    ));
+                }
+                lines
+            }
+            Err(e) => vec![format!("{e}.")],
+        }
     }
 
     /// Registers a real `Contribution::ExecutionEngine`: the program that actually runs an app's

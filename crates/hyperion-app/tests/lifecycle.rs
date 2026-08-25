@@ -375,3 +375,109 @@ fn an_app_with_no_owner_is_refused_before_anything_is_written() {
     ));
     assert!(fixture.apps.list().is_empty());
 }
+
+#[test]
+fn a_rebuild_replaces_what_an_app_does_and_keeps_who_it_is() {
+    let mut fixture = fixture();
+    let first = fixture.build(&tally_definition()).expect("must build");
+    assert_eq!(first.version, 1);
+
+    let mut second = tally_definition();
+    second.goal = "Add up this quarter's invoices instead".to_string();
+    second.script = "a different script\n".to_string();
+    second.inputs = vec![InputField {
+        name: "quarter".to_string(),
+        kind: InputKind::Text,
+        description: "which quarter to add up".to_string(),
+        required: true,
+    }];
+
+    let rebuilt = fixture
+        .apps
+        .rebuild(
+            &mut fixture.monitor,
+            &fixture.admin,
+            &fixture.keystore,
+            &second,
+            "alice",
+        )
+        .expect("its owner may rebuild it");
+
+    // What it does really changed...
+    assert_eq!(rebuilt.goal, "Add up this quarter's invoices instead");
+    assert_eq!(rebuilt.inputs[0].name, "quarter");
+    assert_eq!(rebuilt.version, 2);
+    // ...and who it is did not. Its capability id is its identity, and its audit history is keyed
+    // by that, so a rebuild that minted a new one would silently orphan everything it had done.
+    assert_eq!(rebuilt.capability_id, first.capability_id);
+    assert_eq!(rebuilt.owner, "alice");
+    assert_eq!(
+        fixture.apps.list().len(),
+        1,
+        "a rebuild is not a second app"
+    );
+}
+
+#[test]
+fn a_rebuild_never_changes_who_an_app_belongs_to() {
+    let mut fixture = fixture();
+    fixture.build(&tally_definition()).expect("must build");
+
+    // Even asked to, by a definition claiming someone else: a rebuild changes what an app does,
+    // never who owns it.
+    let mut hijack = tally_definition();
+    hijack.owner = "bob".to_string();
+    let rebuilt = fixture
+        .apps
+        .rebuild(
+            &mut fixture.monitor,
+            &fixture.admin,
+            &fixture.keystore,
+            &hijack,
+            "alice",
+        )
+        .expect("alice may rebuild her own app");
+    assert_eq!(rebuilt.owner, "alice");
+}
+
+#[test]
+fn someone_elses_app_is_not_yours_to_rebuild_either() {
+    let mut fixture = fixture();
+    fixture.build(&tally_definition()).expect("must build");
+
+    let mut theirs = tally_definition();
+    theirs.goal = "Something else entirely".to_string();
+    let refused = fixture.apps.rebuild(
+        &mut fixture.monitor,
+        &fixture.admin,
+        &fixture.keystore,
+        &theirs,
+        "bob",
+    );
+    assert!(
+        matches!(refused, Err(AppError::NotYours { ref owner, .. }) if owner == "alice"),
+        "got: {refused:?}"
+    );
+    // Untouched.
+    assert_eq!(
+        fixture.apps.describe("invoice-tally").unwrap().goal,
+        "Add up this month's invoices"
+    );
+}
+
+#[test]
+fn rebuilding_something_that_was_never_built_is_refused() {
+    let mut fixture = fixture();
+    let mut orphan = tally_definition();
+    orphan.name = "never-existed".to_string();
+    assert!(matches!(
+        fixture.apps.rebuild(
+            &mut fixture.monitor,
+            &fixture.admin,
+            &fixture.keystore,
+            &orphan,
+            "alice",
+        ),
+        Err(AppError::NoSuchApp(_))
+    ));
+}

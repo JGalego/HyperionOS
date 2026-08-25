@@ -78,6 +78,28 @@ version numbers track release sequence, not API stability.
   already express per-user separation and revocation without a second notion of
   authority.
 
+**Apps can be changed without being lost, and can say what they've done**
+- `/rebuild <name> [what to change]` replaces what an app does through
+  `PluginRegistry::update` rather than a remove-and-build. The difference isn't
+  cosmetic: removing revokes the app's tokens and throws away its capability
+  identity, and its audit history is keyed by that. An update keeps the same
+  plugin, reuses every token whose grant is unchanged, and bumps the version.
+  A rebuild changes what an app does, never who owns it -- even when handed a
+  definition claiming otherwise.
+- Separate from `/build` deliberately: `/build` takes the app's name from the
+  model's own answer, so updating an existing app that way would depend on the
+  model choosing the same name twice.
+- `/app-logs <name>` reads the Explanation Records every app run already wrote
+  and nothing could read -- `/why` resolves `/recall` results, and there was no
+  way to ask what an app had been doing. New
+  `ExplanationStore::records_for_capability`, boundary-filtered like every other
+  read there, so on a shared device you see your own runs of an app rather than
+  everyone's.
+- Fixes a genuinely confusing failure found on the way: `PluginRegistry::install`
+  mints its own `plugin_id` and ignores the manifest's, so anything needing the
+  real installed id must read it from the registry entry. Passing the manifest's
+  produced "no such plugin" on a perfectly well-installed app.
+
 **Apps have an owner**
 - An app's owner rides inside the signed contract (header format bumped to
   `hyperion-app/v2`), so an ownership record cannot be edited without
