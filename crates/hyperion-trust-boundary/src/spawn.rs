@@ -27,6 +27,7 @@ pub fn spawn(grant: &SpawnGrant, mut command: Command) -> io::Result<SpawnedBoun
     let fs_scope = grant.fs_scope.clone();
     let ipc_rendezvous = grant.ipc_rendezvous.clone();
     let read_only_paths = grant.read_only_paths.clone();
+    let data_scope = grant.data_scope.clone();
     // Extracted before the fork/move below: Landlock needs the program's own path to grant it
     // read+execute access independent of whatever `rights` governs on `fs_scope` (see
     // `apply_landlock`'s docs for why those are two different concerns).
@@ -50,6 +51,7 @@ pub fn spawn(grant: &SpawnGrant, mut command: Command) -> io::Result<SpawnedBoun
                 &program_path,
                 ipc_rendezvous.as_deref(),
                 &read_only_paths,
+                data_scope.as_deref(),
             )
             .map_err(to_io_error)?;
             apply_seccomp(ipc_rendezvous.is_some()).map_err(to_io_error)?;

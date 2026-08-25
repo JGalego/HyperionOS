@@ -78,6 +78,28 @@ version numbers track release sequence, not API stability.
   already express per-user separation and revocation without a second notion of
   authority.
 
+**T2 — an app can keep something between runs**
+- A stateful app gets a durable directory of its own, per app and per person,
+  granted read-write through a new `SpawnGrant::data_scope`. Distinct from
+  `fs_scope`, which is the per-invocation temp directory that makes a one-shot
+  tool safely stateless -- keeping them separate means an app never granted
+  storage still cannot keep anything.
+- Statefulness is declared through the contract's existing
+  `SideEffect::CreatesSemanticObject` rather than a new flag: that is already
+  what the side effect means, and `review::contract_requires` already refuses
+  the `Write` permission it implies unless it is declared. One declaration,
+  checked by the gate that already existed -- so a stateful app really reaches
+  `PendingHumanReview` and the person is really asked.
+- `invoke_native_binary` now takes the caller's Trust Boundary, which under
+  Decision 2 is the person acting, so durable storage is theirs and not
+  everyone's. Removal erases it for every person who ran the app; a rebuild
+  keeps it, since otherwise every fix would cost someone their data.
+- Live testing against a real model found the same class of bug a third time:
+  told only that "a third argument is a directory of its own", `gpt-4o-mini`
+  wrote `open('shopping_list.json')` by bare relative name -- exactly what it had
+  done with `input.json` before that instruction was made explicit. The wording
+  is now near-verbatim the one that already worked.
+
 **Hyperion asks for what an app needs instead of refusing**
 - A `/run` missing a required input now asks for it, in the words the app's own
   contract uses, and the next line typed is that value. The typed contract knew

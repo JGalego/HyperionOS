@@ -344,3 +344,27 @@ id = "app.only-its-owner-can-rebuild-it"
 claim = "Only the person who built an app can replace what it does."
 crate = "hyperion-app"
 test = "someone_elses_app_is_not_yours_to_rebuild_either"
+
+[[claim]]
+id = "app.durable-storage-needs-consent"
+claim = "An app that wants to keep data between runs is not installed until a person agrees to it."
+crate = "hyperion-app"
+test = "keeping_data_is_a_permission_a_person_has_to_grant"
+
+[[claim]]
+id = "app.stateless-apps-get-no-storage"
+claim = "An app that never declared it keeps data is given no durable directory at all, so it cannot keep anything even by accident."
+crate = "hyperion-app"
+test = "a_stateless_app_is_never_given_a_directory_at_all"
+
+[[claim]]
+id = "app.removal-erases-what-was-kept"
+claim = "Removing an app deletes the data it kept, for every person who ran it."
+crate = "hyperion-app"
+test = "removing_a_stateful_app_really_deletes_what_it_kept"
+
+[[claim]]
+id = "app.a-rebuild-preserves-stored-data"
+claim = "Rebuilding an app changes what it does without discarding what it has already stored."
+crate = "hyperion-app"
+test = "a_rebuild_keeps_what_the_app_has_already_stored"

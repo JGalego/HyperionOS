@@ -487,7 +487,10 @@ impl AgentRuntime {
             })
         }) {
             plugins
-                .invoke_native_binary(capability_ref, args.clone())
+                // The caller's own boundary, which under docs/998-roadmap.md §0's Decision 2 is
+                // the person acting -- so a stateful capability's durable storage is theirs and
+                // not everyone's.
+                .invoke_native_binary(capability_ref, args.clone(), token.origin())
                 .map_err(|e| e.to_string())
         } else {
             stubs::dispatch(capability_ref, &args)

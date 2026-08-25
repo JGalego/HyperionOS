@@ -119,6 +119,12 @@ const NATIVE_BINARY_POLL_INTERVAL: std::time::Duration = std::time::Duration::fr
 /// docs/24 — Plugin Framework. See this crate's doc comment for the full
 /// real/deferred split.
 pub struct PluginRegistry {
+    /// Where durable per-app, per-caller storage lives (docs/998-roadmap.md's App Builder T2).
+    ///
+    /// `None` -- every existing caller -- means no capability here can keep anything between runs,
+    /// which is the behaviour this registry has always had. Set it and a capability that declares
+    /// `SideEffect::CreatesSemanticObject` gets a directory of its own beneath it.
+    app_data_root: Option<std::path::PathBuf>,
     plugins: Mutex<HashMap<PluginId, PluginManifest>>,
     boundaries: Mutex<HashMap<PluginId, TrustBoundaryId>>,
     tokens: Mutex<HashMap<PluginId, Vec<CapabilityToken>>>,
@@ -186,8 +192,22 @@ impl Default for PluginRegistry {
 }
 
 impl PluginRegistry {
+    /// A registry whose capabilities can keep durable data, rooted at `app_data_root`.
+    ///
+    /// Separate from [`Self::new`] rather than a field anyone can set later: whether a capability
+    /// can persist anything at all is a property of the environment it was installed into, and
+    /// making it mutable would mean an already-running sandbox's storage could appear underneath
+    /// it.
+    pub fn new_with_app_data(app_data_root: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            app_data_root: Some(app_data_root.into()),
+            ..Self::new()
+        }
+    }
+
     pub fn new() -> Self {
         PluginRegistry {
+            app_data_root: None,
             plugins: Mutex::new(HashMap::new()),
             boundaries: Mutex::new(HashMap::new()),
             tokens: Mutex::new(HashMap::new()),
@@ -943,11 +963,55 @@ impl PluginRegistry {
     /// expected to write its own real JSON result to `output.json` in that same directory before
     /// exiting. No `monitor`/`&mut` needed here — the one token this needs was already minted, for
     /// real, at install time (see [`Self::sandbox_tokens`]'s own doc comment for why).
+    /// The durable directory this capability may use for this caller, creating it if needed.
+    ///
+    /// `None` unless all three are true: this registry was given an app-data root, the capability
+    /// declared that it keeps state, and the caller is a real boundary. Least privilege by
+    /// construction -- a capability that never asked for durable storage is not handed a directory
+    /// it might quietly start using.
+    ///
+    /// Keyed by `(caller boundary, capability id)`, in that order, so one person's data for an app
+    /// is never another's. Keying on the boundary rather than a name is what the caller's token
+    /// actually carries here; it is sound because `hyperion-identity` allocates a person's boundary
+    /// once and persists it, which that crate proves ("the same person is the same authority across
+    /// a restart"). If that ever stopped holding, this directory would be orphaned rather than
+    /// leaked -- data would look lost, not become someone else's.
+    #[cfg(target_os = "linux")]
+    fn data_scope_for(
+        &self,
+        capability_id: &str,
+        entry: &RegistryEntry,
+        caller: TrustBoundaryId,
+    ) -> Result<Option<std::path::PathBuf>, PluginError> {
+        let Some(root) = self.app_data_root.as_ref() else {
+            return Ok(None);
+        };
+        if !keeps_state(&entry.contract) {
+            return Ok(None);
+        }
+        // A capability id reaches the filesystem here, so it is encoded rather than trusted: ids
+        // are caller-supplied strings and one containing a separator would otherwise choose its own
+        // directory. Hex keeps it reversible-looking without needing to be reversed.
+        let encoded: String = capability_id
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join("");
+        let dir = root.join(caller.0.to_string()).join(encoded);
+        std::fs::create_dir_all(&dir).map_err(|e| {
+            PluginError::ExecutionFailed(format!(
+                "couldn't prepare durable storage for '{capability_id}': {e}"
+            ))
+        })?;
+        Ok(Some(dir))
+    }
+
     #[cfg(target_os = "linux")]
     pub fn invoke_native_binary(
         &self,
         capability_id: &str,
         args: serde_json::Value,
+        caller: TrustBoundaryId,
     ) -> Result<serde_json::Value, PluginError> {
         let entry = self
             .query(capability_id)
@@ -991,11 +1055,23 @@ impl PluginRegistry {
         )
         .map_err(|e| PluginError::ExecutionFailed(format!("couldn't write input.json: {e}")))?;
 
+        // Durable storage, but only for a capability that declared it wants any. Statefulness is
+        // read from the contract's own `SideEffect::CreatesSemanticObject` rather than a separate
+        // flag: that side effect is exactly what "this keeps something" means here, and the review
+        // gate already refuses the `Write` permission it implies unless it is declared. One source
+        // of truth, and a capability that never declared it cannot keep anything even by accident.
+        let data_scope = self.data_scope_for(capability_id, &entry, caller)?;
+
         let mut command = std::process::Command::new(&native.program);
         command
             .args(&native.args)
             .arg(&input_path)
             .arg(&output_path);
+        // A third argument only when there is one, so a stateless capability's argv is byte for
+        // byte what it has always been.
+        if let Some(data_scope) = &data_scope {
+            command.arg(data_scope);
+        }
 
         let grant = hyperion_trust_boundary::SpawnGrant {
             token,
@@ -1005,6 +1081,7 @@ impl PluginRegistry {
             // directory. See `NativeBinaryDescriptor::script` for why an interpreter cannot
             // otherwise open the very file it was told to run.
             read_only_paths: native.script.iter().cloned().collect(),
+            data_scope: data_scope.clone(),
             // A one-shot NativeBinary invocation communicates via input.json/output.json in its
             // own real fs_scope -- it has no rendezvous socket to bind, so no IPC rights at all.
             ipc_rendezvous: None,
@@ -1065,6 +1142,18 @@ impl PluginRegistry {
              is Linux-only -- this platform can't run it"
         )))
     }
+}
+
+/// `true` if `contract` declares that this capability keeps something between runs.
+///
+/// Read from `SideEffect::CreatesSemanticObject` rather than a separate flag, because that is
+/// already exactly what the side effect means, and `review::contract_requires` already refuses the
+/// `Write` permission it implies to a contract that does not declare it. A second field would be a
+/// second thing to keep in agreement with the first.
+pub(crate) fn keeps_state(contract: &crate::types::SemanticContract) -> bool {
+    contract
+        .side_effects
+        .contains(&crate::types::SideEffect::CreatesSemanticObject)
 }
 
 /// An honest check at install time, not a trusted claim: a `NativeBinary` contribution must

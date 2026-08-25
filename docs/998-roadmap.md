@@ -2215,8 +2215,21 @@ than any text scan, and it is the honest reason script-backed apps are acceptabl
   1000, hand-minted roots at 1), so it belongs to nobody rather than to everybody: hiding an old
   development record is recoverable, showing one person another's memories is not. The console's own
   per-principal reflection key, which was the caller-side workaround for this gap, is gone.
-- **M2 — T2.** A durable *per-principal* data directory, and erasure on removal that docs/16 can
-  stand behind.
+- **M2 — T2. Landed (2026-08-25).** A stateful app gets a durable directory of its own, per app
+  and per principal, granted read-write through a new `SpawnGrant::data_scope` — deliberately
+  distinct from `fs_scope`, whose per-invocation lifetime is what makes a one-shot tool safely
+  stateless. Statefulness is declared through the contract's existing
+  `SideEffect::CreatesSemanticObject` rather than a new flag: that is already what the side effect
+  means, and `review::contract_requires` already refuses the `Write` permission it implies unless
+  it is declared, so a stateful app really reaches `PendingHumanReview` and the person is really
+  asked. `invoke_native_binary` takes the caller's Trust Boundary (Decision 2's principal), so the
+  storage is one person's rather than everyone's; removal erases it for every person who ran the
+  app, and a rebuild preserves it, because otherwise every fix would cost someone their data.
+
+  Data is keyed by boundary rather than by name, which is sound only because `hyperion-identity`
+  allocates a person's boundary once and persists it — a property that crate already proves. If
+  that ever stopped holding, the directory would be orphaned rather than leaked: data would look
+  lost, not become someone else's.
 - **M3 — T3.** Residency via `hyperion-supervisor`, with a real cgroup budget and
   regeneration-on-repeated-failure.
 - **M4 — T4.** The broker, the authentication flow on top of M1a's principals, and the accessible

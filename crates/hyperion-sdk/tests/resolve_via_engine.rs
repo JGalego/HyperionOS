@@ -162,7 +162,11 @@ fn a_capability_resolved_via_an_engine_really_runs_and_receives_the_real_script_
     .expect("publishing a NativeBinary resolved via a real engine must install cleanly");
 
     let output = registry
-        .invoke_native_binary("greeting.generate", json!({"text": "hello"}))
+        .invoke_native_binary(
+            "greeting.generate",
+            json!({"text": "hello"}),
+            TrustBoundaryId(1),
+        )
         .expect("the resolved descriptor must really run");
     assert_eq!(output.get("text").and_then(|v| v.as_str()), Some("hello"));
     assert_eq!(

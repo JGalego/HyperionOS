@@ -105,6 +105,7 @@ pub fn apply_landlock(
     program_path: &Path,
     ipc_rendezvous: Option<&Path>,
     read_only_paths: &[PathBuf],
+    data_scope: Option<&Path>,
 ) -> Result<(), EnforcementError> {
     let fs_scope_access = fs_access_for_rights(rights);
     let program_access = AccessFs::ReadFile | AccessFs::Execute;
@@ -114,9 +115,21 @@ pub fn apply_landlock(
         BitFlags::<AccessFs>::empty()
     };
 
+    // Read, write and list, on a directory rather than a single file: an app's durable storage is
+    // somewhere it creates and revisits its own files, not one known path. Handled as a category
+    // even when unused, so the ruleset's shape does not depend on whether a grant happens to
+    // include one.
+    let data_access: BitFlags<AccessFs> = AccessFs::ReadFile
+        | AccessFs::WriteFile
+        | AccessFs::ReadDir
+        | AccessFs::MakeDir
+        | AccessFs::MakeReg
+        | AccessFs::RemoveFile
+        | AccessFs::RemoveDir;
+
     let mut created = Ruleset::default()
         .set_compatibility(CompatLevel::BestEffort)
-        .handle_access(fs_scope_access | program_access | ipc_access)?
+        .handle_access(fs_scope_access | program_access | ipc_access | data_access)?
         .create()?
         .add_rule(PathBeneath::new(PathFd::new(program_path)?, program_access))?;
 
@@ -132,6 +145,10 @@ pub fn apply_landlock(
             PathFd::new(path)?,
             BitFlags::<AccessFs>::from(AccessFs::ReadFile),
         ))?;
+    }
+
+    if let Some(data_scope) = data_scope {
+        created = created.add_rule(PathBeneath::new(PathFd::new(data_scope)?, data_access))?;
     }
 
     if let Some(rendezvous) = ipc_rendezvous {

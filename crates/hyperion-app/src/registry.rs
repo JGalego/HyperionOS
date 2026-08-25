@@ -65,6 +65,11 @@ pub enum AppError {
     NoSuchApp(String),
     #[error("\"{app}\" belongs to {owner}, so it isn't yours to remove")]
     NotYours { app: String, owner: String },
+    /// A stateful app is asking for a real permission, and the SDK's own review gate treats
+    /// `Write` as needing a person's decision. This is that decision reaching the caller as a
+    /// question rather than a refusal.
+    #[error("\"{app}\" wants to keep its own data between runs, which needs your say-so")]
+    NeedsStorageConsent { app: String },
     #[error("I couldn't save the app's script: {0}")]
     Io(String),
     #[error("I couldn't install the app: {0}")]
@@ -118,15 +123,27 @@ impl AppRegistry {
         admin_token: &CapabilityToken,
         keystore: &Keystore,
         definition: &AppDefinition,
+        consented_to_storage: bool,
         now: u64,
     ) -> Result<InstalledApp, AppError> {
         let app_contract = AppContract {
             name: definition.name.clone(),
             owner: definition.owner.clone(),
+            keeps_data: definition.keeps_data,
             goal: definition.goal.clone(),
             fields: definition.inputs.clone(),
         };
         contract::validate_contract(&app_contract)?;
+
+        // Asked before anything is written, because the answer can be no. A stateful app requests
+        // `Write`, which the SDK's own review gate marks `PendingHumanReview` -- so this is not an
+        // extra check bolted on here, it is the existing gate's question surfacing where a caller
+        // can put it to a person.
+        if app_contract.keeps_data && !consented_to_storage {
+            return Err(AppError::NeedsStorageConsent {
+                app: definition.name.clone(),
+            });
+        }
 
         // Checked before the script is written, not after: an engine that was never installed
         // means this app could never run, and leaving its script on disk would be a file that
@@ -154,11 +171,11 @@ impl AppRegistry {
             Self::plugin_id_for(&definition.name),
             APP_PUBLISHER,
             SDK_VERSION,
-            // No human approval is asked for, and none is bypassed: a submission requesting only
-            // `Execute` is `AutoApproved` by the SDK's own review gate, because `Write` and
-            // `NetworkEgress` are the operations it treats as sensitive. An app that requests
-            // either will reach `PendingHumanReview` here and really need a decision.
-            false,
+            // A stateless app's submission requests only `Execute` and is `AutoApproved` by the
+            // SDK's own review gate, so this is never consulted for one. A stateful app requests
+            // `Write`, reaches `PendingHumanReview`, and really needs the decision the caller
+            // obtained above -- never a constant `true` that would make the gate decorative.
+            consented_to_storage,
             TrustDepth::D2,
             now,
             keystore,
@@ -204,12 +221,37 @@ impl AppRegistry {
             // (durable state) and brokered egress land, this is the field that stops being
             // `None` -- and the review gate will start requiring a real justification for the
             // permissions that come with them.
-            side_effects: vec![SideEffect::None],
-            permissions_requested: vec![PermissionRequest {
-                operation: Operation::Execute,
-                scope: capability_id.clone(),
-                justification: definition.goal.clone(),
-            }],
+            // What an app declares here is what the sandbox actually grants it. A stateless app
+            // gets one throwaway directory per invocation and can keep nothing even if it tries; a
+            // stateful one gets a durable directory of its own, per app and per person.
+            //
+            // `CreatesSemanticObject` is the declaration `PluginRegistry` reads to decide that,
+            // rather than a separate flag -- and it is also what `review::contract_requires` needs
+            // before it will allow the `Write` permission below. One declaration, checked by the
+            // gate that already existed.
+            side_effects: if app_contract.keeps_data {
+                vec![SideEffect::CreatesSemanticObject]
+            } else {
+                vec![SideEffect::None]
+            },
+            permissions_requested: {
+                let mut requested = vec![PermissionRequest {
+                    operation: Operation::Execute,
+                    scope: capability_id.clone(),
+                    justification: definition.goal.clone(),
+                }];
+                if app_contract.keeps_data {
+                    requested.push(PermissionRequest {
+                        operation: Operation::Write,
+                        scope: capability_id.clone(),
+                        justification: format!(
+                            "keeps its own data between runs: {}",
+                            definition.goal
+                        ),
+                    });
+                }
+                requested
+            },
             // The strongest sandbox this workspace really implements: `TrustLevel::Elevated`
             // maps to `TrustDepth::D2`, which `hyperion-plugin-framework::real_trust_depth` maps
             // to `hyperion_trust_boundary::TrustDepth::Container` -- user namespaces, Landlock,
@@ -263,6 +305,7 @@ impl AppRegistry {
         keystore: &Keystore,
         definition: &AppDefinition,
         requested_by: &str,
+        consented_to_storage: bool,
     ) -> Result<InstalledApp, AppError> {
         let existing = self
             .describe(&definition.name)
@@ -279,10 +322,17 @@ impl AppRegistry {
         let app_contract = AppContract {
             name: definition.name.clone(),
             owner: existing.owner.clone(),
+            keeps_data: definition.keeps_data,
             goal: definition.goal.clone(),
             fields: definition.inputs.clone(),
         };
         contract::validate_contract(&app_contract)?;
+
+        if app_contract.keeps_data && !consented_to_storage {
+            return Err(AppError::NeedsStorageConsent {
+                app: definition.name.clone(),
+            });
+        }
 
         if self
             .plugins
@@ -319,11 +369,10 @@ impl AppRegistry {
                 installed_plugin_id,
                 manifest,
                 TrustDepth::D2,
-                // A rebuilt app asks for exactly the `Execute` its predecessor already had, so
-                // there is never a new grant here to consent to. If a future tier makes an app able
-                // to request more, this is the argument that has to become a real question put to
-                // the person rather than a constant.
-                true,
+                // Real, not a constant: a rebuild that newly asks to keep data is asking for a
+                // permission its predecessor did not have, and `update` returns exactly those new
+                // grants. A rebuild that changes nothing about permissions consents to nothing.
+                consented_to_storage,
                 &keystore.verifying_key(),
             )
             .map_err(|e| AppError::Install(e.to_string()))?;
@@ -353,6 +402,7 @@ impl AppRegistry {
                     tier: decoded.tier(),
                     name: decoded.name,
                     owner: decoded.owner,
+                    keeps_data: decoded.keeps_data,
                     goal: decoded.goal,
                     inputs: decoded.fields,
                     capability_id: entry.capability_id,
@@ -376,6 +426,7 @@ impl AppRegistry {
             tier: decoded.tier(),
             name: decoded.name,
             owner: decoded.owner,
+            keeps_data: decoded.keeps_data,
             goal: decoded.goal,
             inputs: decoded.fields,
             capability_id: entry.capability_id,
@@ -445,6 +496,39 @@ impl AppRegistry {
         let dir = self.paths.dir_for(name);
         if dir.exists() {
             std::fs::remove_dir_all(&dir).map_err(|e| AppError::Remove(e.to_string()))?;
+        }
+
+        // And everything it kept, for everyone who ran it. docs/16's erasure promise is that
+        // removing something removes it: leaving a stateful app's data behind would mean a person
+        // who deleted an app still had its data on disk, and a later app installed under the same
+        // name would inherit it.
+        self.erase_data_for(&Self::capability_id_for(name))?;
+        Ok(())
+    }
+
+    /// Deletes every person's durable data for one capability.
+    ///
+    /// The layout mirrors `PluginRegistry::data_scope_for` exactly -- `<data root>/<boundary>/<hex
+    /// capability id>` -- because the two must agree about where an app's data lives or removal
+    /// silently misses it. Kept as a mirrored constant rather than shared code because the registry
+    /// deliberately knows nothing about apps; the price is this comment and the test that proves
+    /// they still agree.
+    fn erase_data_for(&self, capability_id: &str) -> Result<(), AppError> {
+        let encoded: String = capability_id
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join("");
+        let data_root = self.paths.data_root();
+        let Ok(per_person) = std::fs::read_dir(&data_root) else {
+            // Nothing has ever been kept here, which is the normal case for a stateless app.
+            return Ok(());
+        };
+        for person in per_person.flatten() {
+            let dir = person.path().join(&encoded);
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir).map_err(|e| AppError::Remove(e.to_string()))?;
+            }
         }
         Ok(())
     }

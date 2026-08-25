@@ -259,7 +259,11 @@ fn a_native_binary_submission_installs_as_a_real_runnable_capability() {
     .unwrap();
 
     let result = registry
-        .invoke_native_binary("text.uppercase", serde_json::json!({"text": "new tool"}))
+        .invoke_native_binary(
+            "text.uppercase",
+            serde_json::json!({"text": "new tool"}),
+            TrustBoundaryId(1),
+        )
         .expect("a just-published NativeBinary capability must really run");
     assert_eq!(
         result.get("text").and_then(|v| v.as_str()),

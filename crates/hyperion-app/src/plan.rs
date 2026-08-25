@@ -23,6 +23,14 @@ use crate::types::{AppDefinition, InputField, InputKind};
 /// it reached for `jq`. Landlock grants `Execute` on the launcher's own path and nothing else, so
 /// a script that shells out to anything cannot work -- and a model has no way to know that unless
 /// it is told.
+///
+/// The durable-storage wording (T2) was earned the same way again, and is deliberately
+/// near-verbatim the wording that already worked for the input and output paths. Told merely that
+/// "a third argument is a directory of its own", a real `gpt-4o-mini` build wrote
+/// `open('shopping_list.json')` by bare relative name -- the identical mistake it had made with
+/// `input.json` before that instruction was made explicit. "Join your own filename onto that
+/// argument" is what the earlier fix taught; generalising the lesson was cheaper than learning it a
+/// third time.
 pub fn app_plan_instructions(engine_id: &str) -> String {
     format!(
         "\
@@ -35,6 +43,7 @@ Reply with one JSON object and nothing else -- no prose, no markdown fence. Shap
                  \"choices\": [..] (only when kind is choice),
                  \"required\": true|false,
                  \"description\": plain language, shown when asking a person for this }} ],
+  \"keeps_data\": true only if it must remember something between runs; false otherwise,
   \"script\": the complete script source
 }}
 
@@ -52,7 +61,14 @@ file.
 
 Your script may not run any other program. The sandbox lets it execute the interpreter and
 nothing else, so a script that shells out to jq, curl, awk, python or any other command will fail
--- use only what the interpreter itself provides. It also has no network access at all."
+-- use only what the interpreter itself provides. It also has no network access at all.
+
+If \"keeps_data\" is true, the script's THIRD command-line argument is a directory that survives
+between runs. Build every path you read or write from it, exactly as you already do for the input
+and output files: join your own filename onto that argument. Do not open a file by bare relative
+name and do not assume a working directory -- nothing outside that directory is readable or
+writable, so a relative filename will fail. Ask for \"keeps_data\" only when the program genuinely
+has to remember something between runs; a person is asked to approve it."
     )
 }
 
@@ -215,6 +231,14 @@ pub fn from_model_answer(
         // Never read from the model's answer: who is building an app is a fact the caller knows
         // and a model has no business asserting.
         owner: owner.to_string(),
+        // Absent means stateless, the opposite of how a missing `required` is treated. Deliberate:
+        // an unnecessary question about an input costs a moment, whereas durable storage is a
+        // permission a person has to approve, and defaulting it on would mean asking for one
+        // nobody's program actually needed.
+        keeps_data: value
+            .get("keeps_data")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         engine_id: engine_id.to_string(),
         script,
         inputs,

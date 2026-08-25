@@ -25,7 +25,7 @@ use hyperion_agent_runtime::{AgentManifest, AgentRuntime, InvokeOutcome, TrustTi
 use hyperion_ai_runtime::{
     sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
 };
-use hyperion_app::{AppError, AppPaths, AppRegistry, InputKind, InstalledApp};
+use hyperion_app::{AppDefinition, AppError, AppPaths, AppRegistry, InputKind, InstalledApp};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_coordination::{CoordinationSession, TaskNode};
 use hyperion_crypto::{Keystore, SecretStore};
@@ -118,6 +118,8 @@ pub struct ConsoleSession {
     /// Set while an app run is waiting for an input the person hasn't given yet -- the *next*
     /// utterance is that value. See [`PendingAppInput`].
     pending_app_input: Option<PendingAppInput>,
+    /// Set while a build or rebuild is waiting on a yes/no about durable storage.
+    pending_storage_consent: Option<PendingStorageConsent>,
     /// Backs the `/recall`/`/why`/`/related` meta-commands -- see
     /// [`crate::graph_explorer::GraphExplorer`] for why this is its own small module rather than
     /// more direct `KnowledgeGraph` calls scattered through this file.
@@ -203,6 +205,12 @@ struct PendingCloudConsent {
 /// instead of failing (docs/06: don't make people repeat themselves, and docs/01: never expose a
 /// technical error). Without this the contract could only ever reject: it knew a value was
 /// missing, what it was called, what type it was, and how to describe it -- and then said no.
+/// A build paused because the app it produced wants to keep data, which is a real permission.
+struct PendingStorageConsent {
+    definition: AppDefinition,
+    rebuild: bool,
+}
+
 struct PendingAppInput {
     app: String,
     /// What has been supplied so far, raw. Values stay strings until the app's own contract
@@ -527,7 +535,12 @@ impl ConsoleSession {
         let intent_engine = IntentEngine::new(graph.clone(), context.clone());
         let memory = MemoryEngine::new(graph.clone());
 
-        let plugins = Arc::new(PluginRegistry::new());
+        // Rooted so a stateful app (App Builder T2) can really keep something between runs, per
+        // person and per app. Without a root, no capability here can persist anything at all --
+        // which is what this console did before, and still does for every stateless app.
+        let plugins = Arc::new(PluginRegistry::new_with_app_data(
+            data_dir.join("apps").join("data"),
+        ));
         // Real, automatic Explanation Record keeping around every real dispatch this session's
         // own `agent_runtime.invoke` makes -- `AgentRuntime::with_explainability`'s own real
         // production caller, previously unreachable until a real Cargo cycle on
@@ -609,6 +622,7 @@ impl ConsoleSession {
             pending_connect: None,
             pending_consent: None,
             pending_app_input: None,
+            pending_storage_consent: None,
             graph_explorer,
             workspace: WorkspaceCompiler::new(),
             // Per principal, not the literal "console" every person at a device used to share.
@@ -1720,6 +1734,9 @@ impl ConsoleSession {
         if let Some(pending) = self.pending_consent.take() {
             return self.finish_consent(pending, utterance);
         }
+        if let Some(pending) = self.pending_storage_consent.take() {
+            return self.finish_storage_consent(pending, utterance);
+        }
         // Checked before meta-commands, but it hands a `/...` line straight back to them: a person
         // who changes their mind mid-question must never be trapped answering it.
         if self.pending_app_input.is_some() && !utterance.trim().starts_with('/') {
@@ -2099,6 +2116,7 @@ impl ConsoleSession {
         self.pending_connect = None;
         self.pending_consent = None;
         self.pending_app_input = None;
+        self.pending_storage_consent = None;
         self.pending_think_root = None;
         self.last_utterance = None;
 
@@ -2117,6 +2135,90 @@ impl ConsoleSession {
                 .to_string(),
         );
         lines
+    }
+
+    /// Puts the storage permission to the person, in terms of what it means rather than what it is.
+    ///
+    /// "Keeps its own notes" is what durable storage actually is to someone deciding; "requests the
+    /// `Write` operation on a capability scope" is the same fact in words that make the decision
+    /// harder rather than better informed (docs/01: never expose a technical error, and never make
+    /// someone learn something technical to answer a question about their own data).
+    fn ask_about_storage(&mut self, definition: AppDefinition, rebuild: bool) -> Vec<String> {
+        let lines = vec![
+            format!(
+                "\"{}\" wants to keep its own notes between runs, so it can remember what you told \
+                 it last time.",
+                definition.name
+            ),
+            "They'd be yours alone -- nobody else on this device could read them -- and removing \
+             the app deletes them. Shall I let it? (yes/no)"
+                .to_string(),
+        ];
+        self.pending_storage_consent = Some(PendingStorageConsent {
+            definition,
+            rebuild,
+        });
+        lines
+    }
+
+    /// The other half of [`Self::ask_about_storage`].
+    ///
+    /// Anything that is not a clear yes is a no. A permission is not the place to be generous with
+    /// interpretation: someone who typed something ambiguous has not agreed to durable storage, and
+    /// asking again costs them one line.
+    fn finish_storage_consent(
+        &mut self,
+        pending: PendingStorageConsent,
+        answer: &str,
+    ) -> Vec<String> {
+        let approved = matches!(
+            answer.trim().to_ascii_lowercase().as_str(),
+            "yes" | "y" | "ok" | "sure"
+        );
+        if !approved {
+            return vec![format!(
+                "Left it alone -- \"{}\" wasn't {}.",
+                pending.definition.name,
+                if pending.rebuild { "changed" } else { "built" }
+            )];
+        }
+
+        let owner = self.principal.user.to_string();
+        let outcome = if pending.rebuild {
+            self.apps.rebuild(
+                &mut self.monitor,
+                &self.token,
+                &self.keystore,
+                &pending.definition,
+                &owner,
+                true,
+            )
+        } else {
+            self.apps.build(
+                &mut self.monitor,
+                &self.token,
+                &self.keystore,
+                &pending.definition,
+                true,
+                now(),
+            )
+        };
+
+        match outcome {
+            Ok(app) => {
+                let verb = if pending.rebuild { "Rebuilt" } else { "Built" };
+                vec![
+                    format!("{verb} \"{}\" -- {}.", app.name, app.goal),
+                    format!("It keeps its own notes, and only you can read them."),
+                    if app.inputs.is_empty() {
+                        format!("Try it: \"/run {}\".", app.name)
+                    } else {
+                        format!("Try it: \"/run {}\".", Self::example_invocation(&app))
+                    },
+                ]
+            }
+            Err(e) => vec![format!("{e}.")],
+        }
     }
 
     /// `/app-logs <name>` -- what an app has actually done.
@@ -2231,6 +2333,9 @@ impl ConsoleSession {
             &self.keystore,
             &definition,
             &owner,
+            // A rebuild that newly asks to keep data is asking for something its predecessor did
+            // not have, so it comes back as a question rather than being granted here.
+            false,
         ) {
             Ok(app) => {
                 let mut lines = vec![format!(
@@ -2247,6 +2352,7 @@ impl ConsoleSession {
                 }
                 lines
             }
+            Err(AppError::NeedsStorageConsent { .. }) => self.ask_about_storage(definition, true),
             Err(e) => vec![format!("{e}.")],
         }
     }
@@ -2456,6 +2562,9 @@ impl ConsoleSession {
             &self.token,
             &self.keystore,
             &definition,
+            // Never assumed: a stateful app comes back as `NeedsStorageConsent` and is put to the
+            // person before anything is installed.
+            false,
             now(),
         ) {
             Ok(app) => {
@@ -2483,6 +2592,7 @@ impl ConsoleSession {
                 "There's already an app called \"{name}\" -- \"/app {name}\" shows what it does, \
                  and \"/app-remove {name}\" clears the way for a new one."
             )],
+            Err(AppError::NeedsStorageConsent { .. }) => self.ask_about_storage(definition, false),
             Err(e) => vec![format!("{e}.")],
         }
     }

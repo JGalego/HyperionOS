@@ -781,7 +781,13 @@ impl ApiGateway {
             {
                 return self
                     .registry
-                    .invoke_native_binary(&request.contract_id, request.inputs.clone())
+                    // The caller's own boundary, so durable storage belongs to whoever asked --
+                    // the same rule `AgentRuntime::invoke` applies on its own dispatch path.
+                    .invoke_native_binary(
+                        &request.contract_id,
+                        request.inputs.clone(),
+                        token.origin(),
+                    )
                     .map_err(|e| e.to_string());
             }
             return hyperion_agent_runtime::dispatch_stub_capability(

@@ -206,6 +206,10 @@ impl Supervisor {
             // interpreter handed someone else's -- so it needs no extra readable file beyond its
             // own `fs_scope`.
             read_only_paths: Vec::new(),
+            // A supervised service keeps its own state in its own `fs_scope`, which is a real
+            // directory that already outlives it -- unlike a one-shot capability's throwaway temp
+            // dir, which is what T2's durable scope exists to replace.
+            data_scope: None,
         };
 
         let mut command = Command::new(&spec.program);

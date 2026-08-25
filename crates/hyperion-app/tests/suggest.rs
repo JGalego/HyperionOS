@@ -6,6 +6,7 @@ use hyperion_app::{AppTier, InstalledApp};
 fn app(name: &str, goal: &str) -> InstalledApp {
     InstalledApp {
         owner: "alice".to_string(),
+        keeps_data: false,
         name: name.to_string(),
         goal: goal.to_string(),
         tier: AppTier::Answer,

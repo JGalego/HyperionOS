@@ -104,6 +104,10 @@ pub struct AppDefinition {
     /// The principal building it (docs/998-roadmap.md §0, Decision 2). Everyone on the device can
     /// use the result; only this person can remove or rebuild it.
     pub owner: String,
+    /// Whether it needs to keep anything between runs (App Builder T2). A real permission, not a
+    /// hint: it decides whether the sandbox grants durable storage, and it puts the app through the
+    /// SDK's own human-review gate.
+    pub keeps_data: bool,
     /// The `engine_id` of an already-installed `Contribution::ExecutionEngine` that runs this
     /// script. Resolved through `hyperion_sdk::resolve_via_engine`, so an app installs and runs
     /// through the exact same `ImplementationKind::NativeBinary` path a hand-installed binary
@@ -121,6 +125,9 @@ pub struct InstalledApp {
     /// Read back out of the signed contract, never from a side record -- so it cannot be edited
     /// without invalidating the manifest's signature.
     pub owner: String,
+    /// Whether it keeps anything between runs (App Builder T2), read back from the same signed
+    /// contract.
+    pub keeps_data: bool,
     pub goal: String,
     pub tier: AppTier,
     pub inputs: Vec<InputField>,
@@ -151,5 +158,15 @@ impl AppPaths {
 
     pub fn script_for(&self, name: &str) -> PathBuf {
         self.dir_for(name).join("script")
+    }
+
+    /// Where a stateful app's durable data lives, for every person who has run it.
+    ///
+    /// Beneath the app root but outside `dir_for`, because the two have opposite lifetimes in one
+    /// respect that matters: a rebuild rewrites the script and must *not* touch the data, while a
+    /// removal must take both. Separate directories make that difference explicit instead of
+    /// depending on which files a rebuild happens to overwrite.
+    pub fn data_root(&self) -> PathBuf {
+        self.root.join("data")
     }
 }

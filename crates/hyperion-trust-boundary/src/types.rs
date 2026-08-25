@@ -64,4 +64,17 @@ pub struct SpawnGrant {
     /// program the boundary will `Execute`; naming one additional file it may only `ReadFile` is
     /// strictly weaker than the power it already had.
     pub read_only_paths: Vec<PathBuf>,
+    /// A directory this boundary may **read and write**, which survives the invocation --
+    /// docs/998-roadmap.md's App Builder T2.
+    ///
+    /// Distinct from `fs_scope`, and the difference is the whole point. `fs_scope` is a
+    /// per-invocation temp directory that is gone the moment the call returns, which is what makes
+    /// a one-shot tool safely stateless. This is the opposite: somewhere an app's own data
+    /// genuinely persists between runs. Keeping them separate means an app that was never granted
+    /// durable storage still cannot keep anything, rather than relying on a caller remembering to
+    /// hand it a throwaway path.
+    ///
+    /// `None` for every boundary that has not been granted durable storage, which is every
+    /// existing caller.
+    pub data_scope: Option<PathBuf>,
 }

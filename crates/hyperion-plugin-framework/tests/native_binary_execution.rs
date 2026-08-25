@@ -126,6 +126,7 @@ fn an_installed_native_binary_actually_runs_and_returns_real_output() {
         .invoke_native_binary(
             "text.uppercase",
             json!({"text": "hello from a real sandbox"}),
+            TrustBoundaryId(1),
         )
         .expect("a real, installed NativeBinary implementation must actually run");
 
@@ -211,7 +212,8 @@ fn a_tool_exiting_nonzero_is_a_real_honest_error_not_a_panic() {
         )
         .unwrap();
 
-    let result = registry.invoke_native_binary("text.uppercase", json!({"text": "x"}));
+    let result =
+        registry.invoke_native_binary("text.uppercase", json!({"text": "x"}), TrustBoundaryId(1));
     assert!(
         matches!(result, Err(PluginError::ExecutionFailed(_))),
         "got: {result:?}"
@@ -221,7 +223,7 @@ fn a_tool_exiting_nonzero_is_a_real_honest_error_not_a_panic() {
 #[test]
 fn invoking_an_uninstalled_capability_is_a_real_honest_error() {
     let registry = PluginRegistry::new();
-    let result = registry.invoke_native_binary("nothing.installed", json!({}));
+    let result = registry.invoke_native_binary("nothing.installed", json!({}), TrustBoundaryId(1));
     assert!(
         matches!(result, Err(PluginError::NoSuchCapability)),
         "got: {result:?}"

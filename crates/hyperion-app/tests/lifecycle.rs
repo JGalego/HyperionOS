@@ -101,6 +101,7 @@ fn fixture() -> Fixture {
 fn tally_definition() -> AppDefinition {
     AppDefinition {
         owner: "alice".to_string(),
+        keeps_data: false,
         name: "invoice-tally".to_string(),
         goal: "Add up this month's invoices".to_string(),
         engine_id: ENGINE.to_string(),
@@ -124,6 +125,7 @@ impl Fixture {
             &self.admin,
             &self.keystore,
             definition,
+            true,
             2_000,
         )
     }
@@ -400,6 +402,7 @@ fn a_rebuild_replaces_what_an_app_does_and_keeps_who_it_is() {
             &fixture.keystore,
             &second,
             "alice",
+            true,
         )
         .expect("its owner may rebuild it");
 
@@ -435,6 +438,7 @@ fn a_rebuild_never_changes_who_an_app_belongs_to() {
             &fixture.keystore,
             &hijack,
             "alice",
+            true,
         )
         .expect("alice may rebuild her own app");
     assert_eq!(rebuilt.owner, "alice");
@@ -453,6 +457,7 @@ fn someone_elses_app_is_not_yours_to_rebuild_either() {
         &fixture.keystore,
         &theirs,
         "bob",
+        true,
     );
     assert!(
         matches!(refused, Err(AppError::NotYours { ref owner, .. }) if owner == "alice"),
@@ -477,6 +482,7 @@ fn rebuilding_something_that_was_never_built_is_refused() {
             &fixture.keystore,
             &orphan,
             "alice",
+            true,
         ),
         Err(AppError::NoSuchApp(_))
     ));
