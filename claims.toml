@@ -326,3 +326,9 @@ id = "memory.erasure-never-crosses-people"
 claim = "A cascading erase follows only the erasing person's own records, never another person's that reference them."
 crate = "hyperion-memory"
 test = "erasing_with_cascade_never_reaches_across_to_another_person"
+
+[[claim]]
+id = "app.only-its-owner-can-remove-it"
+claim = "An app can be used by anyone on the device but removed only by the person who built it, checked against the owner recorded inside the signed manifest."
+crate = "hyperion-app"
+test = "someone_elses_app_is_not_yours_to_remove"

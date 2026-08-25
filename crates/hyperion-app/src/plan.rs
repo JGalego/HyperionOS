@@ -139,13 +139,18 @@ fn parse_kind(
     }
 }
 
-/// Reads a model's answer into a definition ready for [`crate::registry::AppRegistry::build`].
+/// Reads a model's answer into a definition ready for [`crate::registry::AppRegistry::build`],
+/// attributed to `owner`.
 ///
 /// Deliberately does no validation of its own beyond what it takes to *build the struct*: names,
 /// descriptions and duplicate fields are `AppRegistry::build`'s own
 /// [`crate::contract::validate_contract`] to reject, and having one place that decides what a
 /// legal contract is matters more than failing a few lines earlier.
-pub fn from_model_answer(answer: &str, engine_id: &str) -> Result<AppDefinition, PlanError> {
+pub fn from_model_answer(
+    answer: &str,
+    engine_id: &str,
+    owner: &str,
+) -> Result<AppDefinition, PlanError> {
     let json = extract_json_object(answer).ok_or(PlanError::NoJsonObject)?;
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| PlanError::Malformed(e.to_string()))?;
@@ -207,6 +212,9 @@ pub fn from_model_answer(answer: &str, engine_id: &str) -> Result<AppDefinition,
     Ok(AppDefinition {
         name,
         goal,
+        // Never read from the model's answer: who is building an app is a fact the caller knows
+        // and a model has no business asserting.
+        owner: owner.to_string(),
         engine_id: engine_id.to_string(),
         script,
         inputs,

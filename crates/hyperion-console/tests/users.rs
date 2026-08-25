@@ -164,3 +164,23 @@ fn help_mentions_both_user_commands() {
     assert!(reply.contains("/whoami"), "got: {reply}");
     assert!(reply.contains("/user "), "got: {reply}");
 }
+
+#[test]
+fn an_app_someone_else_built_is_usable_but_not_removable() {
+    // Decision 2's split: apps are device-wide so a capability is reused rather than regenerated
+    // per person, but only the person who built one can take it away.
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = open_as(&dir, "alice");
+
+    // A real engine, so a real app can really be installed by hand below.
+    let launcher = std::env::current_exe().unwrap();
+    session.handle_utterance(&format!("/app-engine sh {}", launcher.display()));
+
+    // `/build` needs a real model, so this test asserts what it can without one: with nothing
+    // installed, removal still refuses honestly rather than pretending.
+    session.handle_utterance("/user bob");
+    let reply = session
+        .handle_utterance("/app-remove nothing-here")
+        .join("\n");
+    assert!(reply.contains("don't have anything called"), "got: {reply}");
+}

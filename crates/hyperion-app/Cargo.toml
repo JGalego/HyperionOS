@@ -8,6 +8,9 @@ description = "Apps Hyperion builds for a goal: a typed input contract that ride
 [dependencies]
 hyperion-capability = { workspace = true }
 hyperion-crypto = { workspace = true }
+# An app's owner is a real principal name, validated the same way every other principal name is
+# rather than by a second copy of the same rules (docs/998-roadmap.md §0, Decision 2).
+hyperion-identity = { workspace = true }
 hyperion-plugin-framework = { workspace = true }
 hyperion-sdk = { workspace = true }
 serde_json = { workspace = true }

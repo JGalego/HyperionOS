@@ -2130,7 +2130,14 @@ impl ConsoleSession {
             if apps.len() == 1 { "" } else { "s" }
         )];
         for app in &apps {
-            lines.push(format!("  {} -- {}", app.name, app.goal));
+            // Whose it is, only when that could matter. On a device one person uses, saying "built
+            // by you" on every line is noise about a distinction that does not exist there.
+            let whose = if app.owner == self.principal.user.as_str() {
+                String::new()
+            } else {
+                format!(" (built by {})", app.owner)
+            };
+            lines.push(format!("  {} -- {}{whose}", app.name, app.goal));
         }
         lines.push("\"/app <name>\" for what one needs, \"/run <name>\" to use it.".to_string());
         lines
@@ -2164,10 +2171,20 @@ impl ConsoleSession {
         // Where it came from and what it may touch -- docs/18's "why, and on what evidence",
         // answered from the signed manifest rather than from anything this session remembers.
         lines.push(format!(
-            "It runs as {}, sandboxed: no network, and nothing on disk but its own scratch folder. \
-             \"/app-remove {}\" undoes it completely.",
-            app.capability_id, app.name
+            "It runs as {}, sandboxed: no network, and nothing on disk but its own scratch folder.",
+            app.capability_id
         ));
+        if app.owner == self.principal.user.as_str() {
+            lines.push(format!(
+                "\"/app-remove {}\" undoes it completely.",
+                app.name
+            ));
+        } else {
+            lines.push(format!(
+                "{} built it -- you can use it, but only they can remove it.",
+                app.owner
+            ));
+        }
         lines
     }
 
@@ -2220,7 +2237,8 @@ impl ConsoleSession {
             Err(reason) => return vec![format!("I couldn't work out what to build: {reason}")],
         };
 
-        let definition = match hyperion_app::from_model_answer(&answer, &engine_id) {
+        let owner = self.principal.user.to_string();
+        let definition = match hyperion_app::from_model_answer(&answer, &engine_id, &owner) {
             Ok(definition) => definition,
             Err(e) => {
                 return vec![
@@ -2430,12 +2448,20 @@ impl ConsoleSession {
     }
 
     fn remove_app(&mut self, name: &str) -> Vec<String> {
-        match self.apps.remove(&mut self.monitor, &self.token, name) {
+        let requested_by = self.principal.user.to_string();
+        match self
+            .apps
+            .remove(&mut self.monitor, &self.token, name, &requested_by)
+        {
             Ok(()) => vec![format!(
                 "Removed \"{name}\" -- its script is deleted and everything it was allowed to do \
                  is revoked."
             )],
             Err(AppError::NoSuchApp(_)) => vec![Self::no_such_app(name)],
+            // Everyone can use an app; only whoever built it can take it away.
+            Err(AppError::NotYours { owner, .. }) => vec![format!(
+                "\"{name}\" is {owner}'s -- you can use it, but it isn't yours to remove."
+            )],
             Err(e) => vec![format!("{e}.")],
         }
     }

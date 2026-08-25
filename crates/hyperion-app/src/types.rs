@@ -101,6 +101,9 @@ pub struct AppDefinition {
     /// signed manifest (as the permission justification) so `/app <name>` can answer "why does
     /// this exist" from the signed record rather than a side file.
     pub goal: String,
+    /// The principal building it (docs/998-roadmap.md §0, Decision 2). Everyone on the device can
+    /// use the result; only this person can remove or rebuild it.
+    pub owner: String,
     /// The `engine_id` of an already-installed `Contribution::ExecutionEngine` that runs this
     /// script. Resolved through `hyperion_sdk::resolve_via_engine`, so an app installs and runs
     /// through the exact same `ImplementationKind::NativeBinary` path a hand-installed binary
@@ -115,6 +118,9 @@ pub struct AppDefinition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledApp {
     pub name: String,
+    /// Read back out of the signed contract, never from a side record -- so it cannot be edited
+    /// without invalidating the manifest's signature.
+    pub owner: String,
     pub goal: String,
     pub tier: AppTier,
     pub inputs: Vec<InputField>,

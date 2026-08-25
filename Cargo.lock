@@ -2916,6 +2916,7 @@ version = "0.1.0"
 dependencies = [
  "hyperion-capability",
  "hyperion-crypto",
+ "hyperion-identity",
  "hyperion-plugin-framework",
  "hyperion-sdk",
  "serde_json",

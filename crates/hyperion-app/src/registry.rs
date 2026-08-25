@@ -63,6 +63,8 @@ pub enum AppError {
     AlreadyExists(String),
     #[error("there's no app called \"{0}\"")]
     NoSuchApp(String),
+    #[error("\"{app}\" belongs to {owner}, so it isn't yours to remove")]
+    NotYours { app: String, owner: String },
     #[error("I couldn't save the app's script: {0}")]
     Io(String),
     #[error("I couldn't install the app: {0}")]
@@ -114,6 +116,7 @@ impl AppRegistry {
     ) -> Result<InstalledApp, AppError> {
         let app_contract = AppContract {
             name: definition.name.clone(),
+            owner: definition.owner.clone(),
             goal: definition.goal.clone(),
             fields: definition.inputs.clone(),
         };
@@ -235,6 +238,7 @@ impl AppRegistry {
                 Some(InstalledApp {
                     tier: decoded.tier(),
                     name: decoded.name,
+                    owner: decoded.owner,
                     goal: decoded.goal,
                     inputs: decoded.fields,
                     capability_id: entry.capability_id,
@@ -257,6 +261,7 @@ impl AppRegistry {
         Some(InstalledApp {
             tier: decoded.tier(),
             name: decoded.name,
+            owner: decoded.owner,
             goal: decoded.goal,
             inputs: decoded.fields,
             capability_id: entry.capability_id,
@@ -291,16 +296,30 @@ impl AppRegistry {
         monitor: &mut CapabilityMonitor,
         admin_token: &CapabilityToken,
         name: &str,
+        requested_by: &str,
     ) -> Result<(), AppError> {
         contract::validate_app_name(name)?;
         let entry = self
             .plugins
             .query(&Self::capability_id_for(name))
             .ok_or_else(|| AppError::NoSuchApp(name.to_string()))?;
-        if contract::decode(&entry.contract.inputs).is_none() {
+        let Some(decoded) = contract::decode(&entry.contract.inputs) else {
             // A capability under `app.<name>` that is not an app contract was installed by
             // something else. Removing it here would be this crate reaching outside what it owns.
             return Err(AppError::NoSuchApp(name.to_string()));
+        };
+        // Apps are device-wide so anyone can use one; only its owner can take it away. Compared
+        // against the owner recorded inside the *signed* manifest, so this cannot be redirected by
+        // editing anything on disk.
+        //
+        // There is deliberately no administrator override, because there is deliberately no
+        // administrator: §0's Decision 2 leaves whether such a role exists explicitly open, and
+        // inventing one here would be answering a question the owner said was still theirs.
+        if decoded.owner != requested_by {
+            return Err(AppError::NotYours {
+                app: name.to_string(),
+                owner: decoded.owner,
+            });
         }
 
         for plugin_id in entry.owning_plugins {

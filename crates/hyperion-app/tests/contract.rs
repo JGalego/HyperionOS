@@ -16,6 +16,7 @@ fn field(name: &str, kind: InputKind, required: bool) -> InputField {
 #[test]
 fn a_whole_contract_survives_a_round_trip_through_the_signed_manifest_field() {
     let original = AppContract {
+        owner: "alice".to_string(),
         name: "invoice-tally".to_string(),
         goal: "Add up this month's invoices".to_string(),
         fields: vec![
@@ -43,6 +44,7 @@ fn the_delimiters_themselves_survive_a_round_trip() {
     // containing all three is exactly the case that would corrupt a naive split -- and a person
     // writing "revenue | costs, before tax" has done nothing unusual.
     let original = AppContract {
+        owner: "alice".to_string(),
         name: "pipes".to_string(),
         goal: r"revenue | costs, before tax \ after".to_string(),
         fields: vec![InputField {
@@ -68,6 +70,7 @@ fn a_capability_that_is_not_an_app_simply_does_not_decode() {
 #[test]
 fn a_half_understood_contract_is_refused_rather_than_half_decoded() {
     let mut encoded = contract::encode(&AppContract {
+        owner: "alice".to_string(),
         name: "partly".to_string(),
         goal: "a goal".to_string(),
         fields: vec![
@@ -95,6 +98,7 @@ fn an_app_name_that_could_escape_its_own_directory_is_refused() {
 #[test]
 fn a_contract_that_could_never_be_answered_is_refused() {
     let base = AppContract {
+        owner: "alice".to_string(),
         name: "ok".to_string(),
         goal: "a goal".to_string(),
         fields: vec![],

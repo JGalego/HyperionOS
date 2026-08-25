@@ -78,6 +78,20 @@ version numbers track release sequence, not API stability.
   already express per-user separation and revocation without a second notion of
   authority.
 
+**Apps have an owner**
+- An app's owner rides inside the signed contract (header format bumped to
+  `hyperion-app/v2`), so an ownership record cannot be edited without
+  invalidating the manifest's signature. A `v1` app stops being listed rather
+  than being reinterpreted as one whose owner is unknown.
+- Decision 2's split, implemented: apps are device-wide so anyone can use one --
+  the Resourceful pillar exists so a capability is reused rather than
+  regenerated per person -- but only its owner may remove it. `/apps` and `/app`
+  name the builder only when it isn't you, since on a one-person device that
+  distinction doesn't exist.
+- Deliberately no administrator override, because there is deliberately no
+  administrator: §0 leaves whether that role exists explicitly open, and
+  inventing one here would answer a question the owner said was still theirs.
+
 **Memories belong to whoever wrote them**
 - `hyperion-memory` had no per-boundary access control, unlike
   `hyperion-explainability` -- every read handed back everything regardless of

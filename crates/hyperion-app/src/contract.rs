@@ -21,9 +21,15 @@
 //! field:
 //!
 //! ```text
-//! hyperion-app/v1|app|<name>|<goal>
-//! hyperion-app/v1|in|<name>|<kind>|required|<description>
+//! hyperion-app/v2|app|<name>|<owner>|<goal>
+//! hyperion-app/v2|in|<name>|<kind>|required|<description>
 //! ```
+//!
+//! `<owner>` is the principal who built it (docs/998-roadmap.md §0, Decision 2). It rides inside
+//! the signed manifest for the same reason the inputs do: an ownership record that could be edited
+//! without invalidating a signature would not be an ownership record. The version moved from `v1`
+//! to `v2` when it was added — a `v1` app no longer decodes, and simply stops being listed as an
+//! app rather than being silently reinterpreted as one whose owner is unknown.
 //!
 //! `<kind>` is one of `text`, `integer`, `number`, `boolean`, `path`, or `choice:<a>,<b>,...`.
 //! Backslash, `|` and `,` are backslash-escaped everywhere, so a goal or description containing a
@@ -41,7 +47,7 @@ use crate::types::{AppTier, InputField, InputKind};
 
 /// Bumped only for a genuinely incompatible change to the layout above. A decoder that meets a
 /// version it does not know treats the capability as "not an app" rather than guessing.
-pub const CONTRACT_VERSION: &str = "hyperion-app/v1";
+pub const CONTRACT_VERSION: &str = "hyperion-app/v2";
 
 /// The longest an app name may be. Long enough to be descriptive, short enough that the resulting
 /// capability id and directory name stay manageable everywhere they are displayed.
@@ -56,6 +62,10 @@ pub const APP_CAPABILITY_PREFIX: &str = "app.";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppContract {
     pub name: String,
+    /// The principal who built this app. Apps are device-wide so everyone can *use* one -- the
+    /// Resourceful pillar exists so a capability is reused rather than regenerated per person --
+    /// but only its owner may remove or rebuild it.
+    pub owner: String,
     pub goal: String,
     pub fields: Vec<InputField>,
 }
@@ -77,6 +87,8 @@ pub enum ContractError {
     InvalidName(String),
     #[error("an app needs to say what it's for")]
     MissingGoal,
+    #[error("an app needs to belong to someone")]
+    MissingOwner,
     #[error("an input needs a name")]
     EmptyFieldName,
     #[error("\"{0}\" can't be an input name -- use lowercase letters, digits and underscores")]
@@ -114,6 +126,11 @@ pub fn validate_contract(contract: &AppContract) -> Result<(), ContractError> {
     if contract.goal.trim().is_empty() {
         return Err(ContractError::MissingGoal);
     }
+    // Validated as a real principal name rather than accepted as free text: it is compared against
+    // a live principal on every removal, and a name that could never belong to anyone would make
+    // an app unremovable by design.
+    hyperion_identity::UserId::new(contract.owner.trim())
+        .map_err(|_| ContractError::MissingOwner)?;
     let mut seen = BTreeSet::new();
     for field in &contract.fields {
         if field.name.is_empty() {
@@ -231,8 +248,9 @@ fn decode_kind(raw: &str) -> Option<InputKind> {
 /// Encodes a whole contract into the `SemanticContract.inputs` strings that get signed.
 pub fn encode(contract: &AppContract) -> Vec<String> {
     let mut encoded = vec![format!(
-        "{CONTRACT_VERSION}|app|{}|{}",
+        "{CONTRACT_VERSION}|app|{}|{}|{}",
         escape(&contract.name),
+        escape(&contract.owner),
         escape(&contract.goal),
     )];
     encoded.extend(contract.fields.iter().map(|field| {
@@ -261,12 +279,13 @@ pub fn encode(contract: &AppContract) -> Vec<String> {
 pub fn decode(inputs: &[String]) -> Option<AppContract> {
     let (header, rest) = inputs.split_first()?;
     let header_parts = split_escaped(header, '|');
-    if header_parts.len() != 4 || header_parts[0] != CONTRACT_VERSION || header_parts[1] != "app" {
+    if header_parts.len() != 5 || header_parts[0] != CONTRACT_VERSION || header_parts[1] != "app" {
         return None;
     }
     let name = unescape(&header_parts[2]);
-    let goal = unescape(&header_parts[3]);
-    if name.is_empty() {
+    let owner = unescape(&header_parts[3]);
+    let goal = unescape(&header_parts[4]);
+    if name.is_empty() || owner.is_empty() {
         return None;
     }
 
@@ -293,7 +312,12 @@ pub fn decode(inputs: &[String]) -> Option<AppContract> {
             required,
         });
     }
-    Some(AppContract { name, goal, fields })
+    Some(AppContract {
+        name,
+        owner,
+        goal,
+        fields,
+    })
 }
 
 /// Why a supplied set of arguments could not be used. Every message is written to be shown to a

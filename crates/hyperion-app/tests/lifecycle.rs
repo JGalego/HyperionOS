@@ -100,6 +100,7 @@ fn fixture() -> Fixture {
 
 fn tally_definition() -> AppDefinition {
     AppDefinition {
+        owner: "alice".to_string(),
         name: "invoice-tally".to_string(),
         goal: "Add up this month's invoices".to_string(),
         engine_id: ENGINE.to_string(),
@@ -269,7 +270,12 @@ fn removing_an_app_really_revokes_its_tokens_and_really_deletes_its_script() {
 
     fixture
         .apps
-        .remove(&mut fixture.monitor, &fixture.admin, "invoice-tally")
+        .remove(
+            &mut fixture.monitor,
+            &fixture.admin,
+            "invoice-tally",
+            "alice",
+        )
         .expect("must remove");
 
     // Gone from the registry, gone from the listing, gone from disk...
@@ -294,9 +300,12 @@ fn removing_an_app_really_revokes_its_tokens_and_really_deletes_its_script() {
 fn removing_something_that_is_not_an_app_is_refused() {
     let mut fixture = fixture();
     assert!(matches!(
-        fixture
-            .apps
-            .remove(&mut fixture.monitor, &fixture.admin, "never-existed"),
+        fixture.apps.remove(
+            &mut fixture.monitor,
+            &fixture.admin,
+            "never-existed",
+            "alice"
+        ),
         Err(AppError::NoSuchApp(_))
     ));
 }
@@ -310,4 +319,59 @@ fn a_capability_that_is_not_an_app_never_appears_in_the_listing() {
     // an app. `/apps` must show apps, not everything the registry happens to hold.
     let names: Vec<String> = fixture.apps.list().into_iter().map(|a| a.name).collect();
     assert_eq!(names, vec!["invoice-tally".to_string()]);
+}
+
+#[test]
+fn an_app_belongs_to_whoever_built_it_and_says_so_from_the_signed_record() {
+    let mut fixture = fixture();
+    let built = fixture.build(&tally_definition()).expect("must build");
+    assert_eq!(built.owner, "alice");
+
+    // Read back by decoding the signed manifest, not from anything this crate remembered -- an
+    // ownership record editable without invalidating a signature would not be one.
+    let entry = fixture.plugins.query("app.invoice-tally").unwrap();
+    let decoded = hyperion_app::contract::decode(&entry.contract.inputs).unwrap();
+    assert_eq!(decoded.owner, "alice");
+}
+
+#[test]
+fn someone_elses_app_is_not_yours_to_remove() {
+    let mut fixture = fixture();
+    fixture.build(&tally_definition()).expect("must build");
+
+    let refused = fixture
+        .apps
+        .remove(&mut fixture.monitor, &fixture.admin, "invoice-tally", "bob");
+    assert!(
+        matches!(refused, Err(AppError::NotYours { ref owner, .. }) if owner == "alice"),
+        "got: {refused:?}"
+    );
+
+    // Really refused: still installed, still runnable by everyone.
+    assert!(fixture.apps.describe("invoice-tally").is_some());
+    assert!(fixture.plugins.query("app.invoice-tally").is_some());
+
+    // And its owner can still remove it.
+    assert!(fixture
+        .apps
+        .remove(
+            &mut fixture.monitor,
+            &fixture.admin,
+            "invoice-tally",
+            "alice"
+        )
+        .is_ok());
+}
+
+#[test]
+fn an_app_with_no_owner_is_refused_before_anything_is_written() {
+    let mut fixture = fixture();
+    let mut definition = tally_definition();
+    definition.owner = "  ".to_string();
+
+    assert!(matches!(
+        fixture.build(&definition),
+        Err(AppError::Contract(_))
+    ));
+    assert!(fixture.apps.list().is_empty());
 }
