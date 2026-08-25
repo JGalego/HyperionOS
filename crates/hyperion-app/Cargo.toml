@@ -11,10 +11,17 @@ hyperion-crypto = { workspace = true }
 # An app's owner is a real principal name, validated the same way every other principal name is
 # rather than by a second copy of the same rules (docs/998-roadmap.md §0, Decision 2).
 hyperion-identity = { workspace = true }
+# An app declares a real Scheduler admission budget rather than leaving `resource_profile` unset,
+# which made every app fall back to a stand-in describing a model call.
+hyperion-scheduler = { workspace = true }
 hyperion-plugin-framework = { workspace = true }
 hyperion-sdk = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+# The contract encoding is hand-rolled escaping over three delimiters, round-tripped through a
+# signed manifest -- exactly the shape example-based tests under-cover. The same reasoning
+# `hyperion-capability` already applies to its own invariants.
+proptest = { workspace = true }
 tempfile = { workspace = true }

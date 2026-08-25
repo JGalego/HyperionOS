@@ -11,6 +11,23 @@ version numbers track release sequence, not API stability.
 ### Fixed
 
 **Enforcement and durability**
+- A manifest's signature covered a `Capability` contribution's `capability_id`
+  and `version` and nothing else. Everything that decides what installing it
+  would *do* was unsigned: the `native_binary.program` that will actually
+  execute, the script the sandbox is told to read, the declared side effects the
+  review gate reasons about, and every `requested_permissions` entry. A
+  legitimately signed manifest could be repointed at a different executable, or
+  have its permissions widened, and still verify -- a real forgery route on the
+  `install_with_publisher_registry` path, whose whole purpose is trusting a
+  third-party publisher's key. `canonical_bytes` now covers all of it, and the
+  fields are length-prefixed rather than concatenated, because plain
+  concatenation is ambiguous: `("ab","c")` and `("a","bc")` produced identical
+  bytes, so two different manifests could share a signature. Seven of the nine
+  new tests fail against the previous encoding.
+- Consequently corrected, rather than left standing: `hyperion-app`'s own
+  documentation claimed an app's owner and declared inputs "could not be edited
+  without invalidating the manifest's signature". That was untrue when written;
+  it is true now, and proven by test instead of asserted by comment.
 - `Contribution::ExecutionEngine` could never have worked for a real
   interpreter. `resolve_via_engine` hands a launcher a script path as an
   argument, but `apply_landlock` grants a sandboxed process exactly two things
@@ -77,6 +94,20 @@ version numbers track release sequence, not API stability.
   `CapabilityToken`: `cap_derive`'s attenuation and `cap_revoke`'s cascade
   already express per-user separation and revocation without a second notion of
   authority.
+
+**Smaller things**
+- An app declares a real Scheduler admission budget instead of leaving
+  `resource_profile` unset, which made every app fall back to a stand-in
+  describing a model call rather than a sandboxed process. One modest constant,
+  not a number per app: nothing has measured these, and a figure that varied
+  would imply it had.
+- `/build` looks for an app you already have before making a new one -- the
+  Resourceful pillar's opening line, and the most ordinary way to get this
+  wrong. Suggested, not substituted, since the match is word overlap.
+- Property tests for the contract encoding, which is hand-rolled escaping over
+  three delimiters. One of them was written asserting that editing the encoded
+  block is detectable; it failed, correctly, and led to the signature finding
+  above.
 
 **T2 — an app can keep something between runs**
 - A stateful app gets a durable directory of its own, per app and per person,

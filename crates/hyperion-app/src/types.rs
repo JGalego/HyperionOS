@@ -123,7 +123,9 @@ pub struct AppDefinition {
 pub struct InstalledApp {
     pub name: String,
     /// Read back out of the signed contract, never from a side record -- so it cannot be edited
-    /// without invalidating the manifest's signature.
+    /// without invalidating the manifest's signature, which really covers the contract's bytes
+    /// (see `hyperion-plugin-framework`'s `signature_coverage` tests; it did not until
+    /// 2026-08-25).
     pub owner: String,
     /// Whether it keeps anything between runs (App Builder T2), read back from the same signed
     /// contract.

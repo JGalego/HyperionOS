@@ -29,6 +29,12 @@
 //! the signed manifest for the same reason the inputs do: an ownership record that could be edited
 //! without invalidating a signature would not be an ownership record.
 //!
+//! That is only true because the manifest's signature really covers these bytes. It did not until
+//! 2026-08-25 — `canonical_bytes` signed a `Capability` contribution's id and version and nothing
+//! else, so everything encoded here was editable on a manifest that still verified. The property
+//! this format depends on is now proven by `hyperion-plugin-framework`'s own `signature_coverage`
+//! tests rather than assumed by this comment.
+//!
 //! The fourth header field is `keeps-data` or `stateless` — the App Builder's T2. It is signed for
 //! the same reason: whether an app may keep anything between runs decides whether it is granted
 //! durable storage at all, so it must not be editable without breaking the signature.

@@ -4,56 +4,183 @@ use crate::types::{
     Contribution, Operation, PluginError, PluginManifest, SemanticContract, SideEffect,
 };
 
-/// The exact fields a real signature is produced/verified over — the same fields the
-/// non-cryptographic-checksum stand-in this replaces already chose to cover, now signed instead
-/// of folded into a hash any forger could reproduce without a key. Real publisher-key PKI (a
-/// registry of many trusted publishers' public keys, per docs/24's own "verify against
-/// publisher's registered key" framing) does not exist anywhere in this workspace yet -- see
-/// [`hyperion_crypto`]'s own doc comment on why this crate instead verifies against one real,
-/// trusted device identity rather than inventing an undocumented multi-key trust store.
+/// The exact bytes a real signature is produced and verified over.
+///
+/// **What this must cover, and why it is everything.** A signature that commits to less than the
+/// manifest *means* is a signature an attacker can reuse. This previously covered a `Capability`
+/// contribution's `capability_id` and `version` and nothing else -- so a legitimately signed
+/// manifest could have its `native_binary.program` swapped for another executable, its declared
+/// side effects rewritten, or its `requested_permissions` widened, and would still verify. On the
+/// `install_with_publisher_registry` path, where the point is to trust a third-party publisher's
+/// key, that is a real forgery route rather than a theoretical one.
+///
+/// It now covers every field that decides what installing the manifest will *do*: the program and
+/// script that will really execute, the contract (whose inputs carry `hyperion-app`'s own signed
+/// owner and durable-storage declaration), the declared side effects the review gate reasons
+/// about, every requested permission, and the minimum trust depth.
+///
+/// **Length-prefixed, not concatenated.** Every variable-length field is written as its length
+/// followed by its bytes. Plain concatenation is ambiguous: `("ab", "c")` and `("a", "bc")` produce
+/// identical bytes, so two genuinely different manifests could share a signature. That was true of
+/// the previous encoding too.
 fn canonical_bytes(manifest_without_signature: &PluginManifest) -> Vec<u8> {
     let mut bytes = Vec::new();
+
+    fn push_bytes(out: &mut Vec<u8>, value: &[u8]) {
+        out.extend_from_slice(&(value.len() as u64).to_le_bytes());
+        out.extend_from_slice(value);
+    }
+    fn push_str(out: &mut Vec<u8>, value: &str) {
+        push_bytes(out, value.as_bytes());
+    }
+    fn push_contract(out: &mut Vec<u8>, contract: &SemanticContract) {
+        push_bytes(out, &(contract.inputs.len() as u64).to_le_bytes());
+        for input in &contract.inputs {
+            push_str(out, input);
+        }
+        push_bytes(out, &(contract.outputs.len() as u64).to_le_bytes());
+        for output in &contract.outputs {
+            push_str(out, output);
+        }
+        push_bytes(out, &(contract.side_effects.len() as u64).to_le_bytes());
+        for side_effect in &contract.side_effects {
+            out.push(match side_effect {
+                SideEffect::CreatesSemanticObject => 0,
+                SideEffect::NetworkEgress => 1,
+                SideEffect::None => 2,
+            });
+        }
+    }
+    fn push_native_binary(
+        out: &mut Vec<u8>,
+        native: Option<&crate::types::NativeBinaryDescriptor>,
+    ) {
+        match native {
+            Some(native) => {
+                out.push(1);
+                push_str(out, &native.program.to_string_lossy());
+                push_bytes(out, &(native.args.len() as u64).to_le_bytes());
+                for arg in &native.args {
+                    push_str(out, arg);
+                }
+                match &native.script {
+                    Some(script) => {
+                        out.push(1);
+                        push_str(out, &script.to_string_lossy());
+                    }
+                    None => out.push(0),
+                }
+            }
+            None => out.push(0),
+        }
+    }
+
     bytes.extend_from_slice(&manifest_without_signature.plugin_id.to_le_bytes());
-    bytes.extend_from_slice(manifest_without_signature.publisher.as_bytes());
+    push_str(&mut bytes, &manifest_without_signature.publisher);
     bytes.extend_from_slice(&manifest_without_signature.sdk_version.to_le_bytes());
+    bytes.push(match manifest_without_signature.min_trust_depth {
+        crate::types::TrustDepth::D0 => 0,
+        crate::types::TrustDepth::D1 => 1,
+        crate::types::TrustDepth::D2 => 2,
+        crate::types::TrustDepth::D3 => 3,
+    });
+
+    // Every requested permission. Unsigned, these could be widened after the fact on a manifest
+    // whose signature still verified -- which is the whole review gate defeated.
+    push_bytes(
+        &mut bytes,
+        &(manifest_without_signature.requested_permissions.len() as u64).to_le_bytes(),
+    );
+    for request in &manifest_without_signature.requested_permissions {
+        bytes.push(match request.operation {
+            Operation::Read => 0,
+            Operation::Write => 1,
+            Operation::NetworkEgress => 2,
+            Operation::Execute => 3,
+        });
+        push_str(&mut bytes, &request.scope);
+        push_str(&mut bytes, &request.justification);
+    }
+
+    push_bytes(
+        &mut bytes,
+        &(manifest_without_signature.contributions.len() as u64).to_le_bytes(),
+    );
     for contribution in &manifest_without_signature.contributions {
+        // A discriminant per variant, so one contribution's fields can never be read as another's.
         match contribution {
             Contribution::Capability(cm) => {
-                bytes.extend_from_slice(cm.capability_id.as_bytes());
+                bytes.push(0);
+                push_str(&mut bytes, &cm.capability_id);
                 bytes.extend_from_slice(&cm.version.to_le_bytes());
+                bytes.push(match cm.implementation_kind {
+                    crate::types::ImplementationKind::LocalSmallModel => 0,
+                    crate::types::ImplementationKind::LocalLargeModel => 1,
+                    crate::types::ImplementationKind::CloudApi => 2,
+                    crate::types::ImplementationKind::NativeBinary => 3,
+                });
+                bytes.push(match cm.privacy_tier {
+                    crate::types::PrivacyTier::Local => 0,
+                    crate::types::PrivacyTier::ConsentedCloud => 1,
+                });
+                push_contract(&mut bytes, &cm.contract);
+                push_native_binary(&mut bytes, cm.native_binary.as_ref());
             }
             Contribution::Agent(ac) => {
-                bytes.extend_from_slice(ac.specialization.as_bytes());
+                bytes.push(1);
+                push_str(&mut bytes, &ac.specialization);
+                push_bytes(
+                    &mut bytes,
+                    &(ac.baseline_capabilities.len() as u64).to_le_bytes(),
+                );
                 for capability in &ac.baseline_capabilities {
-                    bytes.extend_from_slice(capability.as_bytes());
+                    push_str(&mut bytes, capability);
+                }
+                push_bytes(
+                    &mut bytes,
+                    &(ac.requestable_capabilities.len() as u64).to_le_bytes(),
+                );
+                for capability in &ac.requestable_capabilities {
+                    push_str(&mut bytes, capability);
                 }
             }
             Contribution::HardwareSupport(hs) => {
-                bytes.extend_from_slice(hs.manufacturer.as_bytes());
-                bytes.extend_from_slice(hs.model.as_bytes());
+                bytes.push(2);
+                push_str(&mut bytes, &hs.manufacturer);
+                push_str(&mut bytes, &hs.model);
             }
             Contribution::KnowledgeProvider(kp) => {
-                bytes.extend_from_slice(kp.topic.as_bytes());
-                bytes.extend_from_slice(kp.capability_id.as_bytes());
+                bytes.push(3);
+                push_str(&mut bytes, &kp.topic);
+                push_str(&mut bytes, &kp.capability_id);
             }
             Contribution::UiComponent(ui) => {
-                bytes.extend_from_slice(ui.capability_ref.as_bytes());
-                bytes.extend_from_slice(ui.panel_template.as_bytes());
+                bytes.push(4);
+                push_str(&mut bytes, &ui.capability_ref);
+                push_str(&mut bytes, &ui.panel_template);
             }
             Contribution::AutomationWorkflow(wf) => {
-                bytes.extend_from_slice(wf.root_predicate.as_bytes());
+                bytes.push(5);
+                push_str(&mut bytes, &wf.root_predicate);
+                push_bytes(
+                    &mut bytes,
+                    &(wf.trigger_keywords.len() as u64).to_le_bytes(),
+                );
                 for keyword in &wf.trigger_keywords {
-                    bytes.extend_from_slice(keyword.as_bytes());
+                    push_str(&mut bytes, keyword);
                 }
             }
             Contribution::MemoryProvider(mp) => {
-                bytes.extend_from_slice(&[mp.tier as u8]);
-                bytes.extend_from_slice(mp.entity_key.as_bytes());
-                bytes.extend_from_slice(mp.capability_id.as_bytes());
+                bytes.push(6);
+                bytes.push(mp.tier as u8);
+                push_str(&mut bytes, &mp.entity_key);
+                push_str(&mut bytes, &mp.capability_id);
             }
             Contribution::ExecutionEngine(ee) => {
-                bytes.extend_from_slice(ee.engine_id.as_bytes());
-                bytes.extend_from_slice(ee.launcher.program.to_string_lossy().as_bytes());
+                bytes.push(7);
+                push_str(&mut bytes, &ee.engine_id);
+                // The launcher every script published through this engine will run through.
+                push_native_binary(&mut bytes, Some(&ee.launcher));
             }
         }
     }

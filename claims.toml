@@ -368,3 +368,27 @@ id = "app.a-rebuild-preserves-stored-data"
 claim = "Rebuilding an app changes what it does without discarding what it has already stored."
 crate = "hyperion-app"
 test = "a_rebuild_keeps_what_the_app_has_already_stored"
+
+[[claim]]
+id = "plugin.signature-covers-the-program-that-runs"
+claim = "A manifest's signature commits to the program and script that will actually execute, so a signed manifest cannot be repointed at a different executable."
+crate = "hyperion-plugin-framework"
+test = "swapping_the_program_that_will_run_breaks_the_signature"
+
+[[claim]]
+id = "plugin.signature-covers-requested-permissions"
+claim = "A manifest's signature commits to every permission it requests, so a signed manifest's permissions cannot be widened after the fact."
+crate = "hyperion-plugin-framework"
+test = "widening_a_requested_permission_breaks_the_signature"
+
+[[claim]]
+id = "plugin.signature-covers-the-contract"
+claim = "A manifest's signature commits to its capability contract, including the declared side effects the review gate reasons about and an app's own signed owner and storage declaration."
+crate = "hyperion-plugin-framework"
+test = "rewriting_the_contract_breaks_the_signature"
+
+[[claim]]
+id = "plugin.signature-is-unambiguous"
+claim = "Two different manifests can never share a signature by shifting where one field ends and the next begins."
+crate = "hyperion-plugin-framework"
+test = "two_manifests_differing_only_in_where_a_boundary_falls_do_not_share_a_signature"

@@ -48,6 +48,24 @@ const SDK_VERSION: u32 = 1;
 /// benchmark harness would be the thing that earns a varying score here.
 const APP_QUALITY_SCORE: f32 = 1.0;
 
+/// What an app asks the Scheduler to admit it with.
+///
+/// Modest and uniform on purpose -- see the comment at its use site. `inference_tokens_per_sec` is
+/// zero because an app is a sandboxed program, not a model call: claiming inference capacity it
+/// never uses would crowd out work that genuinely needs it.
+const APP_RESOURCE_BUDGET: hyperion_scheduler::ResourceVector =
+    hyperion_scheduler::ResourceVector {
+        cpu_shares: 64,
+        ram_mb: 64,
+        gpu_shares: 0,
+        vram_mb: 0,
+        storage_iops: 16,
+        network_bw_kbps: 0,
+        inference_tokens_per_sec: 0,
+        context_window_slots: 0,
+        battery_budget_mw: 0,
+    };
+
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("{0}")]
@@ -267,7 +285,16 @@ impl AppRegistry {
             latency_class: LatencyClass::Interactive,
             requires_consent: false,
             native_binary: Some(native_binary),
-            resource_profile: None,
+            // A real, declared budget rather than `None`. `AgentRuntime::prepare_invoke` reads
+            // this as a genuine per-capability Scheduler admission request; leaving it unset made
+            // every app fall back to the same fixed one-inference-token stand-in, which describes
+            // a model call and not a sandboxed process that does real CPU and I/O work.
+            //
+            // Deliberately one modest constant rather than a number per app: nothing here has
+            // measured any of these apps, and a figure that varied would imply it had been. What
+            // this honestly says is "a small local program", which is what an M1/T2 app is. When a
+            // real harness can measure one, this is the field that stops being a constant.
+            resource_profile: Some(APP_RESOURCE_BUDGET),
         };
 
         // `Execute` really is what this implementation does, and it is exactly what the contract

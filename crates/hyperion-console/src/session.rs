@@ -2535,6 +2535,30 @@ impl ConsoleSession {
             ];
         };
 
+        // Reach for what already exists before making something new -- docs/998-roadmap.md's
+        // Resourceful pillar opens with exactly that, and building a second app for a goal one
+        // already covers is the most ordinary way to get it wrong. Suggested rather than
+        // substituted: the match is word overlap, and silently declining to build what someone
+        // asked for on that evidence would be worse than an unnecessary sentence.
+        let installed = self.apps.list();
+        if let Some(existing) = hyperion_app::best_match(&installed, goal) {
+            return vec![
+                format!(
+                    "You already have \"{}\" for something like this -- {}.",
+                    existing.name, existing.goal
+                ),
+                format!(
+                    "Try \"/run {}\" first. If it isn't what you meant, say it a different way \
+                     and I'll build something new.",
+                    if existing.inputs.is_empty() {
+                        existing.name.clone()
+                    } else {
+                        Self::example_invocation(existing)
+                    }
+                ),
+            ];
+        }
+
         let prompt = format!(
             "Design a small program for this goal: {goal}\n\n{}",
             hyperion_app::app_plan_instructions(&engine_id)

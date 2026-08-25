@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 28888cac77dd6c558aab0d396ece9aa9f9c0e447dbfbe5285948547f1ffe0ab3 # shrinks to contract = AppContract { name: "a", owner: "a.a.0a.0..0.", keeps_data: false, goal: "", fields: [] }, index = 22
