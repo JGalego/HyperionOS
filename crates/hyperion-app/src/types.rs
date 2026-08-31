@@ -108,6 +108,8 @@ pub struct AppDefinition {
     /// hint: it decides whether the sandbox grants durable storage, and it puts the app through the
     /// SDK's own human-review gate.
     pub keeps_data: bool,
+    /// Whether it should be left running rather than dispatched per request (App Builder T3).
+    pub resident: bool,
     /// The `engine_id` of an already-installed `Contribution::ExecutionEngine` that runs this
     /// script. Resolved through `hyperion_sdk::resolve_via_engine`, so an app installs and runs
     /// through the exact same `ImplementationKind::NativeBinary` path a hand-installed binary
@@ -130,6 +132,8 @@ pub struct InstalledApp {
     /// Whether it keeps anything between runs (App Builder T2), read back from the same signed
     /// contract.
     pub keeps_data: bool,
+    /// Whether it is left running rather than dispatched per request (App Builder T3).
+    pub resident: bool,
     pub goal: String,
     pub tier: AppTier,
     pub inputs: Vec<InputField>,

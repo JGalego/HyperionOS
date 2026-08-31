@@ -88,6 +88,7 @@ fn definition(keeps_data: bool) -> AppDefinition {
         goal: "Keep my shopping list".to_string(),
         owner: "alice".to_string(),
         keeps_data,
+        resident: false,
         engine_id: ENGINE.to_string(),
         script: "remember the list\n".to_string(),
         inputs: vec![InputField {

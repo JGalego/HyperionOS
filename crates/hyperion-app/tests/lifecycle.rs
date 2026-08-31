@@ -102,6 +102,7 @@ fn tally_definition() -> AppDefinition {
     AppDefinition {
         owner: "alice".to_string(),
         keeps_data: false,
+        resident: false,
         name: "invoice-tally".to_string(),
         goal: "Add up this month's invoices".to_string(),
         engine_id: ENGINE.to_string(),

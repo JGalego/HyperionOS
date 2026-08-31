@@ -88,6 +88,14 @@ pub enum AppError {
     /// question rather than a refusal.
     #[error("\"{app}\" wants to keep its own data between runs, which needs your say-so")]
     NeedsStorageConsent { app: String },
+    #[error("\"{app}\" isn't the kind of app that stays running")]
+    NotResident { app: String },
+    #[error("\"{app}\" is already running")]
+    AlreadyRunning { app: String },
+    #[error("\"{app}\" isn't running")]
+    NotRunning { app: String },
+    #[error("I couldn't keep \"{0}\" running")]
+    Residency(String),
     #[error("I couldn't save the app's script: {0}")]
     Io(String),
     #[error("I couldn't install the app: {0}")]
@@ -148,6 +156,7 @@ impl AppRegistry {
             name: definition.name.clone(),
             owner: definition.owner.clone(),
             keeps_data: definition.keeps_data,
+            resident: definition.resident,
             goal: definition.goal.clone(),
             fields: definition.inputs.clone(),
         };
@@ -350,6 +359,7 @@ impl AppRegistry {
             name: definition.name.clone(),
             owner: existing.owner.clone(),
             keeps_data: definition.keeps_data,
+            resident: definition.resident,
             goal: definition.goal.clone(),
             fields: definition.inputs.clone(),
         };
@@ -430,6 +440,7 @@ impl AppRegistry {
                     name: decoded.name,
                     owner: decoded.owner,
                     keeps_data: decoded.keeps_data,
+                    resident: decoded.resident,
                     goal: decoded.goal,
                     inputs: decoded.fields,
                     capability_id: entry.capability_id,
@@ -454,6 +465,7 @@ impl AppRegistry {
             name: decoded.name,
             owner: decoded.owner,
             keeps_data: decoded.keeps_data,
+            resident: decoded.resident,
             goal: decoded.goal,
             inputs: decoded.fields,
             capability_id: entry.capability_id,

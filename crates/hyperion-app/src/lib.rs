@@ -53,6 +53,7 @@
 pub mod contract;
 pub mod plan;
 pub mod registry;
+pub mod resident;
 pub mod suggest;
 pub mod types;
 
@@ -62,5 +63,6 @@ pub use contract::{
 };
 pub use plan::{app_plan_instructions, from_model_answer, PlanError};
 pub use registry::{AppError, AppRegistry, APP_PUBLISHER};
+pub use resident::{ResidentApps, ResidentState};
 pub use suggest::best_match;
 pub use types::{AppDefinition, AppPaths, AppTier, InputField, InputKind, InstalledApp};

@@ -7,6 +7,7 @@ fn app(name: &str, goal: &str) -> InstalledApp {
     InstalledApp {
         owner: "alice".to_string(),
         keeps_data: false,
+        resident: false,
         name: name.to_string(),
         goal: goal.to_string(),
         tier: AppTier::Answer,

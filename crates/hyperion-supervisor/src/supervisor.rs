@@ -87,7 +87,11 @@ enum ChildKind {
     /// tree (`hyperion-init`'s carryover debug shell is the one real user) -- see this module's
     /// own docs on why this can't safely be a second, independent wait loop instead.
     Plain {
-        respawn: Box<dyn FnMut() -> io::Result<libc::pid_t>>,
+        /// `Send` so a `Supervisor` can be owned by a struct that moves between threads -- which
+        /// `hyperion-console` does, since it serves MCP/A2A from a background thread. Nothing is
+        /// asked of a caller that was not already true: every respawn closure in this workspace
+        /// captures owned data.
+        respawn: Box<dyn FnMut() -> io::Result<libc::pid_t> + Send>,
     },
 }
 
@@ -282,7 +286,7 @@ impl Supervisor {
         &mut self,
         name: impl Into<String>,
         initial_pid: libc::pid_t,
-        respawn: impl FnMut() -> io::Result<libc::pid_t> + 'static,
+        respawn: impl FnMut() -> io::Result<libc::pid_t> + Send + 'static,
     ) {
         self.children.insert(
             initial_pid,
@@ -325,6 +329,44 @@ impl Supervisor {
             return Err(SupervisorError::Wait(io::Error::last_os_error()));
         }
 
+        self.restart_exited(pid)
+    }
+
+    /// Restarts any supervised service that has exited, without blocking and without ever touching
+    /// a process this supervisor does not own. Returns one outcome per service it reaped.
+    ///
+    /// [`Self::reap_and_restart_one`] cannot be used in a process that also runs one-shot sandboxed
+    /// work, and the reason is concrete rather than stylistic: it waits on `-1`, which reaps *any*
+    /// child. `hyperion_trust_boundary::SpawnedBoundary::try_wait` polls its own pid with
+    /// `waitpid(pid, WNOHANG)`, so a supervisor sharing the process will happily reap a one-shot
+    /// capability invocation's child first -- and that invocation's own `try_wait` then gets
+    /// `ECHILD` and reports a failure for a program that actually succeeded. Blocking on `-1` makes
+    /// it worse, since the caller parks until some unrelated child exits.
+    ///
+    /// This polls each tracked pid individually with `WNOHANG`, so the two coexist: an app
+    /// dispatched one-shot and an app left running are both real, and a device that could only do
+    /// one of them at a time would be an artefact of how reaping was written.
+    pub fn poll_and_restart(&mut self) -> Vec<Result<String, SupervisorError>> {
+        let tracked: Vec<libc::pid_t> = self.children.keys().copied().collect();
+        let mut outcomes = Vec::new();
+        for pid in tracked {
+            let mut status: libc::c_int = 0;
+            // SAFETY: `pid` is a child this supervisor forked and has not reaped; status is a valid
+            // out-pointer; WNOHANG makes this non-blocking.
+            let reaped = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            if reaped != pid {
+                // Still running (0), or already reaped by someone else (<0). Either way there is
+                // nothing for this supervisor to restart right now.
+                continue;
+            }
+            outcomes.push(self.restart_exited(pid));
+        }
+        outcomes
+    }
+
+    /// The restart decision itself, shared by both entry points so the give-up policy, the backoff
+    /// and the fresh-grant respawn can never differ depending on how the exit was noticed.
+    fn restart_exited(&mut self, pid: libc::pid_t) -> Result<String, SupervisorError> {
         let Some(mut child) = self.children.remove(&pid) else {
             return Ok(String::new());
         };
@@ -410,6 +452,45 @@ impl Supervisor {
                 Err(e)
             }
         }
+    }
+
+    /// Stops a supervised service deliberately, so it is not restarted.
+    ///
+    /// Distinct from a crash in the one way that matters: a crash means "this should be running and
+    /// isn't", which is what restarting is for, while this means "this should no longer be
+    /// running". Without it, a service could be started and then only ever stopped by killing the
+    /// whole supervisor -- so an app someone chose to stop would come straight back.
+    ///
+    /// Removes the child before signalling, so a concurrent [`Self::poll_and_restart`] cannot see
+    /// the exit and respawn what was just stopped. Its capability token is revoked, fencing off any
+    /// other holder of a now-stale grant.
+    pub fn terminate(&mut self, name: &str) -> Result<(), SupervisorError> {
+        let Some(pid) = self
+            .children
+            .iter()
+            .find(|(_, child)| child.book.name == name)
+            .map(|(pid, _)| *pid)
+        else {
+            return Ok(());
+        };
+        let Some(mut child) = self.children.remove(&pid) else {
+            return Ok(());
+        };
+        if let ChildKind::Sandboxed { token, .. } = &mut child.kind {
+            self.monitor.cap_revoke(token);
+        }
+        // Signalled by pid rather than through `SpawnedBoundary::kill`, which consumes the handle:
+        // the handle lives inside `child` and is what its `Drop` uses to clean up, so moving it out
+        // here would trade a tidy kill for a leaked cgroup.
+        //
+        // SAFETY: `pid` is a child this supervisor forked and has not yet reaped.
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+        // Reap it, so a stopped service does not linger as a zombie for the life of the process.
+        let mut status: libc::c_int = 0;
+        // SAFETY: `pid` is this process's own child; status is a valid out-pointer.
+        unsafe { libc::waitpid(pid, &mut status, 0) };
+        self.given_up.remove(name);
+        Ok(())
     }
 
     /// The service this supervisor has given up restarting, if any -- see [`GiveUpReason`].

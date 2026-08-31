@@ -95,6 +95,22 @@ version numbers track release sequence, not API stability.
   already express per-user separation and revocation without a second notion of
   authority.
 
+**T3 — an app can be left running** (written, and not yet verified)
+- Residency is declared in the signed contract and started with `/app-start`,
+  supervised by `hyperion-supervisor` so a crash is met with a respawn under a
+  fresh grant. Its durable T2 directory is its filesystem scope; it can reach
+  nowhere else. `/apps` shows what is running.
+- Two real fixes this needed in `hyperion-supervisor`. `reap_and_restart_one`
+  blocks on `waitpid(-1)` and reaps *any* child, so a supervisor sharing a
+  process with one-shot sandboxed work would steal its exit status and make a
+  successful program report failure; `poll_and_restart` polls only its own pids,
+  non-blocking. And there was no way to deliberately *stop* a service -- it could
+  only be killed by killing the supervisor, so a stopped app came straight back.
+- Stated plainly: none of this has run. `spawn_sandboxed` needs user namespaces
+  and Landlock, and the container it was written in has neither. The tests cover
+  declaration, refusal, spec derivation and per-person separation. That a
+  resident app really survives a crash is not yet claimed.
+
 **Smaller things**
 - An app declares a real Scheduler admission budget instead of leaving
   `resource_profile` unset, which made every app fall back to a stand-in

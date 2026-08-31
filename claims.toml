@@ -392,3 +392,15 @@ id = "plugin.signature-is-unambiguous"
 claim = "Two different manifests can never share a signature by shifting where one field ends and the next begins."
 crate = "hyperion-plugin-framework"
 test = "two_manifests_differing_only_in_where_a_boundary_falls_do_not_share_a_signature"
+
+[[claim]]
+id = "app.residency-is-declared-not-assumed"
+claim = "An app is only left running if its own signed contract declared it should be; a one-shot app cannot be made resident by a caller."
+crate = "hyperion-app"
+test = "an_app_that_never_asked_to_stay_running_is_refused"
+
+[[claim]]
+id = "app.a-resident-app-is-confined-to-its-own-data"
+claim = "A resident app runs confined to its own durable directory, at the strongest sandbox depth, holding a declared budget."
+crate = "hyperion-app"
+test = "a_resident_app_is_confined_to_its_own_data_directory"

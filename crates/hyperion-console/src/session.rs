@@ -25,7 +25,10 @@ use hyperion_agent_runtime::{AgentManifest, AgentRuntime, InvokeOutcome, TrustTi
 use hyperion_ai_runtime::{
     sign, LocalAiRuntime, MockBackend, ModelClass, ModelDescriptor, Precision, QuantizedVariant,
 };
-use hyperion_app::{AppDefinition, AppError, AppPaths, AppRegistry, InputKind, InstalledApp};
+use hyperion_app::{
+    AppDefinition, AppError, AppPaths, AppRegistry, InputKind, InstalledApp, ResidentApps,
+    ResidentState,
+};
 use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_coordination::{CoordinationSession, TaskNode};
 use hyperion_crypto::{Keystore, SecretStore};
@@ -173,6 +176,12 @@ pub struct ConsoleSession {
     /// so an app is a real installed Capability like any other, listed by decoding what is really
     /// installed rather than from any record this session keeps of its own.
     apps: AppRegistry,
+    /// Apps left running (App Builder T3), if this device could open a supervisor at all.
+    ///
+    /// `None` degrades honestly rather than crashing a whole console session: a supervisor needs a
+    /// rendezvous directory it can create, and a device where that fails can still build and run
+    /// one-shot apps perfectly well. `/app-start` says so instead of pretending.
+    residents: Option<ResidentApps>,
     /// The same real Explanation Record store `agent_runtime` writes to, held so `/app-logs` can
     /// read it. Every app run already produced records here; nothing could show them.
     explanations: Arc<ExplanationStore>,
@@ -636,6 +645,7 @@ impl ConsoleSession {
             memory,
             last_utterance: None,
             apps: AppRegistry::new(Arc::clone(&plugins), AppPaths::new(data_dir.join("apps"))),
+            residents: ResidentApps::open(data_dir.join("run"), None).ok(),
             explanations,
             principal,
             principals,
@@ -1115,6 +1125,28 @@ impl ConsoleSession {
                 return Some(self.describe_principal());
             }
             return Some(self.switch_user(name));
+        }
+
+        if lower.starts_with("/app-start") {
+            let name = trimmed["/app-start".len()..].trim();
+            if name.is_empty() {
+                return Some(vec![
+                    "\"/app-start\" needs the name of an app, e.g. \"/app-start inbox-watch\"."
+                        .to_string(),
+                ]);
+            }
+            return Some(self.start_resident(name));
+        }
+
+        if lower.starts_with("/app-stop") {
+            let name = trimmed["/app-stop".len()..].trim();
+            if name.is_empty() {
+                return Some(vec![
+                    "\"/app-stop\" needs the name of an app, e.g. \"/app-stop inbox-watch\"."
+                        .to_string(),
+                ]);
+            }
+            return Some(self.stop_resident(name));
         }
 
         if lower.starts_with("/app-logs") {
@@ -1605,6 +1637,10 @@ impl ConsoleSession {
             "  /rebuild <name> [what to change]            change what one does without losing \
              it, e.g. \"/rebuild invoice-tally also handle refunds\""
                 .to_string(),
+            "  /app-start <name>                           leave one running, if it's the kind \
+             that watches for something"
+                .to_string(),
+            "  /app-stop <name>                            stop one that's running".to_string(),
             "  /app-remove <name>                          delete it and revoke everything it \
              could do"
                 .to_string(),
@@ -1746,6 +1782,7 @@ impl ConsoleSession {
                 .expect("just checked it is present");
             return self.supply_app_input(pending, utterance);
         }
+        self.poll_residents();
         let trimmed = utterance.trim();
         if trimmed.to_ascii_lowercase().starts_with("/redo") {
             let rest = trimmed["/redo".len()..].trim();
@@ -2221,6 +2258,111 @@ impl ConsoleSession {
         }
     }
 
+    /// Where one person's copy of an app keeps its data -- mirrors the layout
+    /// `PluginRegistry::data_scope_for` composes for a one-shot run, so a resident app and a
+    /// one-shot run of the same app see the same files.
+    fn app_data_dir(&self, capability_id: &str) -> PathBuf {
+        let encoded: String = capability_id
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join("");
+        self.data_dir
+            .join("apps")
+            .join("data")
+            .join(self.principal.boundary.0.to_string())
+            .join(encoded)
+    }
+
+    /// `/app-start <name>` -- leave an app running.
+    fn start_resident(&mut self, name: &str) -> Vec<String> {
+        let Some(app) = self.apps.describe(name) else {
+            return vec![Self::no_such_app(name)];
+        };
+        if !app.resident {
+            return vec![format!(
+                "\"{name}\" isn't the kind of app that stays running -- \"/run {name}\" does it \
+                 once, which is what it was built for."
+            )];
+        }
+        if self.residents.is_none() {
+            return vec![
+                "I can't keep anything running on this device -- I couldn't start a supervisor."
+                    .to_string(),
+            ];
+        }
+
+        // The same launcher and script a one-shot run of this app would use, read back from the
+        // installed implementation rather than recomposed, so the two can never diverge.
+        let Some(entry) = self.plugins.query(&app.capability_id) else {
+            return vec![Self::no_such_app(name)];
+        };
+        let Some(native) = entry
+            .implementations
+            .iter()
+            .find_map(|i| i.native_binary.as_ref())
+            .cloned()
+        else {
+            return vec![format!("\"{name}\" has nothing runnable behind it.")];
+        };
+
+        let data_dir = self.app_data_dir(&app.capability_id);
+        if let Err(e) = std::fs::create_dir_all(&data_dir) {
+            return vec![format!(
+                "I couldn't prepare somewhere for \"{name}\" to work: {e}"
+            )];
+        }
+
+        let scope = self.principal.scope();
+        let residents = self
+            .residents
+            .as_mut()
+            .expect("just checked this device has a supervisor");
+        match residents.start(
+            &app,
+            native.program.clone(),
+            native.args.clone(),
+            data_dir,
+            &scope,
+        ) {
+            Ok(()) => vec![
+                format!("\"{name}\" is running -- it'll keep going and restart itself if it dies."),
+                format!("\"/app-stop {name}\" when you've had enough of it."),
+            ],
+            Err(AppError::AlreadyRunning { .. }) => {
+                vec![format!("\"{name}\" is already running.")]
+            }
+            Err(e) => vec![format!("{e}.")],
+        }
+    }
+
+    /// `/app-stop <name>` -- stop one, and mean it.
+    fn stop_resident(&mut self, name: &str) -> Vec<String> {
+        let scope = self.principal.scope();
+        let Some(residents) = self.residents.as_mut() else {
+            return vec![format!("\"{name}\" isn't running.")];
+        };
+        match residents.stop(name, &scope) {
+            // Deliberate, so it is not restarted -- a stop that came straight back would be worse
+            // than no stop at all.
+            Ok(()) => vec![format!("Stopped \"{name}\".")],
+            Err(AppError::NotRunning { .. }) => vec![format!("\"{name}\" isn't running.")],
+            Err(e) => vec![format!("{e}.")],
+        }
+    }
+
+    /// Lets the supervisor notice and restart anything of this person's that has died.
+    ///
+    /// Called once per turn rather than on a timer, which is honest about there being no scheduler
+    /// here: a crashed app is noticed the next time somebody types something. Non-blocking and
+    /// own-pids-only, so it can never steal the exit status of a one-shot app running in this same
+    /// process (see `hyperion_supervisor::Supervisor::poll_and_restart`).
+    fn poll_residents(&mut self) {
+        if let Some(residents) = self.residents.as_mut() {
+            residents.poll();
+        }
+    }
+
     /// `/app-logs <name>` -- what an app has actually done.
     ///
     /// Reads the real Explanation Records `AgentRuntime::invoke` already writes for every dispatch.
@@ -2444,7 +2586,13 @@ impl ConsoleSession {
             } else {
                 format!(" (built by {})", app.owner)
             };
-            lines.push(format!("  {} -- {}{whose}", app.name, app.goal));
+            let running = match self.resident_state(&app.name) {
+                Some(ResidentState::Running) => " [running]",
+                Some(ResidentState::GaveUp { .. }) => " [stopped: it kept crashing]",
+                None if app.resident => " [not running]",
+                None => "",
+            };
+            lines.push(format!("  {} -- {}{whose}{running}", app.name, app.goal));
         }
         lines.push("\"/app <name>\" for what one needs, \"/run <name>\" to use it.".to_string());
         lines
@@ -2511,6 +2659,17 @@ impl ConsoleSession {
             parts.push(format!("{}={}", input.name, sample));
         }
         parts.join(" ")
+    }
+
+    /// How one of this person's resident apps is doing, or `None` if it isn't running for them.
+    fn resident_state(&self, name: &str) -> Option<ResidentState> {
+        let residents = self.residents.as_ref()?;
+        let scope = self.principal.scope();
+        residents
+            .status_for(&scope)
+            .into_iter()
+            .find(|(app, _)| app == name)
+            .map(|(_, state)| state)
     }
 
     fn no_such_app(name: &str) -> String {

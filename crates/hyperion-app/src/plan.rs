@@ -44,6 +44,8 @@ Reply with one JSON object and nothing else -- no prose, no markdown fence. Shap
                  \"required\": true|false,
                  \"description\": plain language, shown when asking a person for this }} ],
   \"keeps_data\": true only if it must remember something between runs; false otherwise,
+  \"resident\": true only if it must keep running by itself and watch for something; almost
+               always false,
   \"script\": the complete script source
 }}
 
@@ -237,6 +239,13 @@ pub fn from_model_answer(
         // nobody's program actually needed.
         keeps_data: value
             .get("keeps_data")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        // Absent means one-shot, for the same reason storage defaults off: residency holds a
+        // resource budget for as long as the app exists, and a program that did not ask to keep
+        // running almost certainly should not.
+        resident: value
+            .get("resident")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         engine_id: engine_id.to_string(),

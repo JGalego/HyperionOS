@@ -14,6 +14,10 @@ hyperion-identity = { workspace = true }
 # An app declares a real Scheduler admission budget rather than leaving `resource_profile` unset,
 # which made every app fall back to a stand-in describing a model call.
 hyperion-scheduler = { workspace = true }
+# App Builder T3: a resident app is a supervised service, so supervision comes from the crate that
+# already solves it rather than a second restart policy kept in agreement with the first.
+hyperion-supervisor = { workspace = true }
+hyperion-trust-boundary = { workspace = true }
 hyperion-plugin-framework = { workspace = true }
 hyperion-sdk = { workspace = true }
 serde_json = { workspace = true }

@@ -52,27 +52,31 @@ fn app_contract() -> impl Strategy<Value = AppContract> {
         "[a-z][a-z0-9-]{0,12}",
         "[a-z][a-z0-9.]{0,12}",
         any::<bool>(),
+        any::<bool>(),
         awkward_text(),
         proptest::collection::vec(
             (field_name(), input_kind(), awkward_text(), any::<bool>()),
             0..4,
         ),
     )
-        .prop_map(|(name, owner, keeps_data, goal, fields)| AppContract {
-            name,
-            owner,
-            keeps_data,
-            goal,
-            fields: fields
-                .into_iter()
-                .map(|(name, kind, description, required)| InputField {
-                    name,
-                    kind,
-                    description,
-                    required,
-                })
-                .collect(),
-        })
+        .prop_map(
+            |(name, owner, keeps_data, resident, goal, fields)| AppContract {
+                name,
+                owner,
+                keeps_data,
+                resident,
+                goal,
+                fields: fields
+                    .into_iter()
+                    .map(|(name, kind, description, required)| InputField {
+                        name,
+                        kind,
+                        description,
+                        required,
+                    })
+                    .collect(),
+            },
+        )
 }
 
 proptest! {

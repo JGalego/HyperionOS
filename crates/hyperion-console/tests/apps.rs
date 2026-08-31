@@ -212,3 +212,41 @@ fn ordinary_turns_are_unaffected_by_the_missing_input_check() {
     let reply = session.handle_utterance("hello there").join("\n");
     assert!(!reply.is_empty());
 }
+
+#[test]
+fn the_residency_commands_say_what_they_need_and_refuse_unknown_apps() {
+    let (_dir, mut session) = open_session();
+    for (command, expected) in [
+        ("/app-start", "needs the name of an app"),
+        ("/app-stop", "needs the name of an app"),
+    ] {
+        let reply = session.handle_utterance(command).join("\n");
+        assert!(reply.contains(expected), "{command} got: {reply}");
+    }
+    let reply = session.handle_utterance("/app-start nope").join("\n");
+    assert!(reply.contains("don't have anything called"), "got: {reply}");
+    // Stopping something that was never running is an answer, not an error.
+    let reply = session.handle_utterance("/app-stop nope").join("\n");
+    assert!(reply.contains("isn't running"), "got: {reply}");
+}
+
+#[test]
+fn help_lists_the_residency_commands() {
+    let (_dir, mut session) = open_session();
+    let reply = session.handle_utterance("/help").join("\n");
+    for command in ["/app-start", "/app-stop"] {
+        assert!(reply.contains(command), "help should mention {command}");
+    }
+}
+
+#[test]
+fn polling_for_resident_apps_never_disturbs_an_ordinary_turn() {
+    // Residency polling runs at the top of every turn. With nothing supervised it must be
+    // invisible -- and it must never reap a child it does not own, which is why it uses the
+    // supervisor's non-blocking own-pids-only path.
+    let (_dir, mut session) = open_session();
+    for _ in 0..3 {
+        let reply = session.handle_utterance("/apps").join("\n");
+        assert!(reply.contains("/build"), "got: {reply}");
+    }
+}

@@ -21,8 +21,8 @@
 //! field:
 //!
 //! ```text
-//! hyperion-app/v3|app|<name>|<owner>|keeps-data|<goal>
-//! hyperion-app/v3|in|<name>|<kind>|required|<description>
+//! hyperion-app/v4|app|<name>|<owner>|keeps-data|resident|<goal>
+//! hyperion-app/v4|in|<name>|<kind>|required|<description>
 //! ```
 //!
 //! `<owner>` is the principal who built it (docs/998-roadmap.md §0, Decision 2). It rides inside
@@ -39,9 +39,13 @@
 //! the same reason: whether an app may keep anything between runs decides whether it is granted
 //! durable storage at all, so it must not be editable without breaking the signature.
 //!
-//! The version has moved twice, once per header field added (`v1`→`v2` for the owner, `v2`→`v3`
-//! for this). An older app no longer decodes, and simply stops being listed rather than being
-//! silently reinterpreted as one whose owner or storage is unknown.
+//! The fifth is `resident` or `one-shot` — the App Builder's T3. A resident app is left running
+//! and supervised rather than dispatched per request, which is a different lifetime and a
+//! different resource budget, so it is signed too.
+//!
+//! The version has moved once per header field added (`v1`→`v2` owner, `v2`→`v3` storage,
+//! `v3`→`v4` residency). An older app no longer decodes, and simply stops being listed rather than
+//! being silently reinterpreted as one whose owner, storage or lifetime is unknown.
 //!
 //! `<kind>` is one of `text`, `integer`, `number`, `boolean`, `path`, or `choice:<a>,<b>,...`.
 //! Backslash, `|` and `,` are backslash-escaped everywhere, so a goal or description containing a
@@ -59,7 +63,7 @@ use crate::types::{AppTier, InputField, InputKind};
 
 /// Bumped only for a genuinely incompatible change to the layout above. A decoder that meets a
 /// version it does not know treats the capability as "not an app" rather than guessing.
-pub const CONTRACT_VERSION: &str = "hyperion-app/v3";
+pub const CONTRACT_VERSION: &str = "hyperion-app/v4";
 
 /// The longest an app name may be. Long enough to be descriptive, short enough that the resulting
 /// capability id and directory name stay manageable everywhere they are displayed.
@@ -85,6 +89,13 @@ pub struct AppContract {
     /// person -- which is a real permission, so declaring this makes the app request `Write` and
     /// puts it through the SDK's own human-review gate.
     pub keeps_data: bool,
+    /// Whether this app is left running rather than dispatched per request (App Builder T3).
+    ///
+    /// A one-shot app runs when asked and exits; its lifetime is one call and its cost is bounded
+    /// by a timeout. A resident one is supervised, restarted if it dies, and holds a resource
+    /// budget for as long as it exists -- which is why it is declared, signed, and started
+    /// explicitly rather than inferred.
+    pub resident: bool,
     pub goal: String,
     pub fields: Vec<InputField>,
 }
@@ -267,13 +278,18 @@ fn decode_kind(raw: &str) -> Option<InputKind> {
 /// Encodes a whole contract into the `SemanticContract.inputs` strings that get signed.
 pub fn encode(contract: &AppContract) -> Vec<String> {
     let mut encoded = vec![format!(
-        "{CONTRACT_VERSION}|app|{}|{}|{}|{}",
+        "{CONTRACT_VERSION}|app|{}|{}|{}|{}|{}",
         escape(&contract.name),
         escape(&contract.owner),
         if contract.keeps_data {
             "keeps-data"
         } else {
             "stateless"
+        },
+        if contract.resident {
+            "resident"
+        } else {
+            "one-shot"
         },
         escape(&contract.goal),
     )];
@@ -303,7 +319,7 @@ pub fn encode(contract: &AppContract) -> Vec<String> {
 pub fn decode(inputs: &[String]) -> Option<AppContract> {
     let (header, rest) = inputs.split_first()?;
     let header_parts = split_escaped(header, '|');
-    if header_parts.len() != 6 || header_parts[0] != CONTRACT_VERSION || header_parts[1] != "app" {
+    if header_parts.len() != 7 || header_parts[0] != CONTRACT_VERSION || header_parts[1] != "app" {
         return None;
     }
     let name = unescape(&header_parts[2]);
@@ -315,7 +331,12 @@ pub fn decode(inputs: &[String]) -> Option<AppContract> {
         // "stateless" would silently strip an app of storage it may already have written to.
         _ => return None,
     };
-    let goal = unescape(&header_parts[5]);
+    let resident = match header_parts[5].as_str() {
+        "resident" => true,
+        "one-shot" => false,
+        _ => return None,
+    };
+    let goal = unescape(&header_parts[6]);
     if name.is_empty() || owner.is_empty() {
         return None;
     }
@@ -347,6 +368,7 @@ pub fn decode(inputs: &[String]) -> Option<AppContract> {
         name,
         owner,
         keeps_data,
+        resident,
         goal,
         fields,
     })

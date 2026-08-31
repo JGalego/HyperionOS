@@ -2920,6 +2920,8 @@ dependencies = [
  "hyperion-plugin-framework",
  "hyperion-scheduler",
  "hyperion-sdk",
+ "hyperion-supervisor",
+ "hyperion-trust-boundary",
  "proptest",
  "serde_json",
  "tempfile",

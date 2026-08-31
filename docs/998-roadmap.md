@@ -2230,8 +2230,31 @@ than any text scan, and it is the honest reason script-backed apps are acceptabl
   allocates a person's boundary once and persists it — a property that crate already proves. If
   that ever stopped holding, the directory would be orphaned rather than leaked: data would look
   lost, not become someone else's.
-- **M3 — T3.** Residency via `hyperion-supervisor`, with a real cgroup budget and
-  regeneration-on-repeated-failure.
+- **M3 — T3. Written 2026-08-25, and honestly unverified.** A resident app is declared in the
+  signed contract (`v4`'s `resident` field), started explicitly with `/app-start`, and supervised by
+  `hyperion-supervisor` — capability-scoped spawn, crash detection, respawn under a *fresh* grant,
+  cgroup placement, and that crate's existing give-up policy for something that crash-loops. Its
+  own durable T2 directory is its `fs_scope`: unlike a one-shot app, whose scope is a throwaway temp
+  directory, it has nowhere else to put anything and should be able to reach nowhere else.
+
+  **Two real fixes in `hyperion-supervisor` this needed.** `reap_and_restart_one` blocks on
+  `waitpid(-1)`, which reaps *any* child — including the one-shot sandboxed invocations the same
+  process runs, whose own `try_wait` would then get `ECHILD` and report failure for a program that
+  had succeeded. `poll_and_restart` polls only the pids it owns, non-blocking, which is what lets a
+  device run both kinds of app at once. And there was no way to *stop* a supervised service: it
+  could only be killed by killing the supervisor, so an app someone chose to stop would come
+  straight back. `terminate` removes the child before signalling, so a concurrent poll cannot see
+  the exit and respawn it.
+
+  **What is not established.** Nothing here has ever run. `spawn_sandboxed` needs user namespaces
+  and Landlock and this container has neither — the same reason seven pre-existing sandbox tests
+  fail here. The tests cover what can be settled without executing anything: that residency is
+  declared and signed, that a one-shot app is refused it, that the derived service spec confines the
+  app the way the design says, and that two people running the same app get separate services.
+  **That a resident app really survives a crash is a claim this does not yet make.**
+
+  Polling happens once per console turn rather than on a timer, which is honest about there being no
+  scheduler here: a crashed app is noticed the next time somebody types something.
 - **M4 — T4.** The broker, the authentication flow on top of M1a's principals, and the accessible
   surface contract. Still deserves its own design pass; M1a removes the largest unknown from it.
 
