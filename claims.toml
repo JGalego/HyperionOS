@@ -404,3 +404,33 @@ id = "app.a-resident-app-is-confined-to-its-own-data"
 claim = "A resident app runs confined to its own durable directory, at the strongest sandbox depth, holding a declared budget."
 crate = "hyperion-app"
 test = "a_resident_app_is_confined_to_its_own_data_directory"
+
+[[claim]]
+id = "crypto.passphrases-are-never-stored"
+claim = "A stored credential never contains the passphrase, and the same passphrase stored twice produces different records."
+crate = "hyperion-crypto"
+test = "the_passphrase_itself_is_never_in_what_is_stored"
+
+[[claim]]
+id = "crypto.a-stolen-credentials-file-is-not-enough"
+claim = "A credentials file alone cannot be attacked offline: verification also requires this device's own signing key."
+crate = "hyperion-crypto"
+test = "a_stolen_credentials_file_is_useless_without_the_device_key"
+
+[[claim]]
+id = "identity.a-passphrase-really-gates-a-switch"
+claim = "Where a person has set a passphrase, becoming them requires proving it."
+crate = "hyperion-console"
+test = "a_passphrase_really_gates_becoming_someone"
+
+[[claim]]
+id = "identity.refusals-do-not-enumerate-people"
+claim = "A refused switch never reveals whether the person exists or the passphrase was wrong."
+crate = "hyperion-console"
+test = "a_refusal_never_says_which_part_was_wrong"
+
+[[claim]]
+id = "identity.unprotected-people-are-told-so"
+claim = "A person with no passphrase set is told that anyone can become them, rather than being left to assume they are protected."
+crate = "hyperion-console"
+test = "whoami_says_whether_you_are_actually_protected"

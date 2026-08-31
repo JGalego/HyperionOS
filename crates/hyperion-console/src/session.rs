@@ -33,7 +33,7 @@ use hyperion_capability::{CapabilityMonitor, CapabilityToken, RightsMask};
 use hyperion_coordination::{CoordinationSession, TaskNode};
 use hyperion_crypto::{Keystore, SecretStore};
 use hyperion_explainability::ExplanationStore;
-use hyperion_identity::{Principal, PrincipalRegistry};
+use hyperion_identity::{AuthOutcome, CredentialStore, Principal, PrincipalRegistry};
 use hyperion_intent::IntentEngine;
 use hyperion_knowledge_graph::{render_capability_result, GraphError, KnowledgeGraph, NodeId};
 use hyperion_memory::{MemoryEngine, MemoryTier};
@@ -194,6 +194,12 @@ pub struct ConsoleSession {
     /// The people this device knows, so `/user` can resolve one without re-reading the register
     /// on every switch.
     principals: PrincipalRegistry,
+    /// The passphrases this device knows (App Builder T4). A person with one set really has to
+    /// prove it before `/user` will make anyone them; a person without one is switched to
+    /// unchallenged, and told that is what happened.
+    credentials: CredentialStore,
+    /// Set while `/user <name>` is waiting for a passphrase.
+    pending_switch: Option<Principal>,
     /// This session's own real, persistent data directory -- retained past construction only so
     /// [`Self::switch_backend`] can persist the user's real choice to `model_selection.json`
     /// (see [`Self::save_model_selection`]) each time it changes, without threading the path
@@ -510,6 +516,10 @@ impl ConsoleSession {
             .principal_for(user)
             .expect("resolve this session's own principal");
         let token = monitor.mint_root(RightsMask::all(), principal.boundary, None);
+        // A damaged credentials file is a hard failure rather than an empty one: starting with no
+        // passphrases when some were set would silently unprotect everybody.
+        let credentials = CredentialStore::open_or_create(data_dir.join("passphrases.json"))
+            .expect("open or create this device's passphrase store");
 
         let keystore = Keystore::open_or_create(&data_dir.join("device.key"))
             .expect("open or create this session's real device signing key");
@@ -649,6 +659,8 @@ impl ConsoleSession {
             explanations,
             principal,
             principals,
+            credentials,
+            pending_switch: None,
             plugins,
             data_dir: data_dir.to_path_buf(),
         };
@@ -1115,6 +1127,18 @@ impl ConsoleSession {
         //
         // Ordered before the shorter prefixes below because `/app-engine`/`/app-remove` would
         // otherwise be swallowed by `/app`'s own `starts_with`.
+        if lower.starts_with("/passphrase") {
+            let passphrase = trimmed["/passphrase".len()..].trim();
+            if passphrase.is_empty() {
+                return Some(vec![
+                    "\"/passphrase\" needs the passphrase you want, e.g. \"/passphrase correct \
+                     horse battery\"."
+                        .to_string(),
+                ]);
+            }
+            return Some(self.set_own_passphrase(passphrase));
+        }
+
         if lower == "/whoami" {
             return Some(self.describe_principal());
         }
@@ -1652,9 +1676,12 @@ impl ConsoleSession {
              and what that does and doesn't mean"
                 .to_string(),
             "  /user <name>                                keep someone else's notes, keys and \
-             history apart from yours, e.g. \"/user alice\" (this isn't a login -- nothing checks \
-             it)"
-            .to_string(),
+             history apart from yours, e.g. \"/user alice\" (asks for their passphrase, if they \
+             set one)"
+                .to_string(),
+            "  /passphrase <something long>                set your own, so nobody else can \
+             become you"
+                .to_string(),
             "  /help                                        show this message".to_string(),
         ]
     }
@@ -1769,6 +1796,9 @@ impl ConsoleSession {
         }
         if let Some(pending) = self.pending_consent.take() {
             return self.finish_consent(pending, utterance);
+        }
+        if let Some(pending) = self.pending_switch.take() {
+            return self.finish_switch(pending, utterance);
         }
         if let Some(pending) = self.pending_storage_consent.take() {
             return self.finish_storage_consent(pending, utterance);
@@ -2080,13 +2110,58 @@ impl ConsoleSession {
         if !others.is_empty() {
             lines.push(format!("This device also knows: {}.", others.join(", ")));
         }
-        lines.push(
-            "Your notes, your saved keys and your history are kept apart from anyone else's -- \
-             but nothing checks that you are who you say, so \"/user <name>\" will make you \
-             anyone. Treat it as tidiness, not a lock."
-                .to_string(),
-        );
+        // What this actually protects, which now depends on whether they set a passphrase.
+        lines.push(if self.credentials.has_credential(&self.principal.user) {
+            "Your notes, saved keys and history are kept apart from anyone else's, and switching \
+             to you needs your passphrase."
+                .to_string()
+        } else {
+            "Your notes, saved keys and history are kept apart from anyone else's -- but nobody's \
+             set a passphrase for you, so \"/user <name>\" will make anyone you. \"/passphrase \
+             <something long>\" fixes that."
+                .to_string()
+        });
         lines
+    }
+
+    /// The other half of a `/user` switch that needed a passphrase.
+    ///
+    /// A refusal says only that it was refused. Naming which part was wrong -- or letting the reply
+    /// differ between "no such person" and "wrong passphrase" -- would let someone learn who exists
+    /// on a device by trying names.
+    fn finish_switch(&mut self, principal: Principal, passphrase: &str) -> Vec<String> {
+        match self
+            .credentials
+            .authenticate(&principal.user, passphrase.trim(), &self.keystore)
+        {
+            AuthOutcome::Verified => self.become_principal(principal, true),
+            AuthOutcome::Refused | AuthOutcome::NoCredential => {
+                vec!["That isn't it -- you're still yourself.".to_string()]
+            }
+        }
+    }
+
+    /// `/passphrase <text>` -- set or change your own, and nobody else's.
+    ///
+    /// Deliberately only your own: without an administrator role (§0's Decision 2 leaves whether
+    /// one exists explicitly open), letting anyone set anyone's passphrase would make the whole
+    /// mechanism decorative -- an attacker would simply set yours.
+    fn set_own_passphrase(&mut self, passphrase: &str) -> Vec<String> {
+        let user = self.principal.user.clone();
+        let had_one = self.credentials.has_credential(&user);
+        match self.credentials.set(&user, passphrase, &self.keystore) {
+            Ok(()) => vec![
+                if had_one {
+                    format!("Changed {user}'s passphrase.")
+                } else {
+                    format!("{user} now needs a passphrase to be switched to.")
+                },
+                "It's checked against this device's own key, so a copy of the file alone won't \
+                 open it."
+                    .to_string(),
+            ],
+            Err(e) => vec![format!("{e}.")],
+        }
     }
 
     /// `/user <name>` -- become someone else for the rest of this session.
@@ -2106,6 +2181,24 @@ impl ConsoleSession {
             return self.describe_principal();
         }
 
+        // A passphrase, if they have set one. This is the line that turns `hyperion-identity`'s
+        // "separates people, does not protect them" into a claim this console can actually make --
+        // but only for people who set one, which is why the answer says which happened.
+        if self.credentials.has_credential(&principal.user) {
+            let name = principal.user.to_string();
+            self.pending_switch = Some(principal);
+            return vec![format!("{name}'s passphrase, then:")];
+        }
+
+        self.become_principal(principal, false)
+    }
+
+    /// Rebuilds everything scoped to a person, once it has been decided that the switch happens.
+    ///
+    /// Split from [`Self::switch_user`] so an unchallenged switch and one that passed a passphrase
+    /// take exactly the same path -- otherwise the authenticated route could drift into forgetting
+    /// something the other remembered to reset.
+    fn become_principal(&mut self, principal: Principal, verified: bool) -> Vec<String> {
         let secret_store = match SecretStore::open_or_create_scoped(
             &self
                 .data_dir
@@ -2154,6 +2247,7 @@ impl ConsoleSession {
         self.pending_consent = None;
         self.pending_app_input = None;
         self.pending_storage_consent = None;
+        self.pending_switch = None;
         self.pending_think_root = None;
         self.last_utterance = None;
 
@@ -2166,11 +2260,16 @@ impl ConsoleSession {
              already confirmed needs confirming again."
                 .to_string(),
         );
-        lines.push(
-            "Nothing checked that you are who you say -- this keeps people's things apart, it \
-             doesn't keep anyone out."
-                .to_string(),
-        );
+        // Which of the two happened, said plainly. A device where some people are protected and
+        // others are not is the honest middle state of rolling passphrases out, and someone should
+        // be able to tell which they are without going to look.
+        lines.push(if verified {
+            "You proved it, so that switch was real.".to_string()
+        } else {
+            "Nobody's set a passphrase for you, so nothing checked that you are who you say -- \
+             \"/passphrase <something long>\" fixes that."
+                .to_string()
+        });
         lines
     }
 

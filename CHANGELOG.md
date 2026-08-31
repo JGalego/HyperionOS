@@ -95,6 +95,25 @@ version numbers track release sequence, not API stability.
   already express per-user separation and revocation without a second notion of
   authority.
 
+**T4, first half — proving who somebody is**
+- `hyperion-identity` said plainly that it separates people but does not protect
+  them, because anyone at the console could claim to be anyone. Where a person
+  has set a passphrase, that is no longer true: `/user <name>` asks for it and
+  refuses without it.
+- Argon2id, via a new `argon2` dependency, rather than the primitives already
+  here. Every other primitive in `hyperion-crypto` is deliberately fast, which is
+  exactly wrong for a password: a fast hash means an attacker with the file gets
+  billions of offline guesses. Reaching for one "used carefully" is the classic
+  way this gets built wrong.
+- The passphrase is also peppered with a device-bound secret before hashing, so a
+  stolen credentials file alone cannot be attacked offline at all -- it needs the
+  device's signing key too.
+- A refusal never distinguishes "no such person" from "wrong passphrase", since
+  telling those apart lets someone enumerate who exists on a device by trying
+  names. And a person who has *not* set one is told so by `/whoami` rather than
+  left to assume they are protected: a device part-way through rolling
+  passphrases out is an honest state, but only if it says which you are.
+
 **T3 — an app can be left running** (written, and not yet verified)
 - Residency is declared in the signed contract and started with `/app-start`,
   supervised by `hyperion-supervisor` so a crash is met with a respawn under a

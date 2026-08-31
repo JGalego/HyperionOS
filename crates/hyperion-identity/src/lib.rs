@@ -60,8 +60,10 @@
 //! *root* token is minted only by whatever authenticated them, and nothing else may mint one at a
 //! user boundary. That is a property of the broker, not of `cap_derive`.
 
+mod credentials;
 mod registry;
 mod types;
 
+pub use credentials::{AuthOutcome, CredentialStore, CredentialStoreError};
 pub use registry::{PrincipalRegistry, RegistryError};
 pub use types::{Principal, UserId, UserIdError};

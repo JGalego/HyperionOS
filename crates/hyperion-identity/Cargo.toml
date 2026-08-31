@@ -7,6 +7,9 @@ description = "Who is acting: a principal bound to its own Trust Boundary (docs/
 
 [dependencies]
 hyperion-capability = { workspace = true }
+# Real Argon2id passphrase verification (docs/998-roadmap.md's App Builder T4). What turns this
+# crate's "separates people, does not protect them" into a claim it can actually make.
+hyperion-crypto = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 

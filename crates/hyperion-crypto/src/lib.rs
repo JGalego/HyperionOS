@@ -67,6 +67,7 @@ use std::path::Path;
 use ed25519_dalek::{Signer, Verifier};
 use rand_core::OsRng;
 
+pub mod credentials;
 pub mod key_exchange;
 pub mod publisher_registry;
 pub mod sealed_stream;
@@ -205,3 +206,7 @@ pub fn verify(bytes: &[u8], signature: &Signature, verifying_key: &VerifyingKey)
 pub fn hash(bytes: &[u8]) -> Hash {
     blake3::hash(bytes)
 }
+
+pub use credentials::{
+    hash_passphrase, verify_passphrase, CredentialError, PassphraseVerifier, MIN_PASSPHRASE_LEN,
+};

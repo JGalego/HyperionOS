@@ -11,6 +11,12 @@ repository.workspace = true
 # hot path, so the perf cost is immaterial -- and it means no C cross-compiler toolchain is a
 # build-or-boot dependency for any target this workspace cross-compiles for (docs/998-roadmap.md M11
 # hit this directly: aarch64-unknown-linux-musl has no such toolchain in this sandbox).
+# Real Argon2id password hashing for docs/998-roadmap.md's App Builder T4 (see
+# src/credentials.rs). Every other primitive in this crate is deliberately fast; a password
+# verifier's entire job is to be slow, so it needs a purpose-built KDF rather than a fast hash
+# used carefully. Pure Rust with no C dependency, same "no C toolchain, ever" constraint the
+# blake3 and chacha20poly1305 choices below already exist for.
+argon2 = { workspace = true }
 blake3 = { version = "1", features = ["serde", "pure"] }
 # Real ChaCha20-Poly1305 AEAD for src/secret_store.rs -- deliberately the pure-Rust RustCrypto
 # implementation, not `ring` (rejected after actually breaking a real musl cross-compile with it:

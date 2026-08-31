@@ -119,3 +119,9 @@ epaint_default_fonts = "0.29"
 # shells out to the already-present, already-setuid `fusermount` binary at mount time -- confirmed
 # by a real, throwaway probe mount in this exact sandbox before adding this dependency.
 fuser = "0.17"
+# Real password hashing for docs/998-roadmap.md's App Builder T4 authentication. A password
+# verifier built on a fast hash (BLAKE3, SHA-2) is a known-bad pattern: the whole job is to be
+# slow, and `hyperion-crypto`'s existing primitives are all deliberately fast. Argon2id is the
+# current standard answer and the RustCrypto implementation is pure Rust with no C dependency,
+# matching every other cryptographic choice in this workspace.
+argon2 = "0.5"

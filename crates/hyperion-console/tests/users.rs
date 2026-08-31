@@ -16,10 +16,10 @@ fn whoami_names_the_person_and_says_it_is_not_a_login() {
     let reply = session.handle_utterance("/whoami").join("\n");
 
     assert!(reply.contains("alice"), "got: {reply}");
-    // Someone reading "you are alice" assumes it was checked. It wasn't, and the console has to
-    // say so at the moment they ask.
+    // Someone reading "you are alice" assumes it was checked. Until they set a passphrase it
+    // wasn't, and the console has to say so at the moment they ask.
     assert!(
-        reply.contains("nothing checks that you are who you say"),
+        reply.contains("nobody's set a passphrase for you"),
         "got: {reply}"
     );
 }
@@ -183,4 +183,101 @@ fn an_app_someone_else_built_is_usable_but_not_removable() {
         .handle_utterance("/app-remove nothing-here")
         .join("\n");
     assert!(reply.contains("don't have anything called"), "got: {reply}");
+}
+
+#[test]
+fn without_a_passphrase_anyone_can_still_become_anyone_and_is_told_so() {
+    // The honest middle state: principals exist, credentials do not yet. It must not read as
+    // protection.
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = open_as(&dir, "alice");
+    let reply = session.handle_utterance("/user bob").join("\n");
+    assert!(reply.contains("bob"), "got: {reply}");
+    assert!(reply.contains("Nobody's set a passphrase"), "got: {reply}");
+}
+
+#[test]
+fn a_passphrase_really_gates_becoming_someone() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = open_as(&dir, "alice");
+    let set = session
+        .handle_utterance("/passphrase correct horse battery")
+        .join("\n");
+    assert!(set.contains("needs a passphrase"), "got: {set}");
+
+    // Become someone else, then try to come back.
+    session.handle_utterance("/user bob");
+    let asked = session.handle_utterance("/user alice").join("\n");
+    assert!(asked.contains("passphrase"), "got: {asked}");
+
+    // Wrong one: still bob.
+    let refused = session.handle_utterance("not it").join("\n");
+    assert!(refused.contains("isn't it"), "got: {refused}");
+    let who = session.handle_utterance("/whoami").join("\n");
+    assert!(who.contains("bob"), "got: {who}");
+
+    // Right one: really alice.
+    session.handle_utterance("/user alice");
+    let accepted = session.handle_utterance("correct horse battery").join("\n");
+    assert!(accepted.contains("alice"), "got: {accepted}");
+    assert!(accepted.contains("proved it"), "got: {accepted}");
+    let who = session.handle_utterance("/whoami").join("\n");
+    assert!(who.contains("alice"), "got: {who}");
+}
+
+#[test]
+fn a_refusal_never_says_which_part_was_wrong() {
+    // Telling "no such person" apart from "wrong passphrase" lets someone enumerate who exists on
+    // a device by trying names.
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = open_as(&dir, "alice");
+    session.handle_utterance("/passphrase correct horse battery");
+    session.handle_utterance("/user bob");
+    session.handle_utterance("/user alice");
+    let refused = session.handle_utterance("wrong").join("\n");
+
+    assert!(
+        !refused.to_lowercase().contains("no such"),
+        "got: {refused}"
+    );
+    assert!(
+        !refused.to_lowercase().contains("wrong passphrase"),
+        "got: {refused}"
+    );
+}
+
+#[test]
+fn a_passphrase_survives_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let mut session = open_as(&dir, "alice");
+        session.handle_utterance("/passphrase correct horse battery");
+    }
+    let mut session = open_as(&dir, "bob");
+    let asked = session.handle_utterance("/user alice").join("\n");
+    assert!(asked.contains("passphrase"), "got: {asked}");
+}
+
+#[test]
+fn whoami_says_whether_you_are_actually_protected() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = open_as(&dir, "alice");
+
+    let before = session.handle_utterance("/whoami").join("\n");
+    assert!(
+        before.contains("nobody's set a passphrase"),
+        "got: {before}"
+    );
+
+    session.handle_utterance("/passphrase correct horse battery");
+    let after = session.handle_utterance("/whoami").join("\n");
+    assert!(after.contains("needs your passphrase"), "got: {after}");
+}
+
+#[test]
+fn help_mentions_setting_a_passphrase() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = open_as(&dir, "alice");
+    let reply = session.handle_utterance("/help").join("\n");
+    assert!(reply.contains("/passphrase"), "got: {reply}");
 }
